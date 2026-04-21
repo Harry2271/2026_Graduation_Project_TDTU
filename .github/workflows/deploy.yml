@@ -2,7 +2,7 @@ name: CI/CD Pipeline NestJS Monolithic trên Pi 5
 
 on:
   push:
-    branches: ["master"]
+    branches: ['master']
 
 jobs:
   build-and-deploy:
@@ -15,13 +15,13 @@ jobs:
       - name: 🔐 Khởi tạo file .env bảo mật
         run: |
           echo ">>> Đang tạo file .env..."
-          
+
           # Đứng ngay thư mục gốc đẻ ra file .env luôn
           cat <<EOF > .env
           PORT=${{ vars.PORT }}
           MONGO_URI=${{ secrets.MONGO_URI }}
           EOF
-          
+
           echo ">>> Khởi tạo .env thành công."
 
       - name: 📦 Cài đặt thư viện
@@ -38,5 +38,5 @@ jobs:
 
           echo ">>> Lưu cấu hình PM2..."
           pm2 save
-          
+
           echo ">>> Deploy dự án hoàn tất!"
