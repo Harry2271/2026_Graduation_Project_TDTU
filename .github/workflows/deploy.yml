@@ -1,4 +1,4 @@
-name: CI/CD Pipeline Park Smart trên Pi 5
+name: CI/CD Pipeline NestJS Monolithic trên Pi 5
 
 on:
   push:
@@ -6,21 +6,22 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted # Cú chốt: Báo cho GitHub biết đẩy việc về con Pi
+    runs-on: self-hosted # Đẩy việc về thẳng con Pi
 
     steps:
       - name: 📥 Lấy code mới nhất
         uses: actions/checkout@v4
 
-      - name: 🛠️ Build ParkingService
-        run: docker build -t parkingservice-test ./backend/Services/parking-service
+      - name: ⚙️ Cài đặt Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      # 🔹 Tạo file .env bảo mật (Phân tách Variables và Secrets)
-      - name: 🔐 Khởi tạo file .env cho ParkingService
+      - name: 🔐 Khởi tạo file .env bảo mật
         run: |
-          echo ">>> Đang tạo file .env bảo mật..."
+          echo ">>> Đang tạo file .env..."
           
-          # Dùng > để ghi đè file mới tinh, tránh dính rác từ lần chạy trước
+          # Đứng ngay thư mục gốc đẻ ra file .env luôn
           cat <<EOF > .env
           PORT=${{ vars.PORT }}
           MONGO_URI=${{ secrets.MONGO_URI }}
@@ -28,10 +29,22 @@ jobs:
           
           echo ">>> Khởi tạo .env thành công."
 
-      # 🔹 Chạy Docker Compose
-      - name: 🚀 Deploy hệ thống
+      - name: 📦 Cài đặt thư viện
+        run: yarn install --frozen-lockfile
+
+      - name: 🛠️ Build ứng dụng NestJS
+        run: yarn build
+
+      - name: 🚀 Deploy bằng PM2
         run: |
-          echo ">>> Bắt đầu dọn dẹp và chạy container mới..."
-          docker compose down
-          docker compose up -d --build
-          echo ">>> Deploy Park Smart hoàn tất!"
+          echo ">>> Cài đặt PM2 global (nếu chưa có)..."
+          npm install -g pm2
+
+          echo ">>> Khởi động/Cập nhật dịch vụ..."
+          # Đổi tên process thành api-backend cho ngầu và đúng bản chất
+          pm2 start dist/main.js --name "api-backend" || pm2 reload "api-backend"
+
+          echo ">>> Lưu cấu hình PM2..."
+          pm2 save
+          
+          echo ">>> Deploy dự án hoàn tất!"
