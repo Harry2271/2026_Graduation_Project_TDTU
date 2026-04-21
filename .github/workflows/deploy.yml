@@ -12,11 +12,6 @@ jobs:
       - name: 📥 Lấy code mới nhất
         uses: actions/checkout@v4
 
-      - name: ⚙️ Cài đặt Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: 🔐 Khởi tạo file .env bảo mật
         run: |
           echo ">>> Đang tạo file .env..."
@@ -37,9 +32,6 @@ jobs:
 
       - name: 🚀 Deploy bằng PM2
         run: |
-          echo ">>> Cài đặt PM2 global (nếu chưa có)..."
-          npm install -g pm2
-
           echo ">>> Khởi động/Cập nhật dịch vụ..."
           # Đổi tên process thành api-backend cho ngầu và đúng bản chất
           pm2 start dist/main.js --name "api-backend" || pm2 reload "api-backend"
