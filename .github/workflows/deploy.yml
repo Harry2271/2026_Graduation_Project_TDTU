@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # 👈 Đổi thành v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4 # 👈 Đổi thành v4
         with:
-          node-version: '22' # 👈 Nâng lên Node 22 đồng bộ với máy Dev
+          node-version: '22'
 
       - name: Install dependencies & Build
         run: |
@@ -24,14 +24,14 @@ jobs:
 
       # Nén thư mục dist và các file cần thiết lại làm "Cache"
       - name: Upload Artifact (Lưu Cache)
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # 👈 Đổi thành v4
         with:
           name: park-smart-build
           path: |
             dist/
             package.json
             yarn.lock
-            Dockerfile # 👈 Phải ném thêm cái Dockerfile vào cục hàng
+            Dockerfile 
 
   # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
   deploy-to-pi:
@@ -39,7 +39,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Download Artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4 # 👈 Đổi thành v4
         with:
           name: park-smart-build
           path: ./api-server
@@ -49,21 +49,19 @@ jobs:
         run: |
           cd ./api-server
           
-          # 1. Build image Docker mới từ đống file tải về
+          # 1. Build image Docker mới
           docker build -t park-smart-api-image .
           
-          # 2. Dừng và xóa container cũ (nếu có) để tránh kẹt cổng. Lệnh || true giúp bỏ qua lỗi nếu container chưa tồn tại
+          # 2. Dừng và xóa container cũ
           docker stop park-smart-api-container || true
           docker rm park-smart-api-container || true
           
-          # 3. Khởi chạy container mới. 
-          # --network host: Dùng chung mạng với Pi để dễ gọi chéo API Python local
-          # --restart unless-stopped: Pi khởi động lại là Docker tự bật
+          # 3. Khởi chạy container mới
           docker run -d \
             --name park-smart-api-container \
             --network host \
             --restart unless-stopped \
             park-smart-api-image
             
-          # 4. (Tùy chọn) Dọn rác các image cũ không còn xài để nhẹ ổ cứng Pi
+          # 4. Dọn rác image cũ
           docker image prune -f
