@@ -45,6 +45,19 @@ jobs:
           name: park-smart-build
           path: ./api-server
 
+      - name: 🔐 Khởi tạo file .env cho ParkingService
+        run: |
+          cd ./api-server 
+          echo ">>> Đang tạo file .env bảo mật..."
+
+          # Dùng > để ghi đè file mới tinh, tránh dính rác từ lần chạy trước
+          cat <<EOF > .env
+          PORT=${{ vars.PORT }}
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          EOF
+
+          echo ">>> Khởi tạo .env thành công."
+
       # Xóa container cũ, build image mới và chạy container mới
       - name: Deploy with Docker Compose
         run: |
