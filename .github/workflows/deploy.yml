@@ -32,6 +32,7 @@ jobs:
             package.json
             yarn.lock
             Dockerfile
+            docker-compose.yml
 
   # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
   deploy-to-pi:
@@ -48,4 +49,7 @@ jobs:
       - name: Deploy with Docker Compose
         run: |
           cd ./api-server
+          # Docker Compose sẽ tự làm hết: dừng, xóa, build, chạy
           docker compose up -d --build
+          # Dọn dẹp image cũ để tiết kiệm dung lượng thẻ nhớ
+          docker image prune -f
