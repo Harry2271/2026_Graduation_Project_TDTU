@@ -31,7 +31,7 @@ jobs:
             dist/
             package.json
             yarn.lock
-            Dockerfile 
+            Dockerfile
 
   # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
   deploy-to-pi:
@@ -45,23 +45,7 @@ jobs:
           path: ./api-server
 
       # Xóa container cũ, build image mới và chạy container mới
-      - name: Deploy with Docker
+      - name: Deploy with Docker Compose
         run: |
           cd ./api-server
-          
-          # 1. Build image Docker mới
-          docker build -t park-smart-api-image .
-          
-          # 2. Dừng và xóa container cũ
-          docker stop park-smart-api-container || true
-          docker rm park-smart-api-container || true
-          
-          # 3. Khởi chạy container mới
-          docker run -d \
-            --name park-smart-api-container \
-            --network host \
-            --restart unless-stopped \
-            park-smart-api-image
-            
-          # 4. Dọn rác image cũ
-          docker image prune -f
+          docker compose up -d --build
