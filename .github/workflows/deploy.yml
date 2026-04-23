@@ -1,42 +1,69 @@
-name: CI/CD Pipeline NestJS Monolithic trên Pi 5
+name: Deploy Park Smart API
 
 on:
   push:
     branches: ['master']
 
 jobs:
-  build-and-deploy:
-    runs-on: self-hosted # Đẩy việc về thẳng con Pi
-
+  # --- JOB 1: CHẠY TRÊN MÁY CHỦ GITHUB (Offload Build) ---
+  build-and-cache:
+    runs-on: ubuntu-latest
     steps:
-      - name: 📥 Lấy code mới nhất
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: 🔐 Khởi tạo file .env bảo mật
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22' # 👈 Nâng lên Node 22 đồng bộ với máy Dev
+
+      - name: Install dependencies & Build
         run: |
-          echo ">>> Đang tạo file .env..."
+          yarn install
+          yarn build
 
-          # Đứng ngay thư mục gốc đẻ ra file .env luôn
-          cat <<EOF > .env
-          PORT=${{ vars.PORT }}
-          MONGO_URI=${{ secrets.MONGO_URI }}
-          EOF
+      # Nén thư mục dist và các file cần thiết lại làm "Cache"
+      - name: Upload Artifact (Lưu Cache)
+        uses: actions/upload-artifact@v3
+        with:
+          name: park-smart-build
+          path: |
+            dist/
+            package.json
+            yarn.lock
+            Dockerfile # 👈 Phải ném thêm cái Dockerfile vào cục hàng
 
-          echo ">>> Khởi tạo .env thành công."
+  # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
+  deploy-to-pi:
+    needs: build-and-cache
+    runs-on: self-hosted
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: park-smart-build
+          path: ./api-server
 
-      - name: 📦 Cài đặt thư viện
-        run: yarn install --frozen-lockfile
-
-      - name: 🛠️ Build ứng dụng NestJS
-        run: yarn build
-
-      - name: 🚀 Deploy bằng PM2
+      # Xóa container cũ, build image mới và chạy container mới
+      - name: Deploy with Docker
         run: |
-          echo ">>> Khởi động/Cập nhật dịch vụ..."
-          # Đổi tên process thành api-backend cho ngầu và đúng bản chất
-          pm2 start dist/main.js --name "api-backend" || pm2 reload "api-backend"
-
-          echo ">>> Lưu cấu hình PM2..."
-          pm2 save
-
-          echo ">>> Deploy dự án hoàn tất!"
+          cd ./api-server
+          
+          # 1. Build image Docker mới từ đống file tải về
+          docker build -t park-smart-api-image .
+          
+          # 2. Dừng và xóa container cũ (nếu có) để tránh kẹt cổng. Lệnh || true giúp bỏ qua lỗi nếu container chưa tồn tại
+          docker stop park-smart-api-container || true
+          docker rm park-smart-api-container || true
+          
+          # 3. Khởi chạy container mới. 
+          # --network host: Dùng chung mạng với Pi để dễ gọi chéo API Python local
+          # --restart unless-stopped: Pi khởi động lại là Docker tự bật
+          docker run -d \
+            --name park-smart-api-container \
+            --network host \
+            --restart unless-stopped \
+            park-smart-api-image
+            
+          # 4. (Tùy chọn) Dọn rác các image cũ không còn xài để nhẹ ổ cứng Pi
+          docker image prune -f
