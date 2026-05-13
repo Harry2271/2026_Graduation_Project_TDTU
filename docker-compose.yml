@@ -8,6 +8,8 @@ services:
       - /dev:/dev
     environment:
       - ROS_DOMAIN_ID=0
+      - LIDAR_MODEL=a1  # <-- Nếu ông dùng A1M8 thì để a1, dùng A2M8 thì sửa thành a2m8
+      - LIDAR_PORT=/dev/ttyUSB0
     restart: always
 
   # 2. Cổng giao tiếp Web (Tự build để tương thích Pi 5)
