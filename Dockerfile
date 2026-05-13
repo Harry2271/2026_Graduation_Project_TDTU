@@ -19,8 +19,8 @@ COPY src/ /app/src/
 RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
 # 4. Build toàn bộ workspace
-# Bỏ --symlink-install để tránh lỗi libexec trong Docker và đảm bảo ổn định trên Pi 5
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build"
+# Bỏ --symlink-install và thêm --executor sequential để tránh quá tải RAM (Exit code 2) trên Pi
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build --executor sequential"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
