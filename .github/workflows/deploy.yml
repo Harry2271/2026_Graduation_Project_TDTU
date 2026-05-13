@@ -42,10 +42,16 @@ jobs:
           EOF
           echo ">>> Khởi tạo .env thành công."
 
-      - name: Deploy with Docker Compose
+      - name: 🛠️ Build & Deploy with Docker Compose
         run: |
           cd ./robot-app
-          # Docker sẽ tự build lại image cho kiến trúc ARM của Pi
-          docker compose up -d --build
+          # Sử dụng BuildKit và hiển thị chi tiết quá trình (progress=plain)
+          # Việc build ROS 2 trên Pi có thể mất từ 5-15 phút tùy vào tốc độ thẻ nhớ, hãy kiên nhẫn.
+          export DOCKER_BUILDKIT=1
+          docker compose build --progress=plain
+          
+          # Chạy container sau khi build xong
+          docker compose up -d
+          
           # Dọn dẹp image cũ để tiết kiệm dung lượng thẻ nhớ
           docker image prune -f
