@@ -1,33 +1,27 @@
 FROM ros:humble-ros-base
 
-# Set bash as the default shell
-SHELL ["/bin/bash", "-c"]
-
-# Set environment variables to avoid interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install required dependencies with robust flags
+# 1. Cài các package tiêu chuẩn (Bỏ sllidar đi, thêm git để clone code)
 RUN apt-get update && apt-get install -y --fix-missing --no-install-recommends \
     python3-colcon-common-extensions \
-    ros-humble-sllidar-ros2 \
     ros-humble-slam-toolbox \
     python3-serial \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create workspace directory
 WORKDIR /app
 
-# Copy the source code
+# 2. Copy folder src của ông (chứa my_robot_controller) vào
 COPY src/ /app/src/
 
-# Build the ROS 2 workspace
-RUN source /opt/ros/humble/setup.bash && \
-    colcon build --symlink-install
+# 3. Ép nó kéo source code chính chủ của SLLidar về folder src luôn
+RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
-# Copy the entrypoint script and make it executable
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# 4. Cấp quyền thực thi và Build tất cả cục diện bằng colcon
+# Dùng --symlink-install để sau này code Python nhạy hơn khi update
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build --symlink-install"
 
-# Set the entrypoint
-ENTRYPOINT ["/app/entrypoint.sh"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
