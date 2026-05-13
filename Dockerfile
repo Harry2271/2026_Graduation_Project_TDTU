@@ -3,12 +3,16 @@ FROM ros:humble-ros-base
 # Set bash as the default shell
 SHELL ["/bin/bash", "-c"]
 
-# Install required dependencies
-RUN apt-get update && apt-get install -y \
+# Set environment variables to avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required dependencies with robust flags
+RUN apt-get update && apt-get install -y --fix-missing --no-install-recommends \
     python3-colcon-common-extensions \
     ros-humble-sllidar-ros2 \
     ros-humble-slam-toolbox \
     python3-serial \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Create workspace directory
