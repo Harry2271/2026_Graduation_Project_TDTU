@@ -2,7 +2,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -13,17 +13,28 @@ def generate_launch_description():
         default_value='/dev/ttyUSB0',
         description='Specifying usb port to connected lidar'
     )
+    
+    lidar_model_arg = DeclareLaunchArgument(
+        'lidar_model',
+        default_value='a1',
+        description='Lidar model (a1, a2m8, a3, etc.)'
+    )
 
     serial_port = LaunchConfiguration('serial_port')
+    lidar_model = LaunchConfiguration('lidar_model')
 
     # Get the launch directories for included packages
     sllidar_pkg_share = FindPackageShare('sllidar_ros2').find('sllidar_ros2')
     slam_toolbox_pkg_share = FindPackageShare('slam_toolbox').find('slam_toolbox')
 
+    # Construct the lidar launch file name dynamically
+    # Example: sllidar_a1_launch.py
+    lidar_launch_file = PythonExpression(["'sllidar_', '", lidar_model, "', '_launch.py'"])
+
     # Include sllidar launch file
     sllidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(sllidar_pkg_share, 'launch', 'sllidar_launch.py')
+            [os.path.join(sllidar_pkg_share, 'launch'), '/', lidar_launch_file]
         ),
         launch_arguments={'serial_port': serial_port}.items()
     )
@@ -45,6 +56,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         serial_port_arg,
+        lidar_model_arg,
         sllidar_launch,
         slam_toolbox_launch,
         brain_node
