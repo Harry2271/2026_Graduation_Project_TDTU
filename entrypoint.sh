@@ -19,8 +19,8 @@ if [ -e "$LIDAR_PORT" ]; then
     # File sẽ có dạng: sllidar_a1_launch.py hoặc sllidar_a2m8_launch.py...
     ros2 launch sllidar_ros2 sllidar_${LIDAR_MODEL}_launch.py serial_port:=$LIDAR_PORT &
     
-    # Chạy node Python điều khiển của ông
-    python3 /app/src/my_robot_controller/brain_node.py
+    # Chạy node Python điều khiển (Sử dụng lệnh brain đã định nghĩa trong setup.py)
+    ros2 run my_robot_controller brain
 else
     echo "Lỗi: Không tìm thấy Lidar tại $LIDAR_PORT. Vui lòng cắm thiết bị!"
     exit 1
