@@ -49,20 +49,20 @@ def generate_launch_description():
         )
     )
 
-    # Fake TF: base_link -> laser (Mặc định Lidar nằm ngay tâm robot)
+    # Fake TF: base_link -> laser (Dùng tham số tường minh cho Humble)
     base_link_to_laser_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_link_to_laser',
-        arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'laser']
+        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'base_link', '--child-frame-id', 'laser']
     )
 
-    # Fake TF: odom -> base_link (Giả lập robot đang đứng im để SLAM có thể chạy)
+    # Fake TF: odom -> base_link
     odom_to_base_link_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='odom_to_base_link',
-        arguments=['0', '0', '0', '0', '0', '0', 'odom', 'base_link']
+        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'odom', '--child-frame-id', 'base_link']
     )
 
     # Brain node

@@ -4,6 +4,7 @@ FROM ros:humble-ros-base
 RUN apt-get update && apt-get install -y --fix-missing --no-install-recommends \
     python3-colcon-common-extensions \
     ros-humble-slam-toolbox \
+    ros-humble-tf2-ros \
     python3-serial \
     git \
     && apt-get clean \
