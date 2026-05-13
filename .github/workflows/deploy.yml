@@ -1,0 +1,51 @@
+name: Deploy Robot Core
+
+on:
+  push:
+    branches: ["master"]
+
+jobs:
+  # --- JOB 1: CHẠY TRÊN MÁY CHỦ GITHUB (Chuẩn bị Source) ---
+  prepare-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Upload Artifact (Lưu Source)
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-core-build
+          path: |
+            src/
+            Dockerfile
+            docker-compose.yml
+            entrypoint.sh
+
+  # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
+  deploy-to-pi:
+    needs: prepare-source
+    runs-on: self-hosted
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: robot-core-build
+          path: ./robot-app
+
+      - name: 🔐 Khởi tạo file .env cho Robot (Nếu cần)
+        run: |
+          cd ./robot-app
+          echo ">>> Đang tạo file .env cho ROS..."
+          cat <<EOF > .env
+          ROS_DOMAIN_ID=0
+          EOF
+          echo ">>> Khởi tạo .env thành công."
+
+      - name: Deploy with Docker Compose
+        run: |
+          cd ./robot-app
+          # Docker sẽ tự build lại image cho kiến trúc ARM của Pi
+          docker compose up -d --build
+          # Dọn dẹp image cũ để tiết kiệm dung lượng thẻ nhớ
+          docker image prune -f

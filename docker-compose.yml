@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  robot-core:
+    build: .
+    privileged: true
+    volumes:
+      - /dev:/dev
+    restart: always
+
+  rosboard:
+    image: davesarmoury/rosboard:latest
+    ports:
+      - "8888:8888"
+    environment:
+      - ROS_DOMAIN_ID=0
+    restart: always
