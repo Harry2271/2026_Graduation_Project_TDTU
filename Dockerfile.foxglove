@@ -1,8 +1,9 @@
 FROM ros:humble-ros-base
 
-# Cài đặt foxglove-bridge trực tiếp từ kho của ROS 2
+# Cài đặt foxglove-bridge và slam-toolbox để nhận diện được các custom messages/services
 RUN apt-get update && apt-get install -y \
   ros-humble-foxglove-bridge \
+  ros-humble-slam-toolbox \
   && rm -rf /var/lib/apt/lists/*
 
 # Chạy bridge khi khởi động
