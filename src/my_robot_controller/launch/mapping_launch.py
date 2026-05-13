@@ -49,6 +49,22 @@ def generate_launch_description():
         )
     )
 
+    # Fake TF: base_link -> laser (Mặc định Lidar nằm ngay tâm robot)
+    base_link_to_laser_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_link_to_laser',
+        arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'laser']
+    )
+
+    # Fake TF: odom -> base_link (Giả lập robot đang đứng im để SLAM có thể chạy)
+    odom_to_base_link_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='odom_to_base_link',
+        arguments=['0', '0', '0', '0', '0', '0', 'odom', 'base_link']
+    )
+
     # Brain node
     brain_node = Node(
         package='my_robot_controller',
@@ -60,6 +76,8 @@ def generate_launch_description():
     return LaunchDescription([
         serial_port_arg,
         lidar_model_arg,
+        base_link_to_laser_tf,
+        odom_to_base_link_tf,
         sllidar_launch,
         slam_toolbox_launch,
         brain_node
