@@ -1,5 +1,5 @@
 services:
-  # 1. Core mapping system
+  # 1. Core mapping system (giữ nguyên)
   robot-core:
     build: .
     container_name: robot_core
@@ -10,12 +10,14 @@ services:
       - ROS_DOMAIN_ID=0
     restart: always
 
-  # 2. Cổng giao tiếp Web (Foxglove Bridge)
+  # 2. Cổng giao tiếp Web (Tự build để tương thích Pi 5)
   foxglove-bridge:
-    image: foxglove/ros-foxglove-bridge:humble
+    build:
+      context: .
+      dockerfile: Dockerfile.foxglove
     container_name: foxglove_bridge
     ports:
-      - "8888:8765" # Map port 8888 (Cloudflare gọi) vào 8765 (Foxglove chạy)
+      - "8888:8765"
     environment:
       - ROS_DOMAIN_ID=0
     restart: always
