@@ -17,9 +17,9 @@ COPY src/ /app/src/
 # 3. Ép nó kéo source code chính chủ của SLLidar về folder src luôn
 RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
-# 4. Cấp quyền thực thi và Build tất cả cục diện bằng colcon
-# Dùng --symlink-install để sau này code Python nhạy hơn khi update
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build --symlink-install"
+# 4. Build toàn bộ workspace
+# Bỏ --symlink-install để tránh lỗi libexec trong Docker và đảm bảo ổn định trên Pi 5
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
