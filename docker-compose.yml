@@ -1,17 +1,21 @@
-version: '3.8'
-
 services:
+  # 1. Core mapping system
   robot-core:
     build: .
+    container_name: robot_core
     privileged: true
     volumes:
       - /dev:/dev
+    environment:
+      - ROS_DOMAIN_ID=0
     restart: always
 
-  rosboard:
-    image: davesarmoury/rosboard:latest
+  # 2. Cổng giao tiếp Web (Foxglove Bridge)
+  foxglove-bridge:
+    image: foxglove/ros-foxglove-bridge:humble
+    container_name: foxglove_bridge
     ports:
-      - "8888:8888"
+      - "8888:8765" # Map port 8888 (Cloudflare gọi) vào 8765 (Foxglove chạy)
     environment:
       - ROS_DOMAIN_ID=0
     restart: always
