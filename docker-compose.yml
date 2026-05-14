@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: park-smart-web-container
+    container_name: web
     # Port mapping: [Cổng ngoài con Pi]:[Cổng trong Next.js]
     # Mặc định Next.js chạy ở cổng 3000
     ports:
