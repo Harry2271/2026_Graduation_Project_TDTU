@@ -22,17 +22,25 @@ jobs:
           yarn install
           yarn build
 
-      # Nén thư mục build (standalone) và các file cần thiết
+      # Chuẩn bị thư mục phân phối hoàn chỉnh (bao gồm cả các file ẩn)
+      - name: Prepare distribution folder
+        run: |
+          mkdir dist
+          # Copy nội dung standalone vào dist
+          cp -r .next/standalone/* dist/
+          cp -r .next/standalone/.next dist/ || true
+          # Copy static và public vào đúng vị trí Next.js standalone mong đợi
+          mkdir -p dist/.next/static
+          cp -r .next/static/* dist/.next/static/
+          cp -r public dist/
+          # Copy các file cấu hình docker
+          cp Dockerfile docker-compose.yml dist/
+
       - name: Upload Artifact (Lưu Cache)
         uses: actions/upload-artifact@v4
         with:
           name: park-smart-web-build
-          path: |
-            .next/standalone
-            .next/static
-            public/
-            Dockerfile
-            docker-compose.yml
+          path: dist/
 
   # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
   deploy-to-pi:
