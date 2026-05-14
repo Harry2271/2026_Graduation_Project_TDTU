@@ -4,6 +4,9 @@ on:
   push:
     branches: ['master']
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # --- JOB 1: CHẠY TRÊN MÁY CHỦ GITHUB (Offload Build) ---
   build-and-cache:
@@ -26,22 +29,23 @@ jobs:
       - name: Prepare distribution folder
         run: |
           mkdir dist
-          # Copy nội dung standalone vào dist
           cp -r .next/standalone/* dist/
           cp -r .next/standalone/.next dist/ || true
-          # Copy static và public vào đúng vị trí Next.js standalone mong đợi
           mkdir -p dist/.next/static
           cp -r .next/static/* dist/.next/static/
           cp -r public dist/
-          # Copy các file cấu hình docker
           cp Dockerfile docker-compose.yml dist/
+
+      # Nén thành một file duy nhất để tránh overhead khi làm việc với hàng nghìn file nhỏ trên thẻ SD của Pi
+      - name: Tar distribution folder
+        run: tar -czf build.tar.gz -C dist .
 
       - name: Upload Artifact (Lưu Cache)
         uses: actions/upload-artifact@v4
         with:
           name: park-smart-web-build
-          include-hidden-files: true
-          path: dist/
+          path: build.tar.gz
+          retention-days: 1
 
   # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
   deploy-to-pi:
@@ -53,6 +57,12 @@ jobs:
         with:
           name: park-smart-web-build
           path: ./web-client
+
+      - name: Untar distribution folder
+        run: |
+          cd ./web-client
+          tar -xzf build.tar.gz
+          rm build.tar.gz
 
       - name: 🔐 Khởi tạo file .env cho Frontend
         run: |
