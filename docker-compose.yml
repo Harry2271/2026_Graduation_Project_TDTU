@@ -1,0 +1,18 @@
+services:
+  web-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: park-smart-web-container
+    # Port mapping: [Cổng ngoài con Pi]:[Cổng trong Next.js]
+    # Mặc định Next.js chạy ở cổng 3000
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"
