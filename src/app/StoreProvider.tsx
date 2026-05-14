@@ -1,15 +1,17 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { Provider } from 'react-redux';
-import { makeStore } from '../store';
+import { useState } from "react";
+import { Provider } from "react-redux";
+import { store } from "../store/store";
 
 export default function StoreProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [store] = useState(makeStore);
+  // Sử dụng useState thay vì useRef để tránh lỗi của React Compiler
+  // khi access vào .current trong quá trình render.
+  const [storeInstance] = useState(() => store);
 
-  return <Provider store={store}>{children}</Provider>;
+  return <Provider store={storeInstance}>{children}</Provider>;
 }
