@@ -40,6 +40,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: park-smart-web-build
+          include-hidden-files: true
           path: dist/
 
   # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
