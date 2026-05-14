@@ -22,16 +22,15 @@ jobs:
           yarn install
           yarn build
 
-      # Nén thư mục .next, public và các file cần thiết lại làm "Cache"
+      # Nén thư mục build (standalone) và các file cần thiết
       - name: Upload Artifact (Lưu Cache)
         uses: actions/upload-artifact@v4
         with:
           name: park-smart-web-build
           path: |
-            .next/
+            .next/standalone
+            .next/static
             public/
-            package.json
-            yarn.lock
             Dockerfile
             docker-compose.yml
 
