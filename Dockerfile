@@ -1,7 +1,9 @@
 FROM ros:humble-ros-base
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 # 1. Cài các package tiêu chuẩn (Bỏ sllidar đi, thêm git để clone code)
-RUN apt-get update && apt-get install -y --fix-missing --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --fix-missing --no-install-recommends \
     python3-colcon-common-extensions \
     ros-humble-slam-toolbox \
     ros-humble-tf2-ros \
