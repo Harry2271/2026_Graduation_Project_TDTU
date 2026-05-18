@@ -1,9 +1,13 @@
 services:
   web-client:
+    image: park-smart-web:latest
     build:
       context: .
       dockerfile: Dockerfile
+      cache_from:
+        - park-smart-web:latest
     container_name: web
+    init: true
     # Port mapping: [Cổng ngoài con Pi]:[Cổng trong Next.js]
     # Mặc định Next.js chạy ở cổng 3000
     ports:
@@ -11,8 +15,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
     logging:
       driver: "json-file"
       options:
         max-size: "10mb"
         max-file: "3"
+    # Giới hạn tài nguyên trên Raspberry Pi để tránh OOM
+    deploy:
+      resources:
+        limits:
+          memory: 1G
