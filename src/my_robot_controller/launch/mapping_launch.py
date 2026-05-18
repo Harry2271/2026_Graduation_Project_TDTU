@@ -42,11 +42,16 @@ def generate_launch_description():
         launch_arguments={'serial_port': serial_port}.items()
     )
 
-    # Include slam_toolbox online_async launch file
+    # Đường dẫn file cấu hình SLAM Toolbox tối ưu cho Pi 5
+    my_robot_pkg_share = FindPackageShare('my_robot_controller').find('my_robot_controller')
+    slam_params_file = os.path.join(my_robot_pkg_share, 'config', 'slam_params.yaml')
+
+    # Include slam_toolbox online_async launch file với cấu hình custom
     slam_toolbox_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(slam_toolbox_pkg_share, 'launch', 'online_async_launch.py')
-        )
+        ),
+        launch_arguments={'slam_params_file': slam_params_file}.items()
     )
 
     # Fake TF: base_link -> laser (Dùng tham số tường minh cho Jazzy)
