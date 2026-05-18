@@ -75,21 +75,12 @@ def generate_launch_description():
         arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'base_footprint', '--child-frame-id', 'base_link']
     )
 
-    # Tự động tính toán Odometry động (Dynamic Odom) từ tia laser thay vì đứng yên
-    laser_odometry_node = Node(
-        package='rf2o_laser_odometry',
-        executable='rf2o_laser_odometry_node',
-        name='rf2o_laser_odometry',
-        output='screen',
-        parameters=[{
-            'laser_scan_topic': '/scan',
-            'odom_topic': '/odom',
-            'publish_tf': True,
-            'base_frame_id': 'base_footprint',
-            'odom_frame_id': 'odom',
-            'init_pose_from_topic': '',
-            'freq': 12.0
-        }]
+    # Fake TF: odom -> base_footprint
+    odom_to_base_footprint_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='odom_to_base_footprint',
+        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'odom', '--child-frame-id', 'base_footprint']
     )
 
     # Brain node
@@ -107,7 +98,7 @@ def generate_launch_description():
         lidar_mode_param,
         base_link_to_laser_tf,
         base_footprint_to_base_link_tf,
-        laser_odometry_node,
+        odom_to_base_footprint_tf,
         sllidar_launch,
         slam_toolbox_launch,
         brain_node
