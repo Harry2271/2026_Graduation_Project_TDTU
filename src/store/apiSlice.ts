@@ -2,7 +2,7 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { PackageItem, MoveCommandPayload, MoveCommandResponse } from '../types/inventory';
 
 // Dữ liệu mock ban đầu trong bộ nhớ
-const mockPackagesData: PackageItem[] = [
+let mockPackagesData: PackageItem[] = [
   {
     id: 'pkg-1',
     code: 'PKG-1001',
@@ -180,9 +180,10 @@ export const apiSlice = createApi({
   endpoints: (builder) => ({
     getPackages: builder.query<PackageItem[], void>({
       queryFn: async () => {
-        // Giả lập delay mạng nhẹ 400ms
+        // Giả lập delay mạng 400ms
         await new Promise((resolve) => setTimeout(resolve, 400));
-        return { data: [...mockPackagesData] };
+        // Deep clone các object để tránh Redux Toolkit tự động freeze dữ liệu gốc
+        return { data: mockPackagesData.map((pkg) => ({ ...pkg })) };
       },
       providesTags: ['Packages'],
     }),
@@ -191,24 +192,30 @@ export const apiSlice = createApi({
         await new Promise((resolve) => setTimeout(resolve, 1500));
         const { from, to } = payload;
         
+        // Tạo một bản sao mới của mảng và clone các object con để đảm bảo tính bất biến (immutability)
+        const updatedPackages = mockPackagesData.map((pkg) => ({ ...pkg }));
+
         // Tìm kiện hàng ở vị trí nguồn
-        const pkgIndex = mockPackagesData.findIndex(
+        const pkgIndex = updatedPackages.findIndex(
           (p) => p.shelfId === from.shelfId && p.cell === from.cell
         );
 
         if (pkgIndex !== -1) {
-          // Nếu ô đích đã có hàng, đổi chỗ hoặc ghi đè (ở đây ta giả sử ô đích trống hoặc ta đổi chỗ)
-          const destPkgIndex = mockPackagesData.findIndex(
+          // Nếu ô đích đã có hàng, tiến hành hoán đổi vị trí
+          const destPkgIndex = updatedPackages.findIndex(
             (p) => p.shelfId === to.shelfId && p.cell === to.cell
           );
+
           if (destPkgIndex !== -1) {
-            // Đổi chỗ 2 kiện hàng
-            mockPackagesData[destPkgIndex].shelfId = from.shelfId;
-            mockPackagesData[destPkgIndex].cell = from.cell;
+            updatedPackages[destPkgIndex].shelfId = from.shelfId;
+            updatedPackages[destPkgIndex].cell = from.cell;
           }
 
-          mockPackagesData[pkgIndex].shelfId = to.shelfId;
-          mockPackagesData[pkgIndex].cell = to.cell;
+          updatedPackages[pkgIndex].shelfId = to.shelfId;
+          updatedPackages[pkgIndex].cell = to.cell;
+
+          // Cập nhật lại mảng mock in-memory gốc
+          mockPackagesData = updatedPackages;
         }
 
         return { data: { success: true, message: 'Di chuyển thành công!' } };
