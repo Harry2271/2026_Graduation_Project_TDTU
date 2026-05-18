@@ -57,12 +57,20 @@ def generate_launch_description():
         arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'base_link', '--child-frame-id', 'laser']
     )
 
-    # Fake TF: odom -> base_link
-    odom_to_base_link_tf = Node(
+    # Fake TF: base_footprint -> base_link
+    base_footprint_to_base_link_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='odom_to_base_link',
-        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'odom', '--child-frame-id', 'base_link']
+        name='base_footprint_to_base_link',
+        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'base_footprint', '--child-frame-id', 'base_link']
+    )
+
+    # Fake TF: odom -> base_footprint
+    odom_to_base_footprint_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='odom_to_base_footprint',
+        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'odom', '--child-frame-id', 'base_footprint']
     )
 
     # Brain node
@@ -77,7 +85,8 @@ def generate_launch_description():
         serial_port_arg,
         lidar_model_arg,
         base_link_to_laser_tf,
-        odom_to_base_link_tf,
+        base_footprint_to_base_link_tf,
+        odom_to_base_footprint_tf,
         sllidar_launch,
         slam_toolbox_launch,
         brain_node
