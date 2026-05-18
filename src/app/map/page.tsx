@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -317,21 +318,23 @@ export default function MapPage() {
         setLidarStatus('waiting');
       };
 
-      ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
+      ws.onerror = () => {
+        // Tránh log lỗi Event thô gây ra màn hình overlay đỏ trên Next.js dev mode
+        console.warn(`[ROS 2 WebSocket] Không thể kết nối tới ${WS_URL}. Vui lòng kiểm tra lại server robot hoặc đường truyền.`);
         setWsStatus('disconnected');
         setLidarStatus('waiting');
       };
 
       wsRef.current = ws;
     } catch (err) {
-      console.error('Failed to connect WS:', err);
+      console.warn('[ROS 2 WebSocket] Khởi tạo kết nối thất bại:', err);
       setWsStatus('disconnected');
       setLidarStatus('waiting');
     }
   }, [processMapGrid]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     connectWs();
     return () => {
       if (wsRef.current) {
@@ -471,7 +474,7 @@ export default function MapPage() {
               'bg-rose-500'
             }`} />
             <span>
-              {wsStatus === 'connected' ? 'ROS 2 Online (9090)' :
+              {wsStatus === 'connected' ? 'ROS 2 Online' :
                wsStatus === 'connecting' ? 'Đang kết nối ROS 2...' :
                'ROS 2 Ngắt Kết Nối'}
             </span>
@@ -537,7 +540,7 @@ export default function MapPage() {
                 </span>
               </h4>
               <p className="text-sm text-amber-800 mt-1 max-w-4xl leading-relaxed">
-                Cổng WebSocket <strong>ROS 2 (9090)</strong> hoạt động bình thường, nhưng hệ thống không nhận được tín hiệu quét bản đồ (TF/OccupancyGrid). 
+                Cổng WebSocket <strong>ROS 2</strong> hoạt động bình thường, nhưng hệ thống không nhận được tín hiệu quét bản đồ (TF/OccupancyGrid). 
                 Khả năng cao Lidar chưa được kết nối vào cổng <code className="bg-amber-200/70 font-bold px-1.5 py-0.5 rounded text-amber-900 font-mono">/dev/ttyUSB0</code> hoặc cáp USB bị lỏng khiến container <code className="bg-amber-200/70 font-bold px-1.5 py-0.5 rounded text-amber-900 font-mono">robot-core</code> đang đứng ở chế độ chờ thiết bị.
               </p>
             </div>
