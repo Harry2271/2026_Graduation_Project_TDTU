@@ -5,6 +5,8 @@ services:
     container_name: robot_core
     privileged: true
     network_mode: host
+    ipc: host
+    pid: host
     volumes:
       - /dev:/dev
     environment:
@@ -20,6 +22,8 @@ services:
       dockerfile: Dockerfile.foxglove
     container_name: foxglove_bridge
     network_mode: host
+    ipc: host
+    pid: host
     environment:
       - ROS_DOMAIN_ID=0
     restart: always
