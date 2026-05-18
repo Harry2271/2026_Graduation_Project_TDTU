@@ -29,6 +29,11 @@ def generate_launch_description():
 
     # Sử dụng PathJoinSubstitution để nối đường dẫn an toàn và động trong ROS 2
     from launch.substitutions import PathJoinSubstitution
+    from launch_ros.actions import SetParameter
+
+    # Cấu hình tăng tốc độ quay động cơ Lidar (12 Hz thay vì chuẩn 10 Hz) và chế độ nhạy cao
+    lidar_speed_param = SetParameter(name='scan_frequency', value=12.0)
+    lidar_mode_param = SetParameter(name='scan_mode', value='Sensitivity')
 
     # Include sllidar launch file
     sllidar_launch = IncludeLaunchDescription(
@@ -89,6 +94,8 @@ def generate_launch_description():
     return LaunchDescription([
         serial_port_arg,
         lidar_model_arg,
+        lidar_speed_param,
+        lidar_mode_param,
         base_link_to_laser_tf,
         base_footprint_to_base_link_tf,
         odom_to_base_footprint_tf,
