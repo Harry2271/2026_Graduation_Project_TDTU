@@ -15,12 +15,12 @@ services:
       - LIDAR_PORT=/dev/ttyUSB0
     restart: always
 
-  # 2. Cổng giao tiếp Web (Tự build để tương thích Pi 5)
-  foxglove-bridge:
+  # 2. Cổng giao tiếp chuẩn ROSBridge WebSocket (Port 9090 cho Next.js Canvas 2D)
+  rosbridge-server:
     build:
       context: .
-      dockerfile: Dockerfile.foxglove
-    container_name: foxglove_bridge
+      dockerfile: Dockerfile.rosbridge
+    container_name: rosbridge_server
     network_mode: host
     ipc: host
     pid: host
