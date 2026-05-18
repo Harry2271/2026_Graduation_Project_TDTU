@@ -49,7 +49,7 @@ def generate_launch_description():
         )
     )
 
-    # Fake TF: base_link -> laser (Dùng tham số tường minh cho Humble)
+    # Fake TF: base_link -> laser (Dùng tham số tường minh cho Jazzy)
     base_link_to_laser_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',

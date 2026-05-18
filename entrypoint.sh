@@ -8,7 +8,7 @@ LIDAR_PORT=${LIDAR_PORT:-/dev/ttyUSB0}
 echo "--- Khởi động hệ thống với model Lidar: $LIDAR_MODEL ---"
 
 # Nạp môi trường ROS 2 và Workspace
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source /app/install/setup.bash
 
 echo "--- Đang đợi Lidar xuất hiện tại $LIDAR_PORT ---"

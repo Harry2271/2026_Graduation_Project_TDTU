@@ -1,12 +1,12 @@
-FROM ros:humble-ros-base
+FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. Cài các package tiêu chuẩn (Bỏ sllidar đi, thêm git để clone code)
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --fix-missing --no-install-recommends \
     python3-colcon-common-extensions \
-    ros-humble-slam-toolbox \
-    ros-humble-tf2-ros \
+    ros-jazzy-slam-toolbox \
+    ros-jazzy-tf2-ros \
     python3-serial \
     git \
     && apt-get clean \
@@ -22,7 +22,7 @@ RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
 # 4. Build toàn bộ workspace
 # Bỏ --symlink-install và thêm --executor sequential để tránh quá tải RAM (Exit code 2) trên Pi
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build --executor sequential"
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && colcon build --executor sequential"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
