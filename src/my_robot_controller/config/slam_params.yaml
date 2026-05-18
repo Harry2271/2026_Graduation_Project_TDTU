@@ -19,6 +19,23 @@ slam_toolbox:
     use_scan_barycenter: true
     minimum_time_interval: 0.2
 
+    # -------------------------------------------------------------------------
+    # 🌟 CÁC THÔNG SỐ KHỬ NHIỄU (NOISE FILTERING & CRISP WALLS)
+    # -------------------------------------------------------------------------
+    # Giới hạn tầm nhìn Lidar ở cự ly chuẩn 8.0 mét (Cắt bỏ hoàn toàn các tia xa bị nhiễu/suy hao)
+    max_laser_range: 8.0
+
+    # Tăng hình phạt sai số để loại bỏ các vệt tia phản xạ ảo từ cửa kính hoặc sàn bóng
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 0.5
+
+    # Tối ưu hóa vòng lặp khử nhiễu đốm (Speckle filter / Loop closure)
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+    # -------------------------------------------------------------------------
+
     # Các cấu hình tối ưu bộ giải phương trình (Solver) cho Pi 5
     solver_plugin: solver_plugins::CeresSolver
     ceres_linear_solver: DENSE_QR
