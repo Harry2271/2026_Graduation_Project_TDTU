@@ -6,6 +6,13 @@ import { Button, message, Tooltip, Modal } from 'antd';
 
 const WS_URL = "wss://map.nguyen-robot.io.vn"; // Tunnel trỏ vào port 9090 (rosbridge)
 
+interface TFNode {
+  parent: string;
+  x: number;
+  y: number;
+  yaw: number;
+}
+
 export default function MapPage() {
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [isResetting, setIsResetting] = useState(false);
@@ -19,7 +26,7 @@ export default function MapPage() {
   // Dùng Ref để lưu trữ thông số tham chiếu tính toán và cây TF real-time
   const mapMetadataRef = useRef<{ width: number; height: number; resolution: number; origin: any } | null>(null);
   const viewportScaleRef = useRef<number>(10);
-  const tfTreeRef = useRef<{ [childFrame: string]: { parent: string; x: number; y: number; yaw: number } }>({});
+  const tfTreeRef = useRef<{ [childFrame: string]: TFNode }>({});
 
   // Quản lý trạng thái Zoom (1.0 = 100% của khung nhìn vật lý)
   const zoomRef = useRef<number>(1.0);
@@ -53,7 +60,7 @@ export default function MapPage() {
 
     // Lần ngược cây TF lên tới gốc 'map'
     while (current && iterations < 10) {
-      const node = tree[current];
+      const node: TFNode | undefined = tree[current];
       if (!node) break;
 
       const cos = Math.cos(netYaw);
