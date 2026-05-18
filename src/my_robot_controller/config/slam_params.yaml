@@ -34,6 +34,19 @@ slam_toolbox:
     loop_match_minimum_chain_size: 10
     loop_match_minimum_response_coarse: 0.35
     loop_match_minimum_response_fine: 0.45
+
+    # -------------------------------------------------------------------------
+    # ⚓ BỘ LỌC LÀM MỊN & CHỐNG RUNG LẮC BẢN ĐỒ (ANTI-WOBBLE STABILIZER)
+    # -------------------------------------------------------------------------
+    # Tự động làm mịn và nội suy các bước nhảy tọa độ để khóa chặt vách tường
+    smooth_lagged_matches: true
+    correlation_search_space_dimension: 0.3
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.03
+
+    # Khóa chặt dung sai góc xoay, ngăn hiện tượng xoay/giật bản đồ khi tay bị rung
+    position_search_distance_resolution: 0.01
+    angle_search_distance_resolution: 0.001
     # -------------------------------------------------------------------------
 
     # Các cấu hình tối ưu bộ giải phương trình (Solver) cho Pi 5
