@@ -7,6 +7,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --fix-missing --n
     python3-colcon-common-extensions \
     ros-jazzy-slam-toolbox \
     ros-jazzy-tf2-ros \
+    ros-jazzy-rf2o-laser-odometry \
     python3-serial \
     git \
     && apt-get clean \
