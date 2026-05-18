@@ -27,6 +27,8 @@ jobs:
       # Xóa container cũ, build image mới (sử dụng multi-stage cache) và chạy container mới
       - name: Deploy with Docker Compose
         run: |
+          # Dọn dẹp container "web" cũ (nếu được tạo từ project cũ web-client) để tránh lỗi Conflict tên
+          docker rm -f web 2>/dev/null || true
           # Docker Compose sẽ tự làm hết: dừng, xóa, build, chạy
           docker compose up -d --build
           # Dọn dẹp image cũ để tiết kiệm dung lượng thẻ nhớ
