@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Move, Ruler, Compass, Target } from 'lucide-react';
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Move, Ruler, Compass, Target, AlertTriangle, Activity, WifiOff } from 'lucide-react';
 import { Button, message, Tooltip, Modal } from 'antd';
 
 const WS_URL = "wss://map.nguyen-robot.io.vn"; // Tunnel trỏ vào port 9090 (rosbridge)
@@ -15,6 +15,7 @@ interface TFNode {
 
 export default function MapPage() {
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [lidarStatus, setLidarStatus] = useState<'connected' | 'disconnected' | 'waiting'>('waiting');
   const [isResetting, setIsResetting] = useState(false);
   const [mapMetadata, setMapMetadata] = useState<{ width: number; height: number; resolution: number } | null>(null);
   const [viewportScaleMeters, setViewportScaleMeters] = useState<number>(10);
@@ -27,6 +28,25 @@ export default function MapPage() {
   const mapMetadataRef = useRef<{ width: number; height: number; resolution: number; origin: any } | null>(null);
   const viewportScaleRef = useRef<number>(10);
   const tfTreeRef = useRef<{ [childFrame: string]: TFNode }>({});
+  const lastMsgTimeRef = useRef<number>(0);
+
+  // Watchdog timer giám sát luồng dữ liệu từ Lidar
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (wsStatus === 'connected') {
+        const now = Date.now();
+        // Nếu quá 3 giây (3000ms) không nhận được bất kỳ dữ liệu TF/Map nào từ ROS 2
+        if (lastMsgTimeRef.current > 0 && now - lastMsgTimeRef.current <= 3000) {
+          setLidarStatus('connected');
+        } else {
+          setLidarStatus('disconnected');
+        }
+      } else {
+        setLidarStatus('waiting');
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [wsStatus]);
 
   // Quản lý trạng thái Zoom (1.0 = 100% của khung nhìn vật lý)
   const zoomRef = useRef<number>(1.0);
@@ -233,6 +253,7 @@ export default function MapPage() {
 
       ws.onopen = () => {
         setWsStatus('connected');
+        lastMsgTimeRef.current = 0;
         
         // Đăng ký topic /map
         try {
@@ -257,11 +278,13 @@ export default function MapPage() {
             
             // Xử lý bản đồ
             if (data.op === 'publish' && data.topic === '/map' && data.msg) {
+              lastMsgTimeRef.current = Date.now();
               const { info, data: gridData } = data.msg;
               processMapGrid(info, gridData);
             }
             // Xử lý dữ liệu TF real-time
             else if (data.op === 'publish' && (data.topic === '/tf' || data.topic === '/tf_static') && data.msg?.transforms) {
+              lastMsgTimeRef.current = Date.now();
               for (const tf of data.msg.transforms) {
                 const parent = tf.header?.frame_id;
                 const child = tf.child_frame_id;
@@ -291,17 +314,20 @@ export default function MapPage() {
 
       ws.onclose = () => {
         setWsStatus('disconnected');
+        setLidarStatus('waiting');
       };
 
       ws.onerror = (err) => {
         console.error('WebSocket error:', err);
         setWsStatus('disconnected');
+        setLidarStatus('waiting');
       };
 
       wsRef.current = ws;
     } catch (err) {
       console.error('Failed to connect WS:', err);
       setWsStatus('disconnected');
+      setLidarStatus('waiting');
     }
   }, [processMapGrid]);
 
@@ -432,8 +458,9 @@ export default function MapPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className={`flex items-center gap-2.5 px-4 py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm bg-white border ${
+        <div className="flex items-center gap-3">
+          {/* ROS 2 WebSocket Status Badge */}
+          <div className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm bg-white border ${
             wsStatus === 'connected' ? 'text-emerald-600 border-emerald-300' :
             wsStatus === 'connecting' ? 'text-amber-600 border-amber-300' :
             'text-rose-600 border-rose-300'
@@ -445,10 +472,39 @@ export default function MapPage() {
             }`} />
             <span>
               {wsStatus === 'connected' ? 'ROS 2 Online (9090)' :
-               wsStatus === 'connecting' ? 'Đang kết nối WebSocket...' :
-               'Robot Ngắt Kết Nối'}
+               wsStatus === 'connecting' ? 'Đang kết nối ROS 2...' :
+               'ROS 2 Ngắt Kết Nối'}
             </span>
           </div>
+
+          {/* Lidar Hardware Status Badge */}
+          <Tooltip title={
+            wsStatus !== 'connected' ? 'Chưa kết nối máy chủ ROS 2' :
+            lidarStatus === 'connected' ? 'Cảm biến Lidar hoạt động tốt và đang quét real-time' :
+            lidarStatus === 'waiting' ? 'Đang chờ nhận gói tin quét đầu tiên từ Lidar...' :
+            'ROS 2 hoạt động nhưng không có dữ liệu Lidar. Vui lòng kiểm tra dây nguồn và cáp USB (/dev/ttyUSB0)'
+          }>
+            <div className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm bg-white border ${
+              wsStatus !== 'connected' ? 'text-slate-400 border-slate-200 bg-slate-50' :
+              lidarStatus === 'connected' ? 'text-blue-600 border-blue-300' :
+              lidarStatus === 'waiting' ? 'text-amber-600 border-amber-300 bg-amber-50/50' :
+              'text-rose-600 border-rose-300 bg-rose-50/80 animate-pulse'
+            }`}>
+              {wsStatus !== 'connected' ? (
+                <WifiOff size={16} className="text-slate-400" />
+              ) : lidarStatus === 'connected' ? (
+                <Activity size={16} className="text-blue-500 animate-spin" />
+              ) : (
+                <AlertTriangle size={16} className={lidarStatus === 'waiting' ? "text-amber-500" : "text-rose-500"} />
+              )}
+              <span>
+                {wsStatus !== 'connected' ? 'Lidar Offline' :
+                 lidarStatus === 'connected' ? 'Lidar Đã Kết Nối' :
+                 lidarStatus === 'waiting' ? 'Đang Dò Lidar...' :
+                 'Lidar Mất Tín Hiệu'}
+              </span>
+            </div>
+          </Tooltip>
 
           <Tooltip title="Xóa toàn bộ bản đồ SLAM hiện tại trên RAM và bắt đầu quét lại phòng mới">
             <Button 
@@ -458,13 +514,47 @@ export default function MapPage() {
               icon={<RotateCcw size={18} className={isResetting ? "animate-spin" : ""} />}
               loading={isResetting}
               onClick={confirmReset}
-              className="flex items-center gap-2 px-6 py-3 rounded-2xl font-bold shadow-md hover:shadow-red-500/20 transition-all text-sm"
+              className="flex items-center gap-2 px-6 py-3 rounded-2xl font-bold shadow-md hover:shadow-red-500/20 transition-all text-sm ml-1"
             >
               Reset Bản Đồ
             </Button>
           </Tooltip>
         </div>
       </div>
+
+      {/* Alert Banner cảnh báo khi Lidar mất kết nối */}
+      {wsStatus === 'connected' && (lidarStatus === 'disconnected' || lidarStatus === 'waiting') && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-amber-50/90 border border-amber-200 text-amber-950 px-6 py-4 rounded-3xl shadow-sm transition-all">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100/80 flex items-center justify-center text-amber-600 shrink-0 border border-amber-200/50 shadow-inner">
+              <AlertTriangle size={24} className="animate-bounce" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-base text-amber-950 flex items-center gap-2">
+                Không phát hiện luồng dữ liệu từ cảm biến Lidar
+                <span className="bg-amber-200 text-amber-800 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider font-mono">
+                  Diagnostics
+                </span>
+              </h4>
+              <p className="text-sm text-amber-800 mt-1 max-w-4xl leading-relaxed">
+                Cổng WebSocket <strong>ROS 2 (9090)</strong> hoạt động bình thường, nhưng hệ thống không nhận được tín hiệu quét bản đồ (TF/OccupancyGrid). 
+                Khả năng cao Lidar chưa được kết nối vào cổng <code className="bg-amber-200/70 font-bold px-1.5 py-0.5 rounded text-amber-900 font-mono">/dev/ttyUSB0</code> hoặc cáp USB bị lỏng khiến container <code className="bg-amber-200/70 font-bold px-1.5 py-0.5 rounded text-amber-900 font-mono">robot-core</code> đang đứng ở chế độ chờ thiết bị.
+              </p>
+            </div>
+          </div>
+          <Button 
+            type="default" 
+            size="middle" 
+            onClick={() => {
+              message.info('Đang gửi yêu cầu thử kết nối lại...');
+              connectWs();
+            }}
+            className="border-amber-300 text-amber-900 font-bold rounded-2xl px-5 py-2.5 shadow-sm hover:border-amber-400 hover:bg-amber-100/50 transition-all text-xs uppercase"
+          >
+            Thử Kết Nối Lại
+          </Button>
+        </div>
+      )}
 
       {/* Standalone Native HTML5 Canvas 2D Viewer: Màn hình Radar tối màu (Dark Slate) nằm lọt lòng giữa nền Web sáng */}
       <div 
