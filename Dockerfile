@@ -9,6 +9,12 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# --- HỨNG BIẾN TỪ DOCKER COMPOSE VÀ CHUYỂN THÀNH ENV LÚC BUILD ---
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+# ---------------------------------------------------------------
+
 # Build Next.js standalone mode
 RUN corepack enable && yarn build
 

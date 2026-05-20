@@ -4,6 +4,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # --- THÊM ĐOẠN NÀY ĐỂ TRUYỀN BIẾN LÚC BUILD ---
+      args:
+        - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+      # ---------------------------------------------
       cache_from:
         - park-smart-web:latest
     container_name: web
