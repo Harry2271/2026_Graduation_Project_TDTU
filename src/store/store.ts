@@ -1,14 +1,14 @@
 import { configureStore } from '@reduxjs/toolkit';
 import inventoryReducer from './inventorySlice';
-import { apiSlice } from './apiSlice';
+import { inventoryApi } from './services/inventoryApi';
 
 export const store = configureStore({
   reducer: {
     inventory: inventoryReducer,
-    [apiSlice.reducerPath]: apiSlice.reducer,
+    [inventoryApi.reducerPath]: inventoryApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(apiSlice.middleware),
+    getDefaultMiddleware().concat(inventoryApi.middleware),
 });
 
 export type RootState = ReturnType<typeof store.getState>;

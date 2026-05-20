@@ -1,13 +1,12 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
 import { Modal, Button, message, Tag, Badge, Input, Collapse, Spin, Tooltip, Empty } from 'antd';
 import { ArrowRight, PackageOpen, Send, Search, Package, Layers, Info, CheckCircle, ArrowLeftRight } from 'lucide-react';
-import { RootState } from '@/store/store';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setSource, setDest, resetInventory, SelectedCell } from '@/store/inventorySlice';
-import { useSubmitMoveCommandMutation, useGetPackagesQuery } from '@/store/apiSlice';
-import { PackageItem } from '@/types/inventory';
+import { useGetAllSlotsQuery, useGetPackagesQuery, useMovePackageMutation } from '@/store/services/inventoryApi';
+import { parseSlotCode, toSlotCode, PackageItem, ShelfSlot } from '@/types/inventory';
 
 const ROWS = ['A', 'B', 'C', 'D'];
 const COLS = ['1', '2', '3', '4'];
@@ -22,13 +21,14 @@ const SHELF_POSITIONS = [
 ];
 
 export default function InventoryPage() {
-  const dispatch = useDispatch();
-  const source = useSelector((state: RootState) => state.inventory.source);
-  const dest = useSelector((state: RootState) => state.inventory.dest);
-  
-  // RTK Query hooks
+  const dispatch = useAppDispatch();
+  const source = useAppSelector((state) => state.inventory.source);
+  const dest = useAppSelector((state) => state.inventory.dest);
+
+  // API hooks
+  const { data: slots = [], isLoading: isSlotsLoading } = useGetAllSlotsQuery();
   const { data: packages = [], isLoading: isPackagesLoading } = useGetPackagesQuery();
-  const [submitMoveCommand, { isLoading: isMoving }] = useSubmitMoveCommandMutation();
+  const [movePackage, { isLoading: isMoving }] = useMovePackageMutation();
 
   // Local state
   const [activeShelf, setActiveShelf] = useState<ShelfId | null>(null);
@@ -39,31 +39,49 @@ export default function InventoryPage() {
 
   const selectedCount = (source ? 1 : 0) + (dest ? 1 : 0);
 
-  // Tối ưu hóa Hash Map O(1) để tra cứu kiện hàng theo ô: key = `${shelfId}-${cell}`
+  // _id → PackageItem
   const packageMap = useMemo(() => {
     const map: Record<string, PackageItem> = {};
     packages.forEach((pkg) => {
-      map[`${pkg.shelfId}-${pkg.cell}`] = pkg;
+      const slot = slots.find((s) => s.packageId === pkg._id);
+      if (slot) {
+        const { shelfId, cell } = parseSlotCode(slot.code);
+        map[pkg._id] = { ...pkg, shelfId, cell, importedAt: pkg.createdAt ?? new Date().toISOString() };
+      }
     });
     return map;
-  }, [packages]);
+  }, [packages, slots]);
 
-  // Nhóm kiện hàng theo kệ O(1) để hiển thị danh sách bên phải
+  // `${shelfId}-${cell}` → ShelfSlot
+  const positionSlotMap = useMemo(() => {
+    const map: Record<string, ShelfSlot> = {};
+    slots.forEach((slot) => {
+      const { shelfId, cell } = parseSlotCode(slot.code);
+      map[`${shelfId}-${cell}`] = slot;
+    });
+    return map;
+  }, [slots]);
+
+  // Nhóm kiện hàng theo kệ
   const packagesByShelf = useMemo(() => {
     const groups: Record<number, PackageItem[]> = { 1: [], 2: [], 3: [], 4: [] };
     packages.forEach((pkg) => {
-      if (groups[pkg.shelfId]) {
-        if (!searchTerm || 
-            pkg.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-            pkg.code.toLowerCase().includes(searchTerm.toLowerCase())) {
-          groups[pkg.shelfId].push(pkg);
-        }
+      const slot = slots.find((s) => s.packageId === pkg._id);
+      if (!slot) return;
+      const { shelfId, cell } = parseSlotCode(slot.code);
+      if (!groups[shelfId]) return;
+      const item: PackageItem = { ...pkg, shelfId, cell, importedAt: pkg.createdAt ?? new Date().toISOString() };
+      if (
+        !searchTerm ||
+        item.packageName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item._id.toLowerCase().includes(searchTerm.toLowerCase())
+      ) {
+        groups[shelfId].push(item);
       }
     });
     return groups;
-  }, [packages, searchTerm]);
+  }, [packages, slots, searchTerm]);
 
-  // Kiểm tra trạng thái của một ô bất kỳ
   const getCellStatus = (shelfId: number, cell: string): 'source' | 'dest' | 'none' => {
     if (source?.shelfId === shelfId && source?.cell === cell) return 'source';
     if (dest?.shelfId === shelfId && dest?.cell === cell) return 'dest';
@@ -92,7 +110,6 @@ export default function InventoryPage() {
     }
   };
 
-  // Xác nhận chọn ô đích
   const handleConfirmDest = () => {
     if (pendingCell) dispatch(setDest(pendingCell));
     setIsConfirmDestOpen(false);
@@ -129,7 +146,9 @@ export default function InventoryPage() {
       return;
     }
     try {
-      await submitMoveCommand({ from: source, to: dest }).unwrap();
+      const sourceSlotCode = toSlotCode(source.shelfId, source.cell);
+      const targetSlotCode = toSlotCode(dest.shelfId, dest.cell);
+      await movePackage({ sourceSlotCode, targetSlotCode }).unwrap();
       message.success('Gửi lệnh di chuyển thành công!');
       dispatch(resetInventory());
     } catch {
@@ -137,9 +156,17 @@ export default function InventoryPage() {
     }
   };
 
-  // Chọn nhanh từ danh sách
   const selectFromList = (shelfId: number, cell: string) => {
     handleCellClick(shelfId as ShelfId, cell);
+  };
+
+  const totalPackages = packages.length;
+  const isLoading = isSlotsLoading || isPackagesLoading;
+
+  const getPackageForCell = (shelfId: number, cell: string) => {
+    const slot = positionSlotMap[`${shelfId}-${cell}`];
+    if (!slot || !slot.packageId) return null;
+    return packageMap[slot.packageId] ?? null;
   };
 
   return (
@@ -176,8 +203,10 @@ export default function InventoryPage() {
                 onClose={(e) => { e.preventDefault(); handleRemoveSource(); }}
               >
                 Kệ {source.shelfId} – Ô {source.cell}
-                {packageMap[`${source.shelfId}-${source.cell}`] && (
-                  <span className="font-normal opacity-90 ml-1">({packageMap[`${source.shelfId}-${source.cell}`].name})</span>
+                {getPackageForCell(source.shelfId, source.cell) && (
+                  <span className="font-normal opacity-90 ml-1">
+                    ({getPackageForCell(source.shelfId, source.cell)?.packageName})
+                  </span>
                 )}
               </Tag>
             ) : (
@@ -195,8 +224,10 @@ export default function InventoryPage() {
                 onClose={(e) => { e.preventDefault(); handleRemoveDest(); }}
               >
                 Kệ {dest.shelfId} – Ô {dest.cell}
-                {packageMap[`${dest.shelfId}-${dest.cell}`] && (
-                  <span className="font-normal opacity-90 ml-1">({packageMap[`${dest.shelfId}-${dest.cell}`].name})</span>
+                {getPackageForCell(dest.shelfId, dest.cell) && (
+                  <span className="font-normal opacity-90 ml-1">
+                    ({getPackageForCell(dest.shelfId, dest.cell)?.packageName})
+                  </span>
                 )}
               </Tag>
             ) : (
@@ -214,19 +245,19 @@ export default function InventoryPage() {
           <div className="absolute inset-12 flex flex-col justify-between max-w-5xl mx-auto my-auto h-[calc(100%-6rem)]">
             {/* Hàng kệ trên (1 & 2) */}
             <div className="flex justify-between w-full z-10">
-              <ShelfCard 
-                shelf={SHELF_POSITIONS[0]} 
-                source={source} 
-                dest={dest} 
+              <ShelfCard
+                shelf={SHELF_POSITIONS[0]}
+                source={source}
+                dest={dest}
                 packageCount={packagesByShelf[1]?.length || 0}
-                onClick={() => setActiveShelf(1)} 
+                onClick={() => setActiveShelf(1)}
               />
-              <ShelfCard 
-                shelf={SHELF_POSITIONS[1]} 
-                source={source} 
-                dest={dest} 
+              <ShelfCard
+                shelf={SHELF_POSITIONS[1]}
+                source={source}
+                dest={dest}
                 packageCount={packagesByShelf[2]?.length || 0}
-                onClick={() => setActiveShelf(2)} 
+                onClick={() => setActiveShelf(2)}
               />
             </div>
 
@@ -243,19 +274,19 @@ export default function InventoryPage() {
 
             {/* Hàng kệ dưới (3 & 4) */}
             <div className="flex justify-between w-full z-10">
-              <ShelfCard 
-                shelf={SHELF_POSITIONS[2]} 
-                source={source} 
-                dest={dest} 
+              <ShelfCard
+                shelf={SHELF_POSITIONS[2]}
+                source={source}
+                dest={dest}
                 packageCount={packagesByShelf[3]?.length || 0}
-                onClick={() => setActiveShelf(3)} 
+                onClick={() => setActiveShelf(3)}
               />
-              <ShelfCard 
-                shelf={SHELF_POSITIONS[3]} 
-                source={source} 
-                dest={dest} 
+              <ShelfCard
+                shelf={SHELF_POSITIONS[3]}
+                source={source}
+                dest={dest}
                 packageCount={packagesByShelf[4]?.length || 0}
-                onClick={() => setActiveShelf(4)} 
+                onClick={() => setActiveShelf(4)}
               />
             </div>
           </div>
@@ -276,9 +307,9 @@ export default function InventoryPage() {
             </span>
           </div>
           <div className="flex gap-3">
-            <Button 
-              size="large" 
-              onClick={() => dispatch(resetInventory())} 
+            <Button
+              size="large"
+              onClick={() => dispatch(resetInventory())}
               disabled={selectedCount === 0 || isMoving}
               className="rounded-xl font-medium"
             >
@@ -305,7 +336,7 @@ export default function InventoryPage() {
           <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
             <Package className="text-blue-600" size={22} /> Danh Sách Kiện Hàng
           </h2>
-          <Badge count={packages.length} style={{ backgroundColor: '#2563eb', fontWeight: 'bold' }} />
+          <Badge count={totalPackages} style={{ backgroundColor: '#2563eb', fontWeight: 'bold' }} />
         </div>
 
         <div className="p-4 border-b border-slate-100 bg-white">
@@ -321,15 +352,15 @@ export default function InventoryPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
-          {isPackagesLoading ? (
+          {isLoading ? (
             <div className="flex flex-col items-center justify-center h-64 gap-3">
               <Spin size="large" />
               <p className="text-sm text-slate-500 font-medium">Đang tải danh sách hàng hóa...</p>
             </div>
-          ) : packages.length === 0 ? (
+          ) : totalPackages === 0 ? (
             <Empty description="Kho hàng đang trống" className="mt-12" />
           ) : (
-            <Collapse 
+            <Collapse
               defaultActiveKey={['1', '2', '3', '4']}
               ghost
               items={SHELF_POSITIONS.map((shelf) => {
@@ -351,8 +382,8 @@ export default function InventoryPage() {
                       {shelfPackages.map((pkg) => {
                         const cellStatus = getCellStatus(pkg.shelfId, pkg.cell);
                         return (
-                          <div 
-                            key={pkg.id}
+                          <div
+                            key={pkg._id}
                             className={`p-3.5 rounded-xl border bg-white shadow-xs transition-all hover:shadow-md ${
                               cellStatus === 'source'
                                 ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/50'
@@ -363,8 +394,8 @@ export default function InventoryPage() {
                           >
                             <div className="flex items-start justify-between gap-2 mb-2">
                               <div>
-                                <h4 className="font-bold text-slate-800 text-sm leading-snug">{pkg.name}</h4>
-                                <span className="text-xs font-mono text-slate-400 font-medium">{pkg.code}</span>
+                                <h4 className="font-bold text-slate-800 text-sm leading-snug">{pkg.packageName}</h4>
+                                <span className="text-xs font-mono text-slate-400 font-medium">{pkg._id.slice(-8).toUpperCase()}</span>
                               </div>
                               <span className="inline-flex items-center justify-center px-2 py-1 bg-slate-100 text-slate-700 font-bold text-xs rounded-lg border border-slate-200">
                                 Ô {pkg.cell}
@@ -372,15 +403,14 @@ export default function InventoryPage() {
                             </div>
 
                             <div className="text-xs text-slate-500 flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
-                              <span>Trọng lượng: <strong className="text-slate-700">{pkg.weight} kg</strong></span>
-                              <span>Nhập: <span className="text-slate-600">{pkg.importedAt.split(' ')[1]}</span></span>
+                              <span>Ngày nhập: <strong className="text-slate-700">{new Date(pkg.importedAt).toLocaleDateString('vi-VN')}</strong></span>
                             </div>
 
                             <div className="mt-3 flex gap-2">
                               {cellStatus === 'none' ? (
-                                <Button 
-                                  size="small" 
-                                  type="primary" 
+                                <Button
+                                  size="small"
+                                  type="primary"
                                   ghost
                                   onClick={() => selectFromList(pkg.shelfId, pkg.cell)}
                                   className="w-full text-xs font-semibold rounded-lg hover:bg-blue-50"
@@ -431,12 +461,12 @@ export default function InventoryPage() {
               COLS.map((col) => {
                 const cell = `${row}${col}`;
                 const status = getCellStatus(activeShelf, cell);
-                const item = packageMap[`${activeShelf}-${cell}`];
+                const item = getPackageForCell(activeShelf, cell);
 
                 return (
-                  <Tooltip 
+                  <Tooltip
                     key={cell}
-                    title={item ? `${item.name} (${item.code}) - ${item.weight}kg` : `Ô ${cell} (Trống)`}
+                    title={item ? `${item.packageName} - ${item._id.slice(-8).toUpperCase()}` : `Ô ${cell} (Trống)`}
                     placement="top"
                   >
                     <button
@@ -455,9 +485,9 @@ export default function InventoryPage() {
                       <div className="flex items-center justify-between w-full">
                         <span className={`text-xs font-black px-2 py-0.5 rounded-md ${
                           status === 'source' || status === 'dest'
-                            ? 'bg-white/20 text-white' 
-                            : item 
-                            ? 'bg-blue-100 text-blue-700' 
+                            ? 'bg-white/20 text-white'
+                            : item
+                            ? 'bg-blue-100 text-blue-700'
                             : 'bg-slate-200 text-slate-600'
                         }`}>
                           {cell}
@@ -474,12 +504,12 @@ export default function InventoryPage() {
                             <p className={`text-xs font-bold leading-tight line-clamp-2 ${
                               status !== 'none' ? 'text-white' : 'text-slate-800 group-hover:text-blue-600'
                             }`}>
-                              {item.name}
+                              {item.packageName}
                             </p>
                             <p className={`text-[10px] mt-1 font-mono opacity-80 line-clamp-1 ${
                               status !== 'none' ? 'text-white/80' : 'text-slate-400'
                             }`}>
-                              {item.code}
+                              {item._id.slice(-8).toUpperCase()}
                             </p>
                           </div>
                         ) : (
@@ -531,13 +561,19 @@ export default function InventoryPage() {
               <div className="flex items-center gap-3">
                 <span className="w-16 font-bold text-xs text-slate-500 uppercase tracking-wider">Từ (Nguồn):</span>
                 <strong className="text-blue-600 bg-blue-50 px-3 py-1 rounded-lg border border-blue-200">
-                  Kệ {source.shelfId} – Ô {source.cell} {packageMap[`${source.shelfId}-${source.cell}`] ? `(${packageMap[`${source.shelfId}-${source.cell}`].name})` : '(Trống)'}
+                  Kệ {source.shelfId} – Ô {source.cell}{' '}
+                  {getPackageForCell(source.shelfId, source.cell)
+                    ? `(${getPackageForCell(source.shelfId, source.cell)?.packageName})`
+                    : '(Trống)'}
                 </strong>
               </div>
               <div className="flex items-center gap-3">
                 <span className="w-16 font-bold text-xs text-slate-500 uppercase tracking-wider">Đến (Đích):</span>
                 <strong className="text-emerald-600 bg-emerald-50 px-3 py-1 rounded-lg border border-emerald-200">
-                  Kệ {pendingCell.shelfId} – Ô {pendingCell.cell} {packageMap[`${pendingCell.shelfId}-${pendingCell.cell}`] ? `(${packageMap[`${pendingCell.shelfId}-${pendingCell.cell}`].name})` : '(Trống)'}
+                  Kệ {pendingCell.shelfId} – Ô {pendingCell.cell}{' '}
+                  {getPackageForCell(pendingCell.shelfId, pendingCell.cell)
+                    ? `(${getPackageForCell(pendingCell.shelfId, pendingCell.cell)?.packageName})`
+                    : '(Trống)'}
                 </strong>
               </div>
             </div>
@@ -600,9 +636,9 @@ function ShelfCard({
     <button
       onClick={onClick}
       className={`w-72 p-6 rounded-2xl flex flex-col justify-between transition-all group relative text-left border border-slate-700/80 backdrop-blur-md shadow-2xl overflow-hidden ${
-        hasSource 
-          ? 'bg-gradient-to-br from-blue-900/90 to-slate-900 border-blue-500/80 ring-4 ring-blue-500/20 shadow-blue-500/20' 
-          : hasDest 
+        hasSource
+          ? 'bg-gradient-to-br from-blue-900/90 to-slate-900 border-blue-500/80 ring-4 ring-blue-500/20 shadow-blue-500/20'
+          : hasDest
           ? 'bg-gradient-to-br from-emerald-900/90 to-slate-900 border-emerald-500/80 ring-4 ring-emerald-500/20 shadow-emerald-500/20'
           : 'bg-slate-800/80 hover:bg-slate-800 hover:border-blue-500/60 hover:shadow-[0_0_30px_rgba(59,130,246,0.15)]'
       }`}
@@ -612,15 +648,15 @@ function ShelfCard({
         <span className="text-xs font-mono font-bold tracking-widest text-slate-400 uppercase">
           {shelf.corner.split(' - ')[0]}
         </span>
-        <Badge 
-          count={packageCount > 0 ? `${packageCount} kiện` : 'Trống'} 
-          style={{ 
-            backgroundColor: packageCount > 0 ? '#3b82f6' : '#64748b', 
+        <Badge
+          count={packageCount > 0 ? `${packageCount} kiện` : 'Trống'}
+          style={{
+            backgroundColor: packageCount > 0 ? '#3b82f6' : '#64748b',
             color: '#fff',
             fontWeight: 'bold',
             fontSize: '11px',
             boxShadow: 'none'
-          }} 
+          }}
         />
       </div>
 
