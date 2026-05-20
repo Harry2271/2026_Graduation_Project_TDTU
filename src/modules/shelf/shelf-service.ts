@@ -78,21 +78,21 @@ export class ShelfService implements IShelfService, OnModuleInit {
 
     const slot = await this.shelfRepository.findSlotByCode(slotCode);
     if (!slot) {
-      throw new NotFoundException(`Slot "${slotCode}" not found`);
+      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
     }
 
     if (slot.status === SlotStatus.OCCUPIED) {
-      throw new BadRequestException(`Slot "${slotCode}" is already occupied`);
+      throw new BadRequestException(`Vị trí "${slotCode}" đã có hàng hóa`);
     }
 
     const alreadyAssigned = await this.shelfRepository.findSlotByPackageId(packageObjectId);
     if (alreadyAssigned) {
-      throw new BadRequestException(`Package "${packageId}" is already assigned to slot "${alreadyAssigned.code}"`);
+      throw new BadRequestException(`Package "${packageId}" đã được đặt tại vị trí "${alreadyAssigned.code}"`);
     }
 
     const updated = await this.shelfRepository.assignPackageToSlot(slotCode, packageObjectId);
     if (!updated) {
-      throw new NotFoundException(`Slot "${slotCode}" not found`);
+      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
     }
     return updated;
   }
@@ -100,25 +100,25 @@ export class ShelfService implements IShelfService, OnModuleInit {
   async movePackage(fromSlotCode: string, targetSlotCode: string): Promise<ShelfSlot> {
     const fromSlot = await this.shelfRepository.findSlotByCode(fromSlotCode);
     if (!fromSlot) {
-      throw new NotFoundException(`Slot "${fromSlotCode}" not found`);
+      throw new NotFoundException(`Không tìm thấy vị trí nguồn "${fromSlotCode}"`);
     }
     if (fromSlot.status === SlotStatus.AVAILABLE || !fromSlot.packageId) {
-      throw new BadRequestException(`Slot "${fromSlotCode}" has no package to move`);
+      throw new BadRequestException(`Vị trí "${fromSlotCode}" không có package để di chuyển`);
     }
 
     const targetSlot = await this.shelfRepository.findSlotByCode(targetSlotCode);
     if (!targetSlot) {
-      throw new NotFoundException(`Target slot "${targetSlotCode}" not found`);
+      throw new NotFoundException(`Không tìm thấy vị trí đích "${targetSlotCode}"`);
     }
     if (targetSlot.status === SlotStatus.OCCUPIED) {
-      throw new BadRequestException(`Target slot "${targetSlotCode}" is already occupied`);
+      throw new BadRequestException(`Vị trí đích "${targetSlotCode}" đã có hàng hóa`);
     }
 
     const packageId = fromSlot.packageId;
     await this.shelfRepository.clearSlot(fromSlotCode);
     const updated = await this.shelfRepository.assignPackageToSlot(targetSlotCode, packageId);
     if (!updated) {
-      throw new NotFoundException(`Target slot "${targetSlotCode}" not found`);
+      throw new NotFoundException(`Không tìm thấy vị trí đích "${targetSlotCode}"`);
     }
     return updated;
   }
@@ -126,10 +126,10 @@ export class ShelfService implements IShelfService, OnModuleInit {
   async removePackage(slotCode: string): Promise<void> {
     const slot = await this.shelfRepository.findSlotByCode(slotCode);
     if (!slot) {
-      throw new NotFoundException(`Slot "${slotCode}" not found`);
+      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
     }
     if (slot.status === SlotStatus.AVAILABLE) {
-      throw new BadRequestException(`Slot "${slotCode}" is already empty`);
+      throw new BadRequestException(`Vị trí "${slotCode}" đang trống`);
     }
     await this.shelfRepository.clearSlot(slotCode);
   }

@@ -7,7 +7,7 @@ export const DatabaseConfig = MongooseModule.forRootAsync({
     const mongoUri = configService.get<string>('MONGO_URI');
 
     if (!mongoUri) {
-      throw new Error('MONGO_URI is not defined in the environment variables');
+      throw new Error('MONGO_URI chưa được khai báo trong file .env');
     }
 
     return { uri: mongoUri };

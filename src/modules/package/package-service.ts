@@ -41,7 +41,7 @@ export class PackageService implements IPackageService {
   async findById(id: string): Promise<Package> {
     const found = await this.packageRepository.findById(id);
     if (!found) {
-      throw new NotFoundException(`Package with id "${id}" not found`);
+      throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
     }
     return found;
   }
@@ -49,7 +49,7 @@ export class PackageService implements IPackageService {
   async update(id: string, dto: UpdatePackageDto): Promise<Package> {
     const updated = await this.packageRepository.update(id, dto);
     if (!updated) {
-      throw new NotFoundException(`Package with id "${id}" not found`);
+      throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
     }
     return updated;
   }
@@ -57,7 +57,7 @@ export class PackageService implements IPackageService {
   async remove(id: string): Promise<void> {
     const found = await this.packageRepository.findById(id);
     if (!found) {
-      throw new NotFoundException(`Package with id "${id}" not found`);
+      throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
     }
     await this.packageRepository.remove(id);
   }
