@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Package, Map as MapIcon, Camera, Cpu } from 'lucide-react';
+import { Package, Map as MapIcon, Camera } from 'lucide-react';
 
 const menuItems = [
   { name: 'Kho hàng', path: '/inventory', icon: Package },
@@ -16,13 +16,15 @@ export default function Sidebar() {
   return (
     <aside className="w-[240px] min-h-screen bg-white border-r border-gray-200 flex flex-col fixed left-0 top-0 bottom-0 z-10">
       {/* Brand */}
-      <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-        <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-          <Cpu size={16} className="text-white" />
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+        <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center bg-white border border-gray-200">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/LOGO.png" alt="Logo TDTU" className="w-full h-full object-contain" />
         </div>
         <div>
-          <p className="font-bold text-gray-900 text-sm leading-tight">Robot Control</p>
-          <p className="text-xs text-gray-400">Warehouse System</p>
+          <p className="font-bold text-[13px] text-gray-900 leading-tight">Đồ án tốt nghiệp</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Tôn Đức Thắng University</p>
+          <p className="text-[10px] text-gray-300 mt-0.5">Robot Warehouse Control</p>
         </div>
       </div>
 
@@ -55,7 +57,7 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div className="px-6 py-4 border-t border-gray-100">
-        <p className="text-xs text-gray-400">v1.0.0 — Park Smart</p>
+        <p className="text-xs text-gray-400">Capstone Project — TDTU</p>
       </div>
     </aside>
   );

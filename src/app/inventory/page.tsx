@@ -177,10 +177,10 @@ export default function InventoryPage() {
         <div className="px-8 py-5 bg-white border-b border-slate-200 shadow-sm flex justify-between items-center z-10">
           <div>
             <h1 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
-              <Layers className="text-blue-600" size={28} /> Hệ Thống Quản Lý Kho Thông Minh
+              <Layers className="text-blue-600" size={28} /> Robot Warehouse Control
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Giám sát vị trí trực quan và điều phối robot vận chuyển tự động
+              Đồ án tốt nghiệp — Tôn Đức Thắng University &nbsp;|&nbsp; Giám sát kho hàng tự động
             </p>
           </div>
           <div className="flex items-center gap-3">
