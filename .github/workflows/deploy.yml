@@ -20,7 +20,7 @@ jobs:
           # Dùng > để ghi đè file mới tinh, tránh dính rác từ lần chạy trước
           cat <<EOF > .env
           PORT=${{ vars.PORT }}
-          NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL }}
           EOF
           echo ">>> Khởi tạo .env thành công."
 
