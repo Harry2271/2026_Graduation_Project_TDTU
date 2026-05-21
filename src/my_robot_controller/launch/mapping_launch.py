@@ -1,57 +1,60 @@
 import os
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+
 def generate_launch_description():
-    # Declare launch arguments
+    # Launch arguments
     serial_port_arg = DeclareLaunchArgument(
         'serial_port',
         default_value='/dev/ttyUSB0',
-        description='Specifying usb port to connected lidar'
+        description='USB port for Slamtec SLLidar'
     )
-    
+
+    esp32_port_arg = DeclareLaunchArgument(
+        'esp32_port',
+        default_value='/dev/ttyUSB1',
+        description='USB port for ESP32-S3 motor controller'
+    )
+
     lidar_model_arg = DeclareLaunchArgument(
         'lidar_model',
         default_value='a1',
         description='Lidar model (a1, a2m8, a3, etc.)'
     )
 
-    serial_port = LaunchConfiguration('serial_port')
-    lidar_model = LaunchConfiguration('lidar_model')
+    camera_device_arg = DeclareLaunchArgument(
+        'camera_device',
+        default_value='0',
+        description='Camera device index for QR detection (0=/dev/video0)'
+    )
 
-    # Get the launch directories for included packages
+    serial_port   = LaunchConfiguration('serial_port')
+    esp32_port    = LaunchConfiguration('esp32_port')
+    lidar_model   = LaunchConfiguration('lidar_model')
+    camera_device = LaunchConfiguration('camera_device')
+
+    # Package share path
+    my_robot_pkg_share = FindPackageShare('my_robot_controller').find('my_robot_controller')
+
+    # Slamtec SLLidar launch
     sllidar_pkg_share = FindPackageShare('sllidar_ros2').find('sllidar_ros2')
-    slam_toolbox_pkg_share = FindPackageShare('slam_toolbox').find('slam_toolbox')
-
-    # Sử dụng PathJoinSubstitution để nối đường dẫn an toàn và động trong ROS 2
-    from launch.substitutions import PathJoinSubstitution
-    from launch_ros.actions import SetParameter
-
-    # Cấu hình tăng tốc độ quay động cơ Lidar (12 Hz thay vì chuẩn 10 Hz) và chế độ nhạy cao
-    lidar_speed_param = SetParameter(name='scan_frequency', value=12.0)
-    lidar_mode_param = SetParameter(name='scan_mode', value='Sensitivity')
-
-    # Include sllidar launch file
     sllidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            PathJoinSubstitution([
-                sllidar_pkg_share,
-                'launch',
-                PythonExpression(["'sllidar_' + '", lidar_model, "' + '_launch.py'"])
-            ])
+            os.path.join(sllidar_pkg_share, 'launch',
+                         PythonExpression(["'sllidar_' + '", lidar_model, "' + '_launch.py'"])
+                         )
         ),
         launch_arguments={'serial_port': serial_port}.items()
     )
 
-    # Đường dẫn file cấu hình SLAM Toolbox tối ưu cho Pi 5
-    my_robot_pkg_share = FindPackageShare('my_robot_controller').find('my_robot_controller')
+    # SLAM Toolbox launch
+    slam_toolbox_pkg_share = FindPackageShare('slam_toolbox').find('slam_toolbox')
     slam_params_file = os.path.join(my_robot_pkg_share, 'config', 'slam_params.yaml')
-
-    # Include slam_toolbox online_async launch file với cấu hình custom
     slam_toolbox_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(slam_toolbox_pkg_share, 'launch', 'online_async_launch.py')
@@ -59,41 +62,73 @@ def generate_launch_description():
         launch_arguments={'slam_params_file': slam_params_file}.items()
     )
 
-    # Fake TF: base_link -> laser (Dùng tham số tường minh cho Jazzy)
+    # ---- Lidar speed/mode params (override driver defaults) ----
+    from launch.substitutions import PathJoinSubstitution
+    from launch_ros.actions import SetParameter
+    lidar_speed_param = SetParameter(name='scan_frequency', value=12.0)
+    lidar_mode_param  = SetParameter(name='scan_mode',      value='Sensitivity')
+
+    # ---- Static TF Publishers ----
     base_link_to_laser_tf = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
+        package='tf2_ros', executable='static_transform_publisher',
         name='base_link_to_laser',
-        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'base_link', '--child-frame-id', 'laser']
+        arguments=['--x', '0', '--y', '0', '--z', '0',
+                   '--yaw', '0', '--pitch', '0', '--roll', '0',
+                   '--frame-id', 'base_link', '--child-frame-id', 'laser']
     )
-
-    # Fake TF: base_footprint -> base_link
     base_footprint_to_base_link_tf = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
+        package='tf2_ros', executable='static_transform_publisher',
         name='base_footprint_to_base_link',
-        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'base_footprint', '--child-frame-id', 'base_link']
+        arguments=['--x', '0', '--y', '0', '--z', '0',
+                   '--yaw', '0', '--pitch', '0', '--roll', '0',
+                   '--frame-id', 'base_footprint', '--child-frame-id', 'base_link']
     )
-
-    # Fake TF: odom -> base_footprint
     odom_to_base_footprint_tf = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
+        package='tf2_ros', executable='static_transform_publisher',
         name='odom_to_base_footprint',
-        arguments=['--x', '0', '--y', '0', '--z', '0', '--yaw', '0', '--pitch', '0', '--roll', '0', '--frame-id', 'odom', '--child-frame-id', 'base_footprint']
+        arguments=['--x', '0', '--y', '0', '--z', '0',
+                   '--yaw', '0', '--pitch', '0', '--roll', '0',
+                   '--frame-id', 'odom', '--child-frame-id', 'base_footprint']
     )
 
-    # Brain node
+    # ---- Brain Node ----
     brain_node = Node(
         package='my_robot_controller',
         executable='brain',
         name='brain_node',
-        output='screen'
+        output='screen',
+        parameters=[{
+            'esp32_port': esp32_port,
+        }],
+        env={
+            'ESP32_PORT': esp32_port,
+            'ROS_DOMAIN_ID': '0',
+        }
+    )
+
+    # ---- QR Detector Node ----
+    qr_detector_node = Node(
+        package='my_robot_controller',
+        executable='qr_detector',
+        name='qr_detector_node',
+        output='screen',
+        parameters=[{
+            'camera_device': camera_device,
+            'camera_width': 640,
+            'camera_height': 480,
+        }],
+        env={
+            'CAMERA_DEVICE': camera_device,
+            'ROS_DOMAIN_ID': '0',
+        }
     )
 
     return LaunchDescription([
+        SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
         serial_port_arg,
+        esp32_port_arg,
         lidar_model_arg,
+        camera_device_arg,
         lidar_speed_param,
         lidar_mode_param,
         base_link_to_laser_tf,
@@ -101,5 +136,6 @@ def generate_launch_description():
         odom_to_base_footprint_tf,
         sllidar_launch,
         slam_toolbox_launch,
-        brain_node
+        brain_node,
+        qr_detector_node,
     ])

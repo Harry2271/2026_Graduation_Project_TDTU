@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"e:/robot-controller/src/esp32_firmware/motor_control\")"
+    ]
+  }
+}

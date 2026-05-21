@@ -1,5 +1,5 @@
 services:
-  # 1. Core mapping system (giữ nguyên)
+  # 1. Core robot system (Lidar + SLAM + Brain + QR Detector)
   robot-core:
     build: .
     container_name: robot_core
@@ -9,13 +9,19 @@ services:
     pid: host
     volumes:
       - /dev:/dev
+      - /dev/video0:/dev/video0          # USB webcam for QR detection
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0        # Slamtec SLLidar
+      - /dev/ttyUSB1:/dev/ttyUSB1        # ESP32-S3 motor controller
     environment:
       - ROS_DOMAIN_ID=0
-      - LIDAR_MODEL=a1  # <-- Nếu ông dùng A1M8 thì để a1, dùng A2M8 thì sửa thành a2m8
+      - LIDAR_MODEL=a1                    # Use a1 for A1M8 lidar
       - LIDAR_PORT=/dev/ttyUSB0
+      - ESP32_PORT=/dev/ttyUSB1
+      - CAMERA_DEVICE=0
     restart: always
 
-  # 2. Cổng giao tiếp chuẩn ROSBridge WebSocket (Port 9090 cho Next.js Canvas 2D)
+  # 2. ROSBridge WebSocket server (port 9090 for web frontend)
   rosbridge-server:
     build:
       context: .
