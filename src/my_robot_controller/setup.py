@@ -26,7 +26,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'brain = my_robot_controller.brain_node:main'
+            'brain = my_robot_controller.brain_node:main',
+            'qr_detector = my_robot_controller.qr_detector:main',
         ],
     },
 )
