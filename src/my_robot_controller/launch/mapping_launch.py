@@ -123,6 +123,17 @@ def generate_launch_description():
         }
     )
 
+    # ---- Web Bridge Node (WebSocket JSON server on port 8080) ----
+    web_bridge_node = Node(
+        package='my_robot_controller',
+        executable='web_bridge',
+        name='web_bridge',
+        output='screen',
+        env={
+            'ROS_DOMAIN_ID': '0',
+        }
+    )
+
     return LaunchDescription([
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
         serial_port_arg,
@@ -138,4 +149,5 @@ def generate_launch_description():
         slam_toolbox_launch,
         brain_node,
         qr_detector_node,
+        web_bridge_node,
     ])

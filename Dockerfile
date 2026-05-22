@@ -15,6 +15,7 @@ RUN apt-get update && apt-get upgrade -y && \
     python3-serial \
     python3-opencv \
     python3-numpy \
+    python3-websockets \
     libopencv-dev \
     libv4l-dev \
     libgtk-3-dev \

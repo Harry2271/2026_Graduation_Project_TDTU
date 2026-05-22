@@ -17,7 +17,7 @@ setup(
         # Include config files
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'websockets>=10.0'],
     zip_safe=True,
     maintainer='User',
     maintainer_email='user@todo.todo',
@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             'brain = my_robot_controller.brain_node:main',
             'qr_detector = my_robot_controller.qr_detector:main',
+            'web_bridge = my_robot_controller.web_bridge:main',
         ],
     },
 )

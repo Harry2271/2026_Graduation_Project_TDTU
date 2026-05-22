@@ -19,6 +19,8 @@ services:
       - LIDAR_PORT=/dev/ttyUSB0
       - ESP32_PORT=/dev/ttyUSB1
       - CAMERA_DEVICE=0
+    ports:
+      - "8080:8080"                       # WebBridge WebSocket JSON server
     restart: always
 
   # 2. ROSBridge WebSocket server (port 9090 for web frontend)
