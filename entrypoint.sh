@@ -12,13 +12,23 @@ echo "  Lidar port   : $LIDAR_PORT"
 echo "  ESP32 port   : $ESP32_PORT"
 echo "  Camera device: /dev/video$CAMERA_DEVICE"
 
-# Source ROS 2 and our workspace
+# Source ROS 2 and our workspace — this sets PYTHONPATH and ROS environment
 source /opt/ros/jazzy/setup.bash
 source /app/install/setup.bash
 
 # Verify dependencies
 python3 -c "import rclpy; print('rclpy OK')"
 python3 -c "import websockets; print('websockets OK')"
+
+# Paths to installed scripts (created by colcon build)
+BRAIN_BIN="/app/install/my_robot_controller/lib/my_robot_controller/brain_node"
+QR_BIN="/app/install/my_robot_controller/lib/my_robot_controller/qr_detector"
+WEB_BRIDGE_BIN="/app/install/my_robot_controller/lib/my_robot_controller/web_bridge"
+
+echo "--- Binary paths ---"
+echo "  brain:      $BRAIN_BIN"
+echo "  qr_detector: $QR_BIN"
+echo "  web_bridge: $WEB_BRIDGE_BIN"
 
 # --- Hot-plug monitoring for Lidar ---
 start_lidar_monitor() {
@@ -61,7 +71,7 @@ else
     echo "[esp32-monitor] ESP32 not detected at $ESP32_PORT — will retry on startup"
 fi
 
-# --- Start non-device-dependent nodes directly via Python module runner ---
+# --- Start non-device-dependent nodes ---
 echo "--- Launching SLAM + Brain + QR + WebBridge (lidar starts when detected) ---"
 
 # SLAM Toolbox
@@ -77,14 +87,14 @@ ros2 run tf2_ros static_transform_publisher \
 
 # Brain Node
 export ESP32_PORT="$ESP32_PORT"
-python3 -m my_robot_controller.brain_node --ros-args -r __node:=brain_node &
+"$BRAIN_BIN" --ros-args -r __node:=brain_node &
 
 # QR Detector
 export CAMERA_DEVICE="$CAMERA_DEVICE"
-python3 -m my_robot_controller.qr_detector --ros-args -r __node:=qr_detector_node &
+"$QR_BIN" --ros-args -r __node:=qr_detector_node &
 
 # Web Bridge
-python3 -m my_robot_controller.web_bridge --ros-args -r __node:=web_bridge &
+"$WEB_BRIDGE_BIN" --ros-args -r __node:=web_bridge &
 
 # --- Start lidar hot-plug monitor in background ---
 start_lidar_monitor &
