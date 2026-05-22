@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Move, Ruler, Compass, Target, AlertTriangle, Activity, WifiOff } from 'lucide-react';
-import { Button, message, Tooltip, Modal } from 'antd';
+import { Button, notification, Tooltip, Modal } from 'antd';
 
 const WS_URL = "wss://map.nguyen-robot.io.vn"; // Tunnel trỏ vào port 9090 (rosbridge)
 
@@ -302,9 +302,9 @@ export default function MapPage() {
             else if (data.op === 'service_response' && data.service === '/slam_toolbox/reset') {
               setIsResetting(false);
               if (data.result === false) {
-                message.error('Lỗi reset bản đồ (service_response: false)');
+                notification.error({ message: 'Lỗi reset bản đồ', description: 'service_response: false', placement: 'topRight' });
               } else {
-                message.success('Đã reset bản đồ thành công!');
+                notification.success({ message: 'Thành công', description: 'Đã reset bản đồ thành công!', placement: 'topRight' });
               }
             }
           } catch (e) {
@@ -407,7 +407,7 @@ export default function MapPage() {
 
   const handleResetMap = () => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      message.warning('Đang kết nối lại với robot...');
+      notification.warning({ message: 'Đang kết nối lại', description: 'Đang kết nối lại với robot...', placement: 'topRight' });
       connectWs();
       return;
     }
@@ -424,7 +424,7 @@ export default function MapPage() {
       setTimeout(() => {
         setIsResetting((prev) => {
           if (prev) {
-            message.success('Đã gửi lệnh reset bản đồ (rosbridge) thành công!');
+            notification.success({ message: 'Thành công', description: 'Đã gửi lệnh reset bản đồ (rosbridge) thành công!', placement: 'topRight' });
             return false;
           }
           return prev;
@@ -433,7 +433,7 @@ export default function MapPage() {
     } catch (err) {
       console.error('Error sending rosbridge reset call:', err);
       setIsResetting(false);
-      message.error('Không thể gửi lệnh reset tới robot.');
+      notification.error({ message: 'Thất bại', description: 'Không thể gửi lệnh reset tới robot.', placement: 'topRight' });
     }
   };
 
@@ -549,7 +549,7 @@ export default function MapPage() {
             type="default" 
             size="middle" 
             onClick={() => {
-              message.info('Đang gửi yêu cầu thử kết nối lại...');
+              notification.info({ message: 'Đang thử kết nối lại...', placement: 'topRight' });
               connectWs();
             }}
             className="border-amber-300 text-amber-900 font-bold rounded-2xl px-5 py-2.5 shadow-sm hover:border-amber-400 hover:bg-amber-100/50 transition-all text-xs uppercase"

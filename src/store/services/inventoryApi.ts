@@ -1,4 +1,5 @@
 import { baseApi } from "./baseApi";
+import { getSocket } from "@/lib/socket";
 import type {
   Package,
   PackagePaginatedResponseDto,
@@ -20,6 +21,38 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: () => "/packages",
       transformResponse: (response: PackagePaginatedResponseDto) => response.items,
       providesTags: (): TagDescription[] => [{ type: "Packages" }],
+      async onCacheEntryAdded(_arg, { updateCachedData, cacheEntryRemoved }) {
+        const socket = getSocket();
+
+        socket.on("package:created", (newPkg: Package) => {
+          updateCachedData((draft) => {
+            if (!Array.isArray(draft)) return;
+            const exists = draft.some((p) => p._id === newPkg._id);
+            if (!exists) draft.push(newPkg);
+          });
+        });
+
+        socket.on("package:updated", (updatedPkg: Package) => {
+          updateCachedData((draft) => {
+            if (!Array.isArray(draft)) return;
+            const idx = draft.findIndex((p) => p._id === updatedPkg._id);
+            if (idx >= 0) draft[idx] = updatedPkg;
+          });
+        });
+
+        socket.on("package:deleted", (id: string) => {
+          updateCachedData((draft) => {
+            if (!Array.isArray(draft)) return;
+            const idx = draft.findIndex((p) => p._id === id);
+            if (idx >= 0) draft.splice(idx, 1);
+          });
+        });
+
+        await cacheEntryRemoved;
+        socket.off("package:created");
+        socket.off("package:updated");
+        socket.off("package:deleted");
+      },
     }),
 
     getPackageById: builder.query<Package, string>({
@@ -59,6 +92,55 @@ export const inventoryApi = baseApi.injectEndpoints({
     getAllSlots: builder.query<ShelfSlot[], void>({
       query: () => "/shelves/slots",
       providesTags: (): TagDescription[] => [{ type: "Slots" }],
+      async onCacheEntryAdded(_arg, { updateCachedData, cacheEntryRemoved }) {
+        const socket = getSocket();
+
+        socket.on("shelf:updated", (updatedSlot: ShelfSlot) => {
+          updateCachedData((draft) => {
+            if (!Array.isArray(draft)) return;
+
+            // ── Step 1: Upsert the updated slot ────────────────────
+            const destIdx = draft.findIndex((s) => s.code === updatedSlot.code);
+            const prevDestSlot = destIdx >= 0 ? draft[destIdx] : null;
+
+            // ── Step 2: Find the source slot — the slot that previously
+            // held the same package but is NOT the destination.
+            // This handles both MOVE and ASSIGN scenarios. ─────────────
+            const sourceSlot = draft.find(
+              (s) =>
+                s.packageId === updatedSlot.packageId &&
+                s.code !== updatedSlot.code
+            );
+
+            if (sourceSlot) {
+              // Package moved from sourceSlot → updatedSlot
+              sourceSlot.packageId = null;
+              sourceSlot.status = "AVAILABLE";
+            } else if (
+              prevDestSlot &&
+              prevDestSlot.packageId &&
+              prevDestSlot.packageId !== updatedSlot.packageId
+            ) {
+              // Package was replaced in-place (assign to an occupied slot)
+              // The displaced package becomes unassigned — no slot to show it.
+              // We leave it orphaned in the packages list; the backend owns
+              // that state and will re-emit if the slot is ever used again.
+              prevDestSlot.packageId = null;
+              prevDestSlot.status = "AVAILABLE";
+            }
+
+            // ── Step 3: Upsert destination slot ─────────────────────
+            if (destIdx >= 0) {
+              draft[destIdx] = updatedSlot;
+            } else {
+              draft.push(updatedSlot);
+            }
+          });
+        });
+
+        await cacheEntryRemoved;
+        socket.off("shelf:updated");
+      },
     }),
 
     getSlotsByShelf: builder.query<ShelfSlot[], string>({

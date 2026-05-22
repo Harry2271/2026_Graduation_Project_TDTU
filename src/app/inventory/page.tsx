@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Modal, Button, message, Tag, Badge, Input, Collapse, Spin, Tooltip, Empty } from 'antd';
+import { Modal, Button, notification, Tag, Badge, Input, Collapse, Spin, Tooltip, Empty } from 'antd';
 import { ArrowRight, PackageOpen, Send, Search, Package, Layers, Info, CheckCircle, ArrowLeftRight } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setSource, setDest, resetInventory, SelectedCell } from '@/store/inventorySlice';
@@ -103,10 +103,25 @@ export default function InventoryPage() {
     if (!source) {
       dispatch(setSource({ shelfId, cell }));
     } else if (!dest) {
+      // Block occupied destination slot at selection time
+      const slotKey = `${shelfId}-${cell}`;
+      const slot = positionSlotMap[slotKey];
+      if (slot?.packageId) {
+        notification.warning({
+          message: 'Ô đích đã có kiện hàng',
+          description: 'Vui lòng chọn một ô trống để di chuyển.',
+          placement: 'topRight',
+        });
+        return;
+      }
       setPendingCell({ shelfId, cell });
       setIsConfirmDestOpen(true);
     } else {
-      message.warning('Chỉ được chọn tối đa 2 ô. Hãy huỷ ô đã chọn để chọn lại.');
+      notification.warning({
+        message: 'Chỉ được chọn tối đa 2 ô',
+        description: 'Hãy huỷ ô đã chọn để chọn lại.',
+        placement: 'topRight',
+      });
     }
   };
 
@@ -142,17 +157,34 @@ export default function InventoryPage() {
 
   const handleSubmit = async () => {
     if (!source || !dest) {
-      message.warning('Vui lòng chọn đủ ô nguồn và ô đích trước khi gửi lệnh.');
+      notification.warning({
+        message: 'Chưa chọn đủ vị trí',
+        description: 'Vui lòng chọn đủ ô nguồn và ô đích trước khi gửi lệnh.',
+        placement: 'topRight',
+      });
       return;
     }
+
     try {
       const sourceSlotCode = toSlotCode(source.shelfId, source.cell);
       const targetSlotCode = toSlotCode(dest.shelfId, dest.cell);
       await movePackage({ sourceSlotCode, targetSlotCode }).unwrap();
-      message.success('Gửi lệnh di chuyển thành công!');
+      notification.success({
+        message: 'Thành công',
+        description: 'Gửi lệnh di chuyển thành công!',
+        placement: 'topRight',
+      });
       dispatch(resetInventory());
-    } catch {
-      message.error('Gửi lệnh thất bại!');
+    } catch (err: unknown) {
+      const errMsg =
+        (err as { data?: { message?: string } })?.data?.message ||
+        (err as { error?: string })?.error ||
+        'Gửi lệnh thất bại!';
+      notification.error({
+        message: 'Thất bại',
+        description: errMsg,
+        placement: 'topRight',
+      });
     }
   };
 

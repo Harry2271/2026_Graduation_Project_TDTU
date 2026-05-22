@@ -5,9 +5,10 @@ import { usePathname } from 'next/navigation';
 import { Package, Map as MapIcon, Camera } from 'lucide-react';
 
 const menuItems = [
-  { name: 'Kho hàng', path: '/inventory', icon: Package },
-  { name: 'Bản đồ',   path: '/map',       icon: MapIcon  },
-  { name: 'Camera',   path: '/camera',    icon: Camera   },
+  { name: 'Kho hàng',           path: '/inventory', icon: Package  },
+  { name: 'Quản lý kiện hàng',  path: '/products',  icon: Package  },
+  { name: 'Bản đồ',             path: '/map',         icon: MapIcon  },
+  { name: 'Camera',             path: '/camera',     icon: Camera   },
 ];
 
 export default function Sidebar() {
