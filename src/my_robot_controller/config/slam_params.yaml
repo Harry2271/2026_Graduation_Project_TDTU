@@ -7,49 +7,74 @@ slam_toolbox:
     use_map_saver: true
     mode: online
 
-    # 1. Tăng tốc độ cập nhật bản đồ lên Foxglove (mỗi 1.5s thay vì 5.0s mặc định)
-    map_update_interval: 1.5
+    # --- Map Update Frequency ---
+    # Reduce to 2.0s to minimize drift accumulation between updates
+    map_update_interval: 2.0
 
-    # 2. VÔ HIỆU HÓA rào cản odometry tĩnh (Cho = 0.0 để luôn luôn vẽ và nạp bản đồ khi cầm tay)
+    # --- Odometry-free scanning (hand-carried) ---
+    # Allow map updates while stationary for hand-held scanning
     minimum_travel_distance: 0.0
     minimum_travel_heading: 0.0
 
-    # 3. Kích hoạt tối đa tính năng khớp tia quét (Scan Matching) khi thiếu odometry bánh xe
+    # --- Scan Matching ---
     use_scan_matching: true
     use_scan_barycenter: true
     minimum_time_interval: 0.2
 
     # -------------------------------------------------------------------------
-    # 🌟 CÁC THÔNG SỐ KHỬ NHIỄU (NOISE FILTERING & CRISP WALLS)
+    # Occupancy Grid — Conservative thresholds for clean walls
     # -------------------------------------------------------------------------
-    # Giới hạn tầm nhìn Lidar ở cự ly chuẩn 8.0 mét (Cắt bỏ hoàn toàn các tia xa bị nhiễu/suy hao)
-    max_laser_range: 8.0
+    # Lower occ/unc thresholds = stricter occupancy decisions
+    # Reduces scattered noise in free space
+    occupancy_threshold: 0.65
+    prior_threshold: 0.50
 
-    # Tăng hình phạt sai số để loại bỏ các vệt tia phản xạ ảo từ cửa kính hoặc sàn bóng
-    distance_variance_penalty: 0.5
-    angle_variance_penalty: 0.5
+    # Speckle filter — REMOVE isolated single-point noise clusters
+    # Only removes connected components smaller than this in FREE space
+    # (not in occupied space)
+    do_beams_backward_scan_cleanup: true
 
-    # Tối ưu hóa vòng lặp khử nhiễu đốm (Speckle filter / Loop closure)
+    # Scan buffer for outlier rejection
+    scan_buffer_max_distance: 5.0
+    scan_buffer_alpha: 0.1
+    scan_buffer_phi: 0.15
+
+    # -------------------------------------------------------------------------
+    # Laser Range — CUT NOISE FROM DISTANT READINGS
+    # -------------------------------------------------------------------------
+    # 4.0m is optimal for indoor: cuts dust/air noise while covering rooms
+    max_laser_range: 4.0
+
+    # -------------------------------------------------------------------------
+    # Loop Closure — reduce false positive loop matches
+    # -------------------------------------------------------------------------
     do_loop_closing: true
-    loop_match_minimum_chain_size: 10
-    loop_match_minimum_response_coarse: 0.35
-    loop_match_minimum_response_fine: 0.45
+    loop_match_minimum_chain_size: 15
+    loop_match_minimum_response_coarse: 0.45
+    loop_match_minimum_response_fine: 0.55
+    loop_match_minimum_distance: 2.5
 
     # -------------------------------------------------------------------------
-    # ⚓ BỘ LỌC LÀM MỊN & CHỐNG RUNG LẮC BẢN ĐỒ (ANTI-WOBBLE STABILIZER)
+    # Correlation Search Space — tighter for stable walls
     # -------------------------------------------------------------------------
-    # Tự động làm mịn và nội suy các bước nhảy tọa độ để khóa chặt vách tường
     smooth_lagged_matches: true
-    correlation_search_space_dimension: 0.3
+    correlation_search_space_dimension: 0.25
     correlation_search_space_resolution: 0.01
     correlation_search_space_smear_deviation: 0.03
 
-    # Khóa chặt dung sai góc xoay, ngăn hiện tượng xoay/giật bản đồ khi tay bị rung
-    position_search_distance_resolution: 0.01
-    angle_search_distance_resolution: 0.001
-    # -------------------------------------------------------------------------
+    # Coarser search = faster + more stable, fine for indoor
+    position_search_distance_resolution: 0.02
+    angle_search_distance_resolution: 0.005
 
-    # Các cấu hình tối ưu bộ giải phương trình (Solver) cho Pi 5
+    # -------------------------------------------------------------------------
+    # Variance penalty — reject glass/floor reflections
+    # -------------------------------------------------------------------------
+    distance_variance_penalty: 0.7
+    angle_variance_penalty: 0.7
+
+    # -------------------------------------------------------------------------
+    # Solver — Ceres for Pi 5
+    # -------------------------------------------------------------------------
     solver_plugin: solver_plugins::CeresSolver
     ceres_linear_solver: DENSE_QR
     ceres_precoditioner: SCHUR_JACOBI
