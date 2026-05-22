@@ -15,7 +15,7 @@ RUN apt-get update && apt-get upgrade -y && \
     python3-serial \
     python3-opencv \
     python3-numpy \
-    python3-websockets \
+    python3-pip \
     libopencv-dev \
     libv4l-dev \
     libgtk-3-dev \
@@ -33,13 +33,12 @@ RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
 # 4. Build workspace (sequential to avoid RAM exhaustion on Pi 5)
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    colcon build --executor sequential && \
-    pip install websockets"
+    colcon build --executor sequential"
 
-# 5. Re-install the Python package so entry points are registered correctly
+# 5. Install websockets and re-register Python entry points
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    source /app/install/setup.bash && \
-    pip install --no-deps -e /app/src/my_robot_controller"
+    pip3 install websockets && \
+    pip3 install --no-deps -e /app/src/my_robot_controller"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
