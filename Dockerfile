@@ -32,14 +32,12 @@ COPY src/ /app/src/
 RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
 # 4. Build workspace (sequential to avoid RAM exhaustion on Pi 5)
+# colcon uses --install-layout=deb which breaks importlib.metadata on Ubuntu 24.04.
+# We override with --install-layout=opt after the build so entry points are findable.
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    colcon build --executor sequential"
-
-# 5. Install websockets and re-register Python entry points
-# --break-system-packages is safe in Docker (isolated environment)
-RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    pip3 install --break-system-packages websockets && \
-    pip3 install --break-system-packages --no-deps -e /app/src/my_robot_controller"
+    colcon build --executor sequential && \
+    pip3 install --break-system-packages --install-layout=opt --no-deps -e /app/src/my_robot_controller && \
+    pip3 install --break-system-packages websockets"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

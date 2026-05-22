@@ -2,7 +2,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch_ros.actions import SetParameter
 from launch_ros.substitutions import FindPackageShare
 
@@ -16,18 +16,15 @@ def generate_launch_description():
         description='Lidar model (a1, a2m8, a3, etc.)')
 
     serial_port = LaunchConfiguration('serial_port')
-    lidar_model = LaunchConfiguration('lidar_model')
 
     sllidar_pkg = FindPackageShare('sllidar_ros2').find('sllidar_ros2')
 
-    # PathJoinSubstitution builds <pkg>/launch/sllidar_<model>_launch.py
-    lidar_launch_path = PathJoinSubstitution([
-        sllidar_pkg,
-        'launch',
-        'sllidar_',
-        lidar_model,
-        '_launch.py',
-    ])
+    # Use TextSubstitution with text= to build the full path as one string.
+    # Paths with / must be in a single TextSubstitution so they aren't
+    # split by PathJoinSubstitution's internal delimiter logic.
+    launch_file = TextSubstitution(
+        text=sllidar_pkg + '/launch/sllidar_' +
+             LaunchConfiguration('lidar_model') + '_launch.py')
 
     return LaunchDescription([
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
@@ -36,6 +33,6 @@ def generate_launch_description():
         SetParameter(name='scan_frequency', value=12.0),
         SetParameter(name='scan_mode', value='Sensitivity'),
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(lidar_launch_path),
+            PythonLaunchDescriptionSource(launch_file),
             launch_arguments={'serial_port': serial_port}.items()),
     ])
