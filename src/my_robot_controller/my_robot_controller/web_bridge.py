@@ -170,12 +170,11 @@ class WebSocketServer:
         self.lock = threading.Lock()
         self.running = True
 
-    async def _ws_handler(self, ws):
+    async def _ws_handler(self, ws, path=None):
         with self.lock:
             self.clients.add(ws)
         try:
             async for msg in ws:
-                # Client can send commands
                 try:
                     cmd = json.loads(msg)
                     self._handle_command(cmd)
@@ -223,11 +222,11 @@ class WebSocketServer:
 
     async def _serve(self):
         import websockets
-        async with websockets.Server(HOST, PORT) as server:
+        async with websockets.serve(self._ws_handler, HOST, PORT) as server:
             asyncio.create_task(self._broadcast_loop())
             asyncio.create_task(self._ping_loop())
-            async for ws in server:
-                await self._ws_handler(ws)
+            # Keep server running — websockets.serve() keeps the context open
+            await asyncio.Future()
 
     def run(self):
         asyncio.run(self._serve())
