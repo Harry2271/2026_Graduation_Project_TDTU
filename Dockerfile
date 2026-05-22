@@ -36,9 +36,10 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
     colcon build --executor sequential"
 
 # 5. Install websockets and re-register Python entry points
+# --break-system-packages is safe in Docker (isolated environment)
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    pip3 install websockets && \
-    pip3 install --no-deps -e /app/src/my_robot_controller"
+    pip3 install --break-system-packages websockets && \
+    pip3 install --break-system-packages --no-deps -e /app/src/my_robot_controller"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
