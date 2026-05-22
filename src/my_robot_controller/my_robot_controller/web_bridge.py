@@ -6,10 +6,13 @@ WebSocket bridge node for robot-controller.
 Subscribes to:
   /scan          -> cartesian {x, y} points
   /map           -> occupancy grid metadata + flat data
-  /tf (map→base_footprint) -> robot pose {x, y, theta}
+  /tf (map->base_footprint) -> robot pose {x, y, theta}
   /robot_status  -> robot state string
 
-Publishes clean JSON to all connected WebSocket clients on port 8080.
+Publishes clean JSON to all connected WebSocket clients on port 9091.
+
+Handles hot-plug gracefully: if lidar is unplugged, no scan messages are
+sent; when it reconnects, scan messages resume automatically.
 
 Message types (all JSON):
   { "type": "scan",   "data": { "points": [{x,y}, ...], "count": N } }
@@ -19,6 +22,8 @@ Message types (all JSON):
   { "type": "pose",   "data": { "x": 0.0, "y": 0.0, "theta": 0.0 } }
   { "type": "status", "data": "STATE=IDLE QR=none ..." }
   { "type": "ping" }                           # keepalive (sent every 5s)
+  { "type": "info",   "data": { "lidar": true, "map": false, "pose": false } }
+                                             # device availability snapshot
 """
 
 import asyncio
@@ -48,11 +53,17 @@ class WebBridge(Node):
         super().__init__('web_bridge')
         self.msg_queue = msg_queue
 
+        # Device availability tracking
+        self.lidar_seen: bool = False
+        self.map_seen: bool = False
+        self.pose_seen: bool = False
+        self.last_info_emit: float = 0.0
+
         # TF2: get robot pose in map frame
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Subscriptions
+        # Subscriptions — create them, they'll activate when topics are published
         self.create_subscription(LaserScan, '/scan', self._on_scan, 10)
         self.create_subscription(OccupancyGrid, '/map', self._on_map, 10)
         self.create_subscription(String, '/robot_status', self._on_status, 10)
@@ -60,7 +71,12 @@ class WebBridge(Node):
         # Pose polling timer (10 Hz)
         self.create_timer(0.1, self._poll_pose)
 
-        self.get_logger().info(f'WebBridge started — serving on {HOST}:{PORT}')
+        # Device info broadcast (every 5s)
+        self.create_timer(5.0, self._broadcast_info)
+
+        self.get_logger().info(f'WebBridge started — serving on ws://{HOST}:{PORT}')
+        self.get_logger().info('Subscribed to /scan, /map, /tf, /robot_status')
+        self.get_logger().info('Topics become active when devices are connected')
 
     def _emit(self, msg: dict):
         try:
@@ -68,7 +84,22 @@ class WebBridge(Node):
         except queue.Full:
             pass
 
+    def _broadcast_info(self):
+        now = time.time()
+        if now - self.last_info_emit < 4.5:
+            return
+        self.last_info_emit = now
+        self._emit({
+            'type': 'info',
+            'data': {
+                'lidar': self.lidar_seen,
+                'map': self.map_seen,
+                'pose': self.pose_seen,
+            }
+        })
+
     def _on_scan(self, msg: LaserScan):
+        self.lidar_seen = True
         points = []
         angle = msg.angle_min
         for r in msg.ranges:
@@ -81,6 +112,7 @@ class WebBridge(Node):
         self._emit({'type': 'scan', 'data': {'points': points, 'count': len(points)}})
 
     def _on_map(self, msg: OccupancyGrid):
+        self.map_seen = True
         self._emit({
             'type': 'map',
             'data': {
@@ -107,6 +139,7 @@ class WebBridge(Node):
                 'map', 'base_footprint', rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1))
             q = t.transform.rotation
             theta = self._euler_from_quat(q.x, q.y, q.z, q.w)
+            self.pose_seen = True
             self._emit({
                 'type': 'pose',
                 'data': {
@@ -116,6 +149,7 @@ class WebBridge(Node):
                 }
             })
         except Exception:
+            # Pose not available — normal before SLAM converges
             pass
 
     @staticmethod

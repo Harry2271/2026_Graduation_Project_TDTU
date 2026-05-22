@@ -89,12 +89,18 @@ class BrainNode(Node):
         self.esp_serial: serial.Serial = None
         self.serial_lock = threading.Lock()
         self.esp_response: str = ''
+        self.esp_connected: bool = False
         self._connect_esp32()
 
         # Serial read thread
         self.serial_thread = threading.Thread(
             target=self._read_serial_loop, daemon=True)
         self.serial_thread.start()
+
+        # Hot-plug monitor thread for ESP32
+        self.esp_monitor_thread = threading.Thread(
+            target=self._esp32_hotplug_monitor, daemon=True)
+        self.esp_monitor_thread.start()
 
         # Command dispatch timer (10 Hz)
         self.command_timer = self.create_timer(0.1, self._command_loop)
@@ -115,9 +121,27 @@ class BrainNode(Node):
             self.esp_serial = serial.Serial(
                 ESP_PORT, ESP_BAUD, timeout=SERIAL_TIMEOUT)
             self.esp_serial.reset_input_buffer()
-            self.get_logger().info(f'Connected to ESP32 on {ESP_PORT}')
+            self.esp_connected = True
+            self.get_logger().info(f'ESP32 connected on {ESP_PORT}')
         except serial.SerialException as e:
-            self.get_logger().warn(f'ESP32 not connected: {e} — continuing without motor control')
+            self.esp_serial = None
+            self.esp_connected = False
+            self.get_logger().warn(f'ESP32 not found at {ESP_PORT}: {e} — will retry')
+
+    def _esp32_hotplug_monitor(self):
+        """Continuously monitor ESP32 plug/unplug and reconnect automatically."""
+        while rclpy.ok():
+            if not self.esp_connected or self.esp_serial is None or not self.esp_serial.is_open:
+                if os.path.exists(ESP_PORT):
+                    self.get_logger().info(f'ESP32 detected at {ESP_PORT} — connecting...')
+                    self._connect_esp32()
+                    if self.esp_connected:
+                        self.get_logger().info(f'ESP32 reconnected successfully')
+                        # Restart serial read thread to pick up the new connection
+                        self.serial_thread = threading.Thread(
+                            target=self._read_serial_loop, daemon=True)
+                        self.serial_thread.start()
+            time.sleep(2)
             self.esp_serial = None
 
     def _read_serial_loop(self):
@@ -132,11 +156,18 @@ class BrainNode(Node):
                                 self.esp_response = line
                 except Exception as e:
                     self.get_logger().error(f'Serial read error: {e}')
+                    self.esp_connected = False
+                    try:
+                        self.esp_serial.close()
+                    except Exception:
+                        pass
+                    self.esp_serial = None
+                    break
             time.sleep(0.01)
 
     def _send_command(self, cmd: str):
         """Send a command string to the ESP32."""
-        if self.esp_serial and self.esp_serial.is_open:
+        if self.esp_connected and self.esp_serial and self.esp_serial.is_open:
             try:
                 with self.serial_lock:
                     self.esp_serial.write(
@@ -145,8 +176,9 @@ class BrainNode(Node):
                 self.get_logger().debug(f'Sent to ESP32: {cmd}')
             except Exception as e:
                 self.get_logger().error(f'ESP32 send error: {e}')
+                self.esp_connected = False
         else:
-            self.get_logger().warn(f'ESP32 not connected — would send: {cmd}')
+            self.get_logger().warn(f'ESP32 not connected — skipping: {cmd}')
 
     # -------------------------------------------------------------------------
     # Motor Commands (sent to ESP32)

@@ -191,6 +191,31 @@ Sent by the server every 5 seconds. No payload. Use to detect connection health.
 
 ---
 
+### 6. `info` — Device Availability
+
+Sent by the server every 5 seconds. Tells the frontend which devices are currently connected.
+
+```json
+{
+  "type": "info",
+  "data": {
+    "lidar": true,
+    "map": true,
+    "pose": false
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `lidar` | `true` = Lidar is publishing scans |
+| `map` | `true` = SLAM has produced a map |
+| `pose` | `true` = Robot pose is available (TF converged) |
+
+Use this to show connection status indicators in your UI (e.g., "Lidar: Connected", "Map: Waiting...").
+
+---
+
 ## Sending Commands (Optional)
 
 The web bridge also **receives** messages. Send any JSON object to control the robot:
@@ -218,27 +243,30 @@ ws.send(JSON.stringify({
   <style>
     body { margin: 0; background: #111; }
     canvas { display: block; }
-    #status { position: fixed; top: 8px; left: 8px; color: #aaa; font: 14px monospace; }
-    #pose   { position: fixed; top: 24px; left: 8px; color: #aaa; font: 14px monospace; }
+    #status  { position: fixed; top: 8px;  left: 8px;  color: #aaa; font: 13px monospace; }
+    #devices { position: fixed; top: 24px; left: 8px;  color: #555; font: 12px monospace; }
+    #pose    { position: fixed; top: 40px; left: 8px;  color: #aaa; font: 13px monospace; }
   </style>
 </head>
 <body>
   <canvas id="mapCanvas"></canvas>
   <div id="status">Connecting...</div>
+  <div id="devices"></div>
   <div id="pose"></div>
 
   <script>
     const canvas = document.getElementById('mapCanvas');
     const ctx = canvas.getContext('2d');
-    const statusEl = document.getElementById('status');
-    const poseEl = document.getElementById('pose');
+    const statusEl  = document.getElementById('status');
+    const devicesEl = document.getElementById('devices');
+    const poseEl   = document.getElementById('pose');
 
     let mapData = null;
     let robotPose = null;
     let scanPoints = [];
     const ROBOT_IP = '192.168.1.100'; // <-- CHANGE THIS
 
-    const ws = new WebSocket(`ws://${ROBOT_IP}:9091`);
+    const ws = new WebSocket(`wss://map.nguyen-robot.io.vn`);
 
     ws.onopen = () => statusEl.textContent = 'Connected';
 
@@ -249,9 +277,15 @@ ws.send(JSON.stringify({
         case 'scan':   scanPoints = msg.data.points; break;
         case 'pose':   robotPose = msg.data; renderMap(); break;
         case 'status': statusEl.textContent = msg.data; break;
+        case 'info':   updateDeviceStatus(msg.data); break;
         case 'ping':   break; // connection alive
       }
     };
+
+    function updateDeviceStatus(info) {
+      const dot = (ok) => ok ? '🟢' : '⚪';
+      devicesEl.textContent = `${dot(info.lidar)} Lidar ${dot(info.map)} Map ${dot(info.pose)} Pose`;
+    }
 
     function worldToScreen(wx, wy) {
       if (!mapData) return { x: 0, y: 0 };
@@ -319,6 +353,9 @@ ws.send(JSON.stringify({
 | SLAM Toolbox | `/map` | OccupancyGrid | ~0.7 Hz | `map.*` |
 | TF2 | `map→base_footprint` | TF | 10 Hz | `pose.{x,y,theta}` |
 | brain_node | `/robot_status` | String | 1 Hz | `status.data` |
+| web_bridge | — | — | 5s | `info.*` (device status) |
+
+**Hot-plug:** All devices are hot-pluggable. If the lidar is unplugged, `scan` messages stop and resume automatically when reconnected. The `info` message tells you what's currently available.
 
 ---
 
@@ -326,10 +363,10 @@ ws.send(JSON.stringify({
 
 | Symptom | Likely Cause |
 |---|---|
-| WebSocket never connects | Wrong IP address, or port 9091 not exposed in docker-compose |
-| `scan.points` is always empty | Lidar not publishing (check `/scan` topic via `ros2 topic list`) |
+| WebSocket never connects | Wrong IP address, or Cloudflare tunnel pointing to wrong port |
+| `scan.points` is always empty | Lidar not connected — check `info.lidar` is `true` |
 | `pose` never arrives | SLAM not yet localized — robot needs to move to produce map features |
-| `map.data` is all `-1` | SLAM not running or map topic not publishing |
+| `map.data` is all `-1` | SLAM not running or lidar not connected yet |
 | Laggy map | Network latency or browser canvas rendering too slow — reduce render frequency |
 
 To verify the robot is publishing data, SSH into the container and run:
