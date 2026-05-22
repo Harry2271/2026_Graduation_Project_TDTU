@@ -5,6 +5,7 @@ USB webcam QR code detector for Raspberry Pi 5.
 Publishes detected QR code data as std_msgs/String on /qr_result topic.
 """
 
+import os
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -96,7 +97,6 @@ class QRDetector(Node):
         super().destroy_node()
 
 
-import os
 
 
 def main(args=None):

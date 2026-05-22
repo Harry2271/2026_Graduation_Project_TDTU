@@ -12,8 +12,13 @@ echo "  Lidar port   : $LIDAR_PORT"
 echo "  ESP32 port   : $ESP32_PORT"
 echo "  Camera device: /dev/video$CAMERA_DEVICE"
 
+# Source ROS 2 and our workspace
 source /opt/ros/jazzy/setup.bash
 source /app/install/setup.bash
+
+# Verify dependencies
+python3 -c "import rclpy; print('rclpy OK')"
+python3 -c "import websockets; print('websockets OK')"
 
 # --- Hot-plug monitoring for Lidar ---
 start_lidar_monitor() {
@@ -21,11 +26,7 @@ start_lidar_monitor() {
         if [ -e "$LIDAR_PORT" ]; then
             chmod 666 "$LIDAR_PORT" 2>/dev/null
             echo "[lidar-monitor] Lidar detected at $LIDAR_PORT"
-            # Start the lidar launch in background; when device disappears,
-            # the driver will stop and this subshell exits. Then we loop
-            # to wait for it again.
             (
-                # Give udev a moment to settle permissions
                 sleep 0.5
                 ros2 launch my_robot_controller lidar_only_launch.py \
                     lidar_model:="$LIDAR_MODEL" \
@@ -34,10 +35,8 @@ start_lidar_monitor() {
                 echo "[lidar-monitor] Lidar driver stopped — waiting for reconnect"
             ) &
             LIDAR_PID=$!
-            # Wait for the lidar driver to exit (device unplugged or crashed)
             while kill -0 $LIDAR_PID 2>/dev/null; do
                 sleep 1
-                # Check if device still exists
                 if [ ! -e "$LIDAR_PORT" ]; then
                     echo "[lidar-monitor] Lidar disconnected — stopping driver"
                     kill $LIDAR_PID 2>/dev/null
@@ -62,16 +61,33 @@ else
     echo "[esp32-monitor] ESP32 not detected at $ESP32_PORT — will retry on startup"
 fi
 
-# --- Start non-device-dependent nodes ---
+# --- Start non-device-dependent nodes directly via Python module runner ---
 echo "--- Launching SLAM + Brain + QR + WebBridge (lidar starts when detected) ---"
-ros2 launch my_robot_controller core_launch.py \
-    esp32_port:="$ESP32_PORT" \
-    camera_device:="$CAMERA_DEVICE" &
 
-CORE_PID=$!
+# SLAM Toolbox
+ros2 launch my_robot_controller slam_only_launch.py &
+
+# Static TFs
+ros2 run tf2_ros static_transform_publisher \
+    0 0 0 0 0 0 base_link laser &>/dev/null &
+ros2 run tf2_ros static_transform_publisher \
+    0 0 0 0 0 0 base_footprint base_link &>/dev/null &
+ros2 run tf2_ros static_transform_publisher \
+    0 0 0 0 0 0 odom base_footprint &>/dev/null &
+
+# Brain Node
+export ESP32_PORT="$ESP32_PORT"
+python3 -m my_robot_controller.brain_node --ros-args -r __node:=brain_node &
+
+# QR Detector
+export CAMERA_DEVICE="$CAMERA_DEVICE"
+python3 -m my_robot_controller.qr_detector --ros-args -r __node:=qr_detector_node &
+
+# Web Bridge
+python3 -m my_robot_controller.web_bridge --ros-args -r __node:=web_bridge &
 
 # --- Start lidar hot-plug monitor in background ---
 start_lidar_monitor &
 
-# --- Wait for core launch (or container stop) ---
-wait $CORE_PID
+# --- Wait for all background jobs ---
+wait

@@ -1,7 +1,9 @@
 services:
   # 1. Core robot system (Lidar + SLAM + Brain + QR Detector)
   robot-core:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.robotcore
     container_name: robot_core
     privileged: true
     network_mode: host
