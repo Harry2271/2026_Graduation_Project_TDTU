@@ -59,11 +59,22 @@ export class ShelfRepository implements IShelfRepository {
       .exec();
   }
 
-  async clearSlot(slotCode: string): Promise<void> {
-    await this.shelfSlotModel
+  async clearSlot(slotCode: string): Promise<ShelfSlot | null> {
+    return this.shelfSlotModel
       .findOneAndUpdate(
         { code: slotCode },
         { packageId: null, status: SlotStatus.AVAILABLE },
+        { new: true },
+      )
+      .exec();
+  }
+
+  async clearSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null> {
+    return this.shelfSlotModel
+      .findOneAndUpdate(
+        { packageId },
+        { packageId: null, status: SlotStatus.AVAILABLE },
+        { new: true },
       )
       .exec();
   }

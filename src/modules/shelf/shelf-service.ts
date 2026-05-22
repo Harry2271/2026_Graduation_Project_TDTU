@@ -1,7 +1,8 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleInit, forwardRef } from '@nestjs/common';
 import { Types } from 'mongoose';
 
 import { PackageService } from '../package/package-service';
+import { EventsGateway } from '../../gateway/events-gateway';
 import { IShelfRepository } from './interfaces/shelf-repository.interface';
 import { IShelfService } from './interfaces/shelf-service.interface';
 import { Shelf } from './schemas/shelf.schema';
@@ -18,7 +19,9 @@ export class ShelfService implements IShelfService, OnModuleInit {
   constructor(
     @Inject(ISHELF_REPOSITORY)
     private readonly shelfRepository: IShelfRepository,
+    @Inject(forwardRef(() => PackageService))
     private readonly packageService: PackageService,
+    private readonly eventsGateway: EventsGateway,
   ) {}
 
   async onModuleInit() {
@@ -94,6 +97,7 @@ export class ShelfService implements IShelfService, OnModuleInit {
     if (!updated) {
       throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
     }
+    this.eventsGateway.emitShelfUpdated(updated);
     return updated;
   }
 
@@ -120,6 +124,7 @@ export class ShelfService implements IShelfService, OnModuleInit {
     if (!updated) {
       throw new NotFoundException(`Không tìm thấy vị trí đích "${targetSlotCode}"`);
     }
+    this.eventsGateway.emitShelfUpdated(updated);
     return updated;
   }
 
@@ -132,5 +137,15 @@ export class ShelfService implements IShelfService, OnModuleInit {
       throw new BadRequestException(`Vị trí "${slotCode}" đang trống`);
     }
     await this.shelfRepository.clearSlot(slotCode);
+    this.eventsGateway.emitShelfUpdated({ code: slotCode, status: SlotStatus.AVAILABLE, packageId: null });
+  }
+
+  async clearSlotByPackageId(packageId: string): Promise<ShelfSlot | null> {
+    const packageObjectId = new Types.ObjectId(packageId);
+    const slot = await this.shelfRepository.clearSlotByPackageId(packageObjectId);
+    if (slot) {
+      this.eventsGateway.emitShelfUpdated(slot);
+    }
+    return slot;
   }
 }

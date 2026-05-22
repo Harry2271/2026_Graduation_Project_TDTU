@@ -1,11 +1,13 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 
 import { CreatePackageDto } from './dto/create-package.dto';
 import { PaginatedResponseDto, PaginationMeta, PaginationQueryDto } from './dto/pagination.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
+import { EventsGateway } from '../../gateway/events-gateway';
 import { IPACKAGE_REPOSITORY } from './interfaces/package-repository.interface';
 import { IPackageRepository } from './interfaces/package-repository.interface';
 import { IPackageService } from './interfaces/package-service.interface';
+import { ShelfService } from '../shelf/shelf-service';
 import { Package } from './schemas/package.schema';
 
 @Injectable()
@@ -13,10 +15,15 @@ export class PackageService implements IPackageService {
   constructor(
     @Inject(IPACKAGE_REPOSITORY)
     private readonly packageRepository: IPackageRepository,
+    private readonly eventsGateway: EventsGateway,
+    @Inject(forwardRef(() => ShelfService))
+    private readonly shelfService: ShelfService,
   ) {}
 
   async create(dto: CreatePackageDto): Promise<Package> {
-    return this.packageRepository.create(dto);
+    const created = await this.packageRepository.create(dto);
+    this.eventsGateway.emitPackageCreated(created);
+    return created;
   }
 
   async findAll(): Promise<Package[]> {
@@ -51,6 +58,7 @@ export class PackageService implements IPackageService {
     if (!updated) {
       throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
     }
+    this.eventsGateway.emitPackageUpdated(updated);
     return updated;
   }
 
@@ -59,6 +67,8 @@ export class PackageService implements IPackageService {
     if (!found) {
       throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
     }
+    await this.shelfService.clearSlotByPackageId(id);
     await this.packageRepository.remove(id);
+    this.eventsGateway.emitPackageDeleted(id);
   }
 }

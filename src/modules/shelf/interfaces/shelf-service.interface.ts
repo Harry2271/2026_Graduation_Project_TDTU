@@ -9,4 +9,5 @@ export interface IShelfService {
   assignPackage(slotCode: string, packageId: string): Promise<ShelfSlot>;
   movePackage(fromSlotCode: string, targetSlotCode: string): Promise<ShelfSlot>;
   removePackage(slotCode: string): Promise<void>;
+  clearSlotByPackageId(packageId: string): Promise<ShelfSlot | null>;
 }
