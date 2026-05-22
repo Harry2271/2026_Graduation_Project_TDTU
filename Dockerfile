@@ -33,7 +33,13 @@ RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
 # 4. Build workspace (sequential to avoid RAM exhaustion on Pi 5)
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    colcon build --executor sequential"
+    colcon build --executor sequential && \
+    pip install websockets"
+
+# 5. Re-install the Python package so entry points are registered correctly
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    source /app/install/setup.bash && \
+    pip install --no-deps -e /app/src/my_robot_controller"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

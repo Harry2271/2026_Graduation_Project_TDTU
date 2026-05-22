@@ -1,10 +1,8 @@
 """Lidar-only launch — used by the hot-plug monitor in entrypoint.sh."""
-import os
-
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import SetParameter
 from launch_ros.substitutions import FindPackageShare
 
@@ -22,6 +20,15 @@ def generate_launch_description():
 
     sllidar_pkg = FindPackageShare('sllidar_ros2').find('sllidar_ros2')
 
+    # PathJoinSubstitution builds <pkg>/launch/sllidar_<model>_launch.py
+    lidar_launch_path = PathJoinSubstitution([
+        sllidar_pkg,
+        'launch',
+        'sllidar_',
+        lidar_model,
+        '_launch.py',
+    ])
+
     return LaunchDescription([
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
         serial_port_arg,
@@ -29,8 +36,6 @@ def generate_launch_description():
         SetParameter(name='scan_frequency', value=12.0),
         SetParameter(name='scan_mode', value='Sensitivity'),
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(sllidar_pkg, 'launch',
-                             PythonExpression(["'sllidar_' + '", lidar_model, "' + '_launch.py'"]))),
+            PythonLaunchDescriptionSource(lidar_launch_path),
             launch_arguments={'serial_port': serial_port}.items()),
     ])
