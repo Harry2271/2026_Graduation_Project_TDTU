@@ -23,13 +23,13 @@
    +-- Forwards /robot_status
    |
    v
-[WebSocket server]  ws://<robot-ip>:8080
+[WebSocket server]  ws://<robot-ip>:9091
    |
    v
 [Your Web App]  (no ROS dependencies, plain WebSocket + Canvas/SVG)
 ```
 
-**No ROS dependencies required in the frontend.** The web app connects via plain WebSocket on port 8080.
+**No ROS dependencies required in the frontend.** The web app connects via plain WebSocket on port 9091.
 
 ---
 
@@ -39,12 +39,12 @@
 |---|---|
 | Protocol | WebSocket (plain, not WSS) |
 | Host | `<robot-ip>` (the machine running docker-compose) |
-| Port | `8080` |
-| URL | `ws://<robot-ip>:8080` |
+| Port | `9091` |
+| URL | `ws://<robot-ip>:9091` |
 
 **Example:**
 ```javascript
-const ws = new WebSocket('ws://192.168.1.100:8080');
+const ws = new WebSocket('ws://192.168.1.100:9091');
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   handleMessage(msg);
@@ -238,7 +238,7 @@ ws.send(JSON.stringify({
     let scanPoints = [];
     const ROBOT_IP = '192.168.1.100'; // <-- CHANGE THIS
 
-    const ws = new WebSocket(`ws://${ROBOT_IP}:8080`);
+    const ws = new WebSocket(`ws://${ROBOT_IP}:9091`);
 
     ws.onopen = () => statusEl.textContent = 'Connected';
 
@@ -326,7 +326,7 @@ ws.send(JSON.stringify({
 
 | Symptom | Likely Cause |
 |---|---|
-| WebSocket never connects | Wrong IP address, or port 8080 not exposed in docker-compose |
+| WebSocket never connects | Wrong IP address, or port 9091 not exposed in docker-compose |
 | `scan.points` is always empty | Lidar not publishing (check `/scan` topic via `ros2 topic list`) |
 | `pose` never arrives | SLAM not yet localized — robot needs to move to produce map features |
 | `map.data` is all `-1` | SLAM not running or map topic not publishing |
