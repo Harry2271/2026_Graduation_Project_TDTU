@@ -21,7 +21,8 @@ python3 -c "import rclpy; print('rclpy OK')"
 python3 -c "import websockets; print('websockets OK')"
 
 # Paths to installed scripts (created by colcon build)
-BRAIN_BIN="/app/install/my_robot_controller/lib/my_robot_controller/brain_node"
+# Entry point names match setup.py: 'brain', 'qr_detector', 'web_bridge'
+BRAIN_BIN="/app/install/my_robot_controller/lib/my_robot_controller/brain"
 QR_BIN="/app/install/my_robot_controller/lib/my_robot_controller/qr_detector"
 WEB_BRIDGE_BIN="/app/install/my_robot_controller/lib/my_robot_controller/web_bridge"
 

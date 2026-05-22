@@ -6,6 +6,7 @@ Publishes detected QR code data as std_msgs/String on /qr_result topic.
 """
 
 import os
+import time
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -35,12 +36,10 @@ class QRDetector(Node):
 
         self.cap = cv2.VideoCapture(self.camera_device)
         if not self.cap.isOpened():
-            self.get_logger().error(
-                f'Cannot open camera device {self.camera_device}'
+            self.get_logger().warn(
+                f'Cannot open camera device {self.camera_device} — QR detection disabled'
             )
-            raise RuntimeError(
-                f'Cannot open camera device {self.camera_device}'
-            )
+            self.cap = None
 
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
@@ -54,6 +53,9 @@ class QRDetector(Node):
         self.get_logger().info('QR Detector node started successfully')
 
     def detect_qr(self):
+        if self.cap is None:
+            time.sleep(1.0)
+            return
         ret, frame = self.cap.read()
         if not ret:
             self.get_logger().warn('Failed to grab frame from camera', throttle_duration_sec=5.0)
@@ -91,7 +93,7 @@ class QRDetector(Node):
         #     pass
 
     def destroy_node(self):
-        if hasattr(self, 'cap') and self.cap.isOpened():
+        if hasattr(self, 'cap') and self.cap is not None and self.cap.isOpened():
             self.cap.release()
         cv2.destroyAllWindows()
         super().destroy_node()
