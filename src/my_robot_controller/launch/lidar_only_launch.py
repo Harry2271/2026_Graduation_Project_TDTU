@@ -1,5 +1,6 @@
 """Lidar-only launch — used by the hot-plug monitor in entrypoint.sh."""
 import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
