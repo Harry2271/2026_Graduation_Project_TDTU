@@ -26,12 +26,15 @@ jobs:
         run: |
           # Bật BuildKit để build Docker nhanh hơn và tận dụng cache tốt hơn
           export DOCKER_BUILDKIT=1
-          
-          # Build image từ Dockerfile (quá trình colcon build diễn ra ở đây)
-          docker compose build --progress=plain
-          
+
+          # Xóa image cũ để build sạch (tránh cache không cập nhật code mới)
+          docker rmi robot-controller-robot-core --force 2>/dev/null || true
+
+          # Build image từ Dockerfile.robotcore (quá trình colcon build diễn ra ở đây)
+          docker compose build --no-cache robot-core --progress=plain
+
           # Khởi động lại container bằng image mới nhất
-          docker compose up -d
-          
+          docker compose up -d robot-core
+
           # Dọn rác
           docker image prune -f
