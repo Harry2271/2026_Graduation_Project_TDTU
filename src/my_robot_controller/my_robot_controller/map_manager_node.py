@@ -18,9 +18,9 @@ grid's bounding box for 10 seconds (room fully scanned).
 
 import math
 import os
-import threading
 import time
 
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
@@ -31,9 +31,9 @@ from std_msgs.msg import String
 from tf2_ros import TransformListener, Buffer
 
 # Map parameters
-GRID_RESOLUTION = 0.05       # meters per cell
-GRID_SIZE_METERS = 40.0     # total grid size (800 x 800 cells)
-GRID_CELLS = int(GRID_SIZE_METERS / GRID_RESOLUTION)  # 800
+GRID_RESOLUTION = 0.10       # meters per cell (10cm — 4x faster than 5cm, still sharp for indoor)
+GRID_SIZE_METERS = 40.0    # total grid size (400 x 400 cells)
+GRID_CELLS = int(GRID_SIZE_METERS / GRID_RESOLUTION)  # 400
 GRID_ORIGIN = -GRID_SIZE_METERS / 2.0  # -20.0 (grid centered at world origin)
 
 MAX_LASER_RANGE = 8.0       # meters — skip readings beyond this
@@ -67,6 +67,7 @@ class MapManager(Node):
         self.last_bbox_change_time = 0.0
 
         # --- Robot pose from TF ---
+        self.range_min = 0.15  # A1M8 minimum range (meters)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.last_pose_x = 0.0
@@ -89,7 +90,10 @@ class MapManager(Node):
         self.control_sub = self.create_subscription(String, '/mapping/control', self._on_control, 10)
 
         # --- Timers ---
-        self.create_timer(0.1, self._poll_pose_and_publish)
+        # Pose tracking: 10 Hz (fast for real-time tracking)
+        self.create_timer(0.1, self._poll_pose)
+        # Map publishing: 2 Hz (every 0.5s)
+        self.create_timer(0.5, self._publish_maps)
 
         self.get_logger().info(
             f'MapManager started — grid: {GRID_CELLS}x{GRID_CELLS} '
@@ -97,78 +101,90 @@ class MapManager(Node):
         )
 
     # -------------------------------------------------------------------------
-    # Grid helpers
+    # Raycasting — numpy-vectorized (processes all beams simultaneously)
     # -------------------------------------------------------------------------
-    def _world_to_grid(self, wx: float, wy: float) -> tuple[int, int]:
-        gx = int((wx - GRID_ORIGIN) / GRID_RESOLUTION)
-        gy = int((wy - GRID_ORIGIN) / GRID_RESOLUTION)
-        return gx, gy
+    def _cast_rays_vectorized(self, rx: float, ry: float, theta: float,
+                              angles: np.ndarray, ranges: np.ndarray,
+                              layer: str, max_range: float = MAX_LASER_RANGE):
+        """Mark cells along ALL lidar beams as FREE, final cells as OCCUPIED."""
+        n = len(angles)
+        if n == 0:
+            return
 
-    def _grid_to_idx(self, gx: int, gy: int) -> int:
-        return gy * GRID_CELLS + gx
+        # Filter valid readings
+        valid = ~(np.isinf(ranges) | np.isnan(ranges))
+        valid &= (ranges >= self.range_min) & (ranges <= max_range)
+        if not np.any(valid):
+            return
 
-    def _in_bounds(self, gx: int, gy: int) -> bool:
-        return 0 <= gx < GRID_CELLS and 0 <= gy < GRID_CELLS
+        abs_angles = angles[valid] + theta
+        valid_ranges = ranges[valid]
+        n_beams = len(valid_ranges)
 
-    def _set_persistent(self, gx: int, gy: int, value: int):
-        if self._in_bounds(gx, gy):
-            self.persistent_grid[self._grid_to_idx(gx, gy)] = value
+        if n_beams == 0:
+            return
 
-    def _set_temporary(self, gx: int, gy: int, value: int):
-        if self._in_bounds(gx, gy):
-            self.temporary_grid[self._grid_to_idx(gx, gy)] = value
+        # Step along each beam in increments of half-cell
+        step = GRID_RESOLUTION * 0.5
+        max_steps = int(max_range / step) + 1
 
-    # -------------------------------------------------------------------------
-    # Raycasting — Bresenham-style along lidar beam
-    # -------------------------------------------------------------------------
-    def _cast_ray(self, rx: float, ry: float, angle: float,
-                  max_range: float, layer: str):
-        """Mark cells along a lidar beam as FREE, final cell as OCCUPIED."""
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        step = GRID_RESOLUTION * 0.5  # step smaller than cell for accuracy
+        # (n_beams, n_steps) — all world positions along all beams
+        dists = np.arange(max_steps, dtype=np.float32) * step
+        xs = rx + np.outer(np.cos(abs_angles), dists).astype(np.float32)
+        ys = ry + np.outer(np.sin(abs_angles), dists).astype(np.float32)
 
-        x = rx
-        y = ry
-        dist = 0.0
+        # Grid coords: (n_beams, n_steps)
+        gxs = ((xs - GRID_ORIGIN) / GRID_RESOLUTION).astype(np.int32)
+        gys = ((ys - GRID_ORIGIN) / GRID_RESOLUTION).astype(np.int32)
 
-        while dist < max_range:
-            dist += step
-            x = rx + cos_a * dist
-            y = ry + sin_a * dist
-            gx, gy = self._world_to_grid(x, y)
-            if not self._in_bounds(gx, gy):
-                break
+        # Mask: cells inside the grid
+        in_bounds = (gxs >= 0) & (gxs < GRID_CELLS) & (gys >= 0) & (gys < GRID_CELLS)
 
-            # Check if we've reached the obstacle
-            if dist >= max_range - step:
-                if layer == 'persistent':
-                    self._set_persistent(gx, gy, CELL_OCCUPIED)
-                else:
-                    self._set_temporary(gx, gy, CELL_OCCUPIED)
-                # Update bounding box for persistent layer
-                if layer == 'persistent':
-                    self._update_bbox(x, y)
-                break
-            else:
-                # Mark as FREE (don't overwrite OCCUPIED)
-                if layer == 'persistent':
-                    idx = self._grid_to_idx(gx, gy)
-                    if self.persistent_grid[idx] == CELL_UNKNOWN:
-                        self.persistent_grid[idx] = CELL_FREE
-                else:
-                    idx = self._grid_to_idx(gx, gy)
-                    if self.temporary_grid[idx] == CELL_UNKNOWN:
-                        self.temporary_grid[idx] = CELL_FREE
+        # Per-beam: find the hit step (last step before obstacle)
+        hit_steps = np.searchsorted(dists, valid_ranges, side='right')
+        hit_steps = np.clip(hit_steps, 0, max_steps - 1)
 
-    def _update_bbox(self, wx: float, wy: float):
-        changed = False
-        if wx < self.bbox_min_x: self.bbox_min_x = wx; changed = True
-        if wx > self.bbox_max_x: self.bbox_max_x = wx; changed = True
-        if wy < self.bbox_min_y: self.bbox_min_y = wy; changed = True
-        if wy > self.bbox_max_y: self.bbox_max_y = wy; changed = True
-        if changed:
-            self.last_bbox_change_time = time.time()
+        if layer == 'persistent':
+            grid = self.persistent_grid
+        else:
+            grid = self.temporary_grid
+
+        free_count = 0
+        occ_count = 0
+        occ_wx = []
+        occ_wy = []
+
+        for i in range(n_beams):
+            hit_step = hit_steps[i]
+            for s in range(hit_step):
+                if in_bounds[i, s]:
+                    gx, gy = gxs[i, s], gys[i, s]
+                    j = gy * GRID_CELLS + gx
+                    if s < hit_step - 1:
+                        # FREE cell
+                        if grid[j] == CELL_UNKNOWN:
+                            grid[j] = CELL_FREE
+                            free_count += 1
+                    else:
+                        # OCCUPIED cell (hit)
+                        grid[j] = CELL_OCCUPIED
+                        occ_count += 1
+                        if layer == 'persistent':
+                            occ_wx.append(xs[i, s])
+                            occ_wy.append(ys[i, s])
+
+        # Update bounding box
+        if layer == 'persistent' and occ_count > 0:
+            min_wx, max_wx = min(occ_wx), max(occ_wx)
+            min_wy, max_wy = min(occ_wy), max(occ_wy)
+            changed = (min_wx < self.bbox_min_x or max_wx > self.bbox_max_x or
+                       min_wy < self.bbox_min_y or max_wy > self.bbox_max_y)
+            if changed:
+                self.bbox_min_x = min(self.bbox_min_x, min_wx)
+                self.bbox_max_x = max(self.bbox_max_x, max_wx)
+                self.bbox_min_y = min(self.bbox_min_y, min_wy)
+                self.bbox_max_y = max(self.bbox_max_y, max_wy)
+                self.last_bbox_change_time = time.time()
 
     def _has_moved(self, x: float, y: float) -> bool:
         dx = x - self.last_update_pose_x
@@ -206,12 +222,11 @@ class MapManager(Node):
         self.last_update_pose_x = rx
         self.last_update_pose_y = ry
 
-        # Raycast each lidar beam into persistent grid
-        angle = msg.angle_min
-        for r in msg.ranges:
-            if not (math.isinf(r) or math.isnan(r)) and msg.range_min <= r <= MAX_LASER_RANGE:
-                self._cast_ray(rx, ry, angle + theta, r, 'persistent')
-            angle += msg.angle_increment
+        # Numpy vectorized raycasting
+        angles = np.arange(len(msg.ranges)) * msg.angle_increment + msg.angle_min
+        ranges = np.array(msg.ranges, dtype=np.float32)
+        self.range_min = msg.range_min
+        self._cast_rays_vectorized(rx, ry, theta, angles, ranges, 'persistent')
 
         # Check if room is fully scanned (bounding box stable)
         if time.time() - self.last_bbox_change_time > COVERAGE_STABLE_TIME:
@@ -227,19 +242,19 @@ class MapManager(Node):
         # Reset temporary grid to UNKNOWN
         self.temporary_grid = [CELL_UNKNOWN] * (GRID_CELLS * GRID_CELLS)
 
-        # Raycast into temporary grid, limited to TEMP_RADIUS
-        angle = msg.angle_min
-        for r in msg.ranges:
-            if not (math.isinf(r) or math.isnan(r)) and msg.range_min <= r <= min(MAX_LASER_RANGE, TEMP_RADIUS):
-                self._cast_ray(rx, ry, angle + theta, r, 'temporary')
-            angle += msg.angle_increment
+        # Numpy vectorized raycasting within TEMP_RADIUS
+        angles = np.arange(len(msg.ranges)) * msg.angle_increment + msg.angle_min
+        ranges = np.array(msg.ranges, dtype=np.float32)
+        self.range_min = msg.range_min
+        self._cast_rays_vectorized(rx, ry, theta, angles, ranges, 'temporary',
+                                    max_range=TEMP_RADIUS)
 
         # --- Track hit counts for clearing ---
         for i, v in enumerate(self.temporary_grid):
             if v == CELL_OCCUPIED:
                 self.temp_hit_count[i] += 1
             elif v == CELL_FREE:
-                self.temp_hit_count[i] = 0  # reset on FREE reading
+                self.temp_hit_count[i] = 0
 
         # --- Decay: cells that haven't been hit in TEMP_CLEAR_SCANS -> FREE ---
         for i in range(len(self.temporary_grid)):
@@ -294,9 +309,9 @@ class MapManager(Node):
         self.status_pub.publish(status_msg)
 
     # -------------------------------------------------------------------------
-    # Map publishing
+    # Pose tracking
     # -------------------------------------------------------------------------
-    def _poll_pose_and_publish(self):
+    def _poll_pose(self):
         try:
             t: TransformStamped = self.tf_buffer.lookup_transform(
                 'map', 'base_footprint', rclpy.time.Time(),
@@ -308,6 +323,10 @@ class MapManager(Node):
         except Exception:
             pass
 
+    # -------------------------------------------------------------------------
+    # Map publishing
+    # -------------------------------------------------------------------------
+    def _publish_maps(self):
         if self.mode != 'IDLE':
             self._publish_combined_map()
             if self.mode == 'LIVE':

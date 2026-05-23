@@ -40,10 +40,10 @@ class QRDetector(Node):
                 f'Cannot open camera device {self.camera_device} — QR detection disabled'
             )
             self.cap = None
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         self.qr_detector = cv2.QRCodeDetector()
         self.last_detected = ''

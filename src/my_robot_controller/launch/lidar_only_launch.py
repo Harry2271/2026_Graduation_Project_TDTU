@@ -35,9 +35,13 @@ def generate_launch_description():
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
         serial_port_arg,
         lidar_model_arg,
-        SetParameter(name='scan_frequency', value=12.0),
-        SetParameter(name='scan_mode', value='Sensitivity'),
+        # Pass scan params as launch arguments (not SetParameter — those don't
+        # override the driver node's internal params)
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(launch_file),
-            launch_arguments={'serial_port': serial_port}.items()),
+            launch_arguments={
+                'serial_port': serial_port,
+                'scan_frequency': '5',
+                'scan_mode': 'Normal',
+            }.items()),
     ])
