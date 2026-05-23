@@ -41,9 +41,16 @@ class QRDetector(Node):
             )
             self.cap = None
         else:
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            try:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception as e:
+                self.get_logger().warn(
+                    f'Camera opened but configuration failed: {e} — QR detection disabled'
+                )
+                self.cap.release()
+                self.cap = None
 
         self.qr_detector = cv2.QRCodeDetector()
         self.last_detected = ''
@@ -64,7 +71,11 @@ class QRDetector(Node):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # Detect + decode QR code
-        data, vertices, _ = self.qr_detector.detectAndDecode(gray)
+        try:
+            data, vertices, _ = self.qr_detector.detectAndDecode(gray)
+        except Exception as e:
+            self.get_logger().warn(f'QR detection failed: {e}', throttle_duration_sec=5.0)
+            return
 
         if vertices is not None and len(data) > 0:
             # Draw bounding box around QR

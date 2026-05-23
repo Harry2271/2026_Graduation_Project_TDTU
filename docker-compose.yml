@@ -4,6 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.robotcore
+      no_cache: true
     container_name: robot_core
     privileged: true
     network_mode: host
