@@ -12,6 +12,7 @@ services:
     volumes:
       - /dev:/dev
       - /dev/video0:/dev/video0          # USB webcam for QR detection
+      - robot-maps:/app                  # Persist saved maps across restarts
     devices:
       - /dev/ttyUSB0:/dev/ttyUSB0        # Slamtec SLLidar
       - /dev/ttyUSB1:/dev/ttyUSB1        # ESP32-S3 motor controller
@@ -21,6 +22,7 @@ services:
       - LIDAR_PORT=/dev/ttyUSB0
       - ESP32_PORT=/dev/ttyUSB1
       - CAMERA_DEVICE=0
+      - MAPPING_MODE=live                # 'mapping' or 'live' — set to 'mapping' to auto-scan room
     ports:
       - "9091:9091"                       # WebBridge WebSocket JSON server
     restart: always
@@ -37,3 +39,6 @@ services:
     environment:
       - ROS_DOMAIN_ID=0
     restart: always
+
+volumes:
+  robot-maps:

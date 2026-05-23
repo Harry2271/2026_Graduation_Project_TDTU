@@ -10,9 +10,9 @@ slam_toolbox:
     # 1. Tăng tốc độ cập nhật bản đồ lên Foxglove (mỗi 1.5s thay vì 5.0s mặc định)
     map_update_interval: 1.5
 
-    # 2. VÔ HIỆU HÓA rào cản odometry tĩnh (Cho = 0.0 để luôn luôn vẽ và nạp bản đồ khi cầm tay)
-    minimum_travel_distance: 0.0
-    minimum_travel_heading: 0.0
+    # 2. Chỉ cập nhật bản đồ khi robot di chuyển > 15cm (giảm nhiễu khi đứng yên)
+    minimum_travel_distance: 0.15
+    minimum_travel_heading: 0.05
 
     # 3. Kích hoạt tối đa tính năng khớp tia quét (Scan Matching) khi thiếu odometry bánh xe
     use_scan_matching: true

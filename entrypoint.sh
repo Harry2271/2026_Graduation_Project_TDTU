@@ -21,15 +21,17 @@ python3 -c "import rclpy; print('rclpy OK')"
 python3 -c "import websockets; print('websockets OK')"
 
 # Paths to installed scripts (created by colcon build)
-# Entry point names match setup.py: 'brain', 'qr_detector', 'web_bridge'
+# Entry point names match setup.py: 'brain', 'qr_detector', 'web_bridge', 'map_manager'
 BRAIN_BIN="/app/install/my_robot_controller/lib/my_robot_controller/brain"
 QR_BIN="/app/install/my_robot_controller/lib/my_robot_controller/qr_detector"
 WEB_BRIDGE_BIN="/app/install/my_robot_controller/lib/my_robot_controller/web_bridge"
+MAP_MANAGER_BIN="/app/install/my_robot_controller/lib/my_robot_controller/map_manager"
 
 echo "--- Binary paths ---"
-echo "  brain:      $BRAIN_BIN"
+echo "  brain:       $BRAIN_BIN"
 echo "  qr_detector: $QR_BIN"
 echo "  web_bridge: $WEB_BRIDGE_BIN"
+echo "  map_manager: $MAP_MANAGER_BIN"
 
 # --- Hot-plug monitoring for Lidar ---
 start_lidar_monitor() {
@@ -73,12 +75,23 @@ else
 fi
 
 # --- Start non-device-dependent nodes ---
-echo "--- Launching SLAM + Brain + QR + WebBridge (lidar starts when detected) ---"
+echo "--- Launching SLAM + Map Manager + Brain + QR + WebBridge (lidar starts when detected) ---"
 
-# SLAM Toolbox
+# SLAM Toolbox (for TF: map->odom->base_footprint)
 ros2 launch my_robot_controller slam_only_launch.py &
 
-# Static TFs
+# Map Manager (custom two-map system, reads /scan directly)
+export MAPPING_MODE="${MAPPING_MODE:-live}"  # 'mapping' or 'live'
+"$MAP_MANAGER_BIN" --ros-args -r __node:=map_manager &
+
+# If MAPPING_MODE=mapping, send start command to map_manager after a short delay
+if [ "$MAPPING_MODE" = "mapping" ]; then
+    echo "[map_manager] Auto-starting MAPPING mode..."
+    sleep 3
+    ros2 topic pub --once /mapping/control std_msgs/String "data: 'start'" &>/dev/null
+fi
+
+# Static TFs (map_manager reads /tf for pose)
 ros2 run tf2_ros static_transform_publisher \
     0 0 0 0 0 0 base_link laser &>/dev/null &
 ros2 run tf2_ros static_transform_publisher \

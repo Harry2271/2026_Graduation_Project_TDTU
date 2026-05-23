@@ -53,10 +53,15 @@ class WebBridge(Node):
         super().__init__('web_bridge')
         self.msg_queue = msg_queue
 
+        # Publisher for robot commands (web -> robot)
+        self.cmd_pub = self.create_publisher(String, '/mapping/control', 10)
+
         # Device availability tracking
         self.lidar_seen: bool = False
         self.map_seen: bool = False
         self.pose_seen: bool = False
+        self.mode: str = 'live'  # 'mapping' | 'live'
+        self.coverage_pct: int = 0
         self.last_info_emit: float = 0.0
 
         # TF2: get robot pose in map frame
@@ -65,8 +70,9 @@ class WebBridge(Node):
 
         # Subscriptions — create them, they'll activate when topics are published
         self.create_subscription(LaserScan, '/scan', self._on_scan, 10)
-        self.create_subscription(OccupancyGrid, '/map', self._on_map, 10)
+        self.create_subscription(OccupancyGrid, '/map_combined', self._on_map, 10)
         self.create_subscription(String, '/robot_status', self._on_status, 10)
+        self.create_subscription(String, '/mapping_status', self._on_mapping_status, 10)
 
         # Pose polling timer (10 Hz)
         self.create_timer(0.1, self._poll_pose)
@@ -75,7 +81,7 @@ class WebBridge(Node):
         self.create_timer(5.0, self._broadcast_info)
 
         self.get_logger().info(f'WebBridge started — serving on ws://{HOST}:{PORT}')
-        self.get_logger().info('Subscribed to /scan, /map, /tf, /robot_status')
+        self.get_logger().info('Subscribed to /scan, /map_combined, /tf, /robot_status, /mapping_status')
         self.get_logger().info('Topics become active when devices are connected')
 
     def _emit(self, msg: dict):
@@ -95,6 +101,8 @@ class WebBridge(Node):
                 'lidar': self.lidar_seen,
                 'map': self.map_seen,
                 'pose': self.pose_seen,
+                'mode': self.mode,
+                'coverage_pct': self.coverage_pct,
             }
         })
 
@@ -132,6 +140,18 @@ class WebBridge(Node):
 
     def _on_status(self, msg: String):
         self._emit({'type': 'status', 'data': msg.data})
+
+    def _on_mapping_status(self, msg: String):
+        # Parse "MAPPING: scanning..." | "LIVE: localizing" | "IDLE"
+        data = msg.data
+        if 'LIVE' in data or 'live' in data.lower():
+            self.mode = 'live'
+        elif 'MAPPING' in data or 'mapping' in data.lower():
+            self.mode = 'mapping'
+        else:
+            self.mode = 'idle'
+        self._emit({'type': 'mode', 'data': self.mode})
+        self._emit({'type': 'status', 'data': data})
 
     def _poll_pose(self):
         try:
@@ -187,11 +207,18 @@ class WebSocketServer:
                 self.clients.discard(ws)
 
     def _handle_command(self, cmd: dict):
-        """Allow web client to send commands to the robot via the queue."""
+        """Forward commands from web client to ROS topics."""
         t = cmd.get('type', '')
         if t == 'ping':
             return
-        self.msg_queue.put({'type': 'command', 'data': cmd})
+        if t == 'cmd':
+            action = cmd.get('action', '')
+            command = cmd.get('command', '')
+            if action == 'mapping' and command:
+                ros_cmd = String()
+                ros_cmd.data = command
+                self.cmd_pub.publish(ros_cmd)
+                self.get_logger().info(f'Mapping command: {command}')
 
     async def _broadcast_loop(self):
         while self.running:

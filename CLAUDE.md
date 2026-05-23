@@ -9,27 +9,50 @@
 ```
 [Robot Hardware]
    |
-   +-- Slamtec A1M8 Lidar  -->  /scan  (LaserScan)
-   +-- slam_toolbox         -->  /map  (OccupancyGrid)
-   +-- TF2 (map frame)     -->  /tf   (robot pose)
-   +-- brain_node          -->  /robot_status
+   +-- Slamtec A1M8 Lidar  -->  /scan  (LaserScan ~12 Hz)
+   +-- TF2 (map frame)     -->  /tf   (robot pose ~10 Hz)
+   |
+   v
+[map_manager_node.py]  <-- Custom two-map builder
+   |
+   +-- persistent_grid  -->  saved to /app/saved_map.json
+   +-- temporary_grid  -->  2m radius, auto-clears after 5 scans
+   +-- combined_grid   -->  persistent + temporary overlaid
+   |
+   v
+[/map_combined]  <-- OccupancyGrid
    |
    v
 [web_bridge.py]  <-- ROS 2 subscriptions
    |
-   +-- Converts /scan  -->  cartesian {x, y} points
-   +-- Converts /map   -->  flat occupancy grid JSON
-   +-- Polls /tf      -->  {x, y, theta} pose
-   +-- Forwards /robot_status
+   v
+[WebSocket server]  ws://0.0.0.0:9091
    |
    v
-[WebSocket server]  ws://<robot-ip>:9091
-   |
-   v
-[Your Web App]  (no ROS dependencies, plain WebSocket + Canvas/SVG)
+[Web App]  wss://map.nguyen-robot.io.vn
 ```
 
-**No ROS dependencies required in the frontend.** The web app connects via plain WebSocket on port 9091.
+---
+
+## Two-Map System
+
+| Map | Purpose | Update Rule | Size |
+|---|---|---|---|
+| `persistent_grid` | Room layout — walls, furniture | Only when robot moves > 15cm | 40×40m (800×800 cells @ 5cm) |
+| `temporary_grid` | Dynamic obstacles — people, bags | Every scan, 2m radius | Same grid, cleared after 5 scans without detection |
+| `combined_grid` | What you see on screen | Every publish | `persistent` + `temporary` overlaid |
+
+### Modes
+
+| Mode | Persistent | Temporary | Use Case |
+|---|---|---|---|
+| `IDLE` | not updated | not updated | Starting state |
+| `MAPPING` | grows on movement | none | Scanning a room |
+| `LIVE` | static (saved map) | rebuilt every scan | Navigation |
+
+**MAPPING auto-stop:** Switches to LIVE when the bounding box of mapped area stops growing for 10 seconds.
+
+**Saved map:** Persistent grid is saved to `/app/saved_map.json` on disk (persists across container restarts via Docker volume).
 
 ---
 
@@ -37,7 +60,7 @@
 
 | Parameter | Value |
 |---|---|
-| Protocol | WebSocket (plain, not WSS) |
+| Protocol | WebSocket (plain) |
 | Host | `<robot-ip>` (the machine running docker-compose) |
 | Port | `9091` |
 | URL | `ws://<robot-ip>:9091` |
@@ -67,7 +90,6 @@ Sent every time the lidar produces a scan (~12 Hz for A1M8).
   "data": {
     "points": [
       { "x": 1.234, "y": 0.567 },
-      { "x": 1.200, "y": 0.610 },
       ...
     ],
     "count": 360
@@ -76,28 +98,24 @@ Sent every time the lidar produces a scan (~12 Hz for A1M8).
 ```
 
 - **Coordinate system:** Robot-centric. The robot stands at `(0, 0)` facing angle `0` (positive X direction).
-- **x-axis:** Forward / facing direction of the robot
-- **y-axis:** Left of the robot
 - `count`: number of valid (non-infinity) points in this scan
-- Invalid readings (inf/nan or out of range) are **omitted** from the array.
-
-**Frontend rendering tip:** Draw each point on a `<canvas>` using `ctx.fillRect()` or `ctx.arc()`, scaled by your display resolution. You can also compute a local map by accumulating points over time.
+- Invalid readings are **omitted** from the array.
 
 ---
 
-### 2. `map` — Occupancy Grid
+### 2. `map` — Combined Occupancy Grid
 
-Sent by slam_toolbox whenever the map updates (every ~1.5 seconds).
+Sent by map_manager every ~0.5s. Contains `persistent_grid` + `temporary_grid` overlaid.
 
 ```json
 {
   "type": "map",
   "data": {
-    "width": 384,
-    "height": 384,
+    "width": 800,
+    "height": 800,
     "resolution": 0.05,
-    "origin_x": -9.6,
-    "origin_y": -9.6,
+    "origin_x": -20.0,
+    "origin_y": -20.0,
     "origin_theta": 0.0,
     "data": [0, 0, 100, -1, 0, ...]
   }
@@ -106,29 +124,18 @@ Sent by slam_toolbox whenever the map updates (every ~1.5 seconds).
 
 | Field | Description |
 |---|---|
-| `width` / `height` | Grid dimensions in cells |
+| `width` / `height` | Grid dimensions in cells (800×800) |
 | `resolution` | Meters per cell (0.05 = 5 cm/pixel) |
-| `origin_x` / `origin_y` | World position of cell `[0,0]` (bottom-left in grid coords) |
-| `origin_theta` | Rotation of the grid (usually 0) |
-| `data` | Flat array, row-major order. Length = `width × height` |
+| `origin_x` / `origin_y` | World position of cell `[0,0]` |
+| `data` | Flat array, row-major. Length = `width × height` |
 
 **Cell values:**
 
 | Value | Meaning |
 |---|---|
 | `0` | Free space |
-| `100` | Occupied (wall) |
-| `-1` | Unknown / no data |
-
-**Coordinate conversion (grid → world):**
-```javascript
-function gridToWorld(cellX, cellY, map) {
-  return {
-    x: map.data.origin_x + cellX * map.data.resolution,
-    y: map.data.origin_y + cellY * map.data.resolution,
-  };
-}
-```
+| `100` | Occupied (wall — persistent OR temporary) |
+| `-1` | Unknown |
 
 **Coordinate conversion (world → grid):**
 ```javascript
@@ -140,13 +147,11 @@ function worldToGrid(worldX, worldY, map) {
 }
 ```
 
-**Frontend rendering tip:** The map is the **authoritative floor plan**. Render it once when received. Draw free cells white/light-gray, occupied cells dark (e.g., `#333`), unknown cells transparent or light gray.
-
 ---
 
 ### 3. `pose` — Robot Pose in World Coordinates
 
-Broadcast at 10 Hz. Sent only when the TF transform `map → base_footprint` is available (i.e., after SLAM localizer has converged).
+Broadcast at 10 Hz.
 
 ```json
 {
@@ -159,41 +164,37 @@ Broadcast at 10 Hz. Sent only when the TF transform `map → base_footprint` is 
 }
 ```
 
-- `x`, `y`: Robot position in the **world/map** coordinate frame (meters)
-- `theta`: Robot heading in **radians** (0 = facing +X, π/2 = facing +Y, CCW positive)
-
-**Frontend rendering tip:** Draw the robot as an arrow or triangle centered at `(x, y)` rotated by `theta`. Position it on the map using `worldToGrid()` to get screen coordinates.
+- `x`, `y`: Robot position in meters
+- `theta`: Heading in radians (0 = facing +X, π/2 = facing +Y, CCW positive)
 
 ---
 
-### 4. `status` — Robot State String
-
-Sent by brain_node every 1 second.
+### 4. `status` — Robot / Mapping State String
 
 ```json
 {
   "type": "status",
-  "data": "STATE=SCANNING QR=PKG-001 pickups=2 goods_retrieved=true goods_deposited=false"
+  "data": "LIVE: localizing"
 }
 ```
 
-Parse this string to display the current mission state in your UI.
+Values: `MAPPING: scanning...` | `LIVE: localizing` | `IDLE`
 
 ---
 
-### 5. `ping` — Keepalive
+### 5. `mode` — Mode Change Event
 
-Sent by the server every 5 seconds. No payload. Use to detect connection health.
+Emitted when the robot switches between MAPPING and LIVE mode.
 
 ```json
-{ "type": "ping" }
+{ "type": "mode", "data": "live" }
 ```
 
 ---
 
 ### 6. `info` — Device Availability
 
-Sent by the server every 5 seconds. Tells the frontend which devices are currently connected.
+Sent every 5 seconds.
 
 ```json
 {
@@ -201,7 +202,9 @@ Sent by the server every 5 seconds. Tells the frontend which devices are current
   "data": {
     "lidar": true,
     "map": true,
-    "pose": false
+    "pose": false,
+    "mode": "live",
+    "coverage_pct": 0
   }
 }
 ```
@@ -209,28 +212,49 @@ Sent by the server every 5 seconds. Tells the frontend which devices are current
 | Field | Meaning |
 |---|---|
 | `lidar` | `true` = Lidar is publishing scans |
-| `map` | `true` = SLAM has produced a map |
+| `map` | `true` = Combined map is available |
 | `pose` | `true` = Robot pose is available (TF converged) |
-
-Use this to show connection status indicators in your UI (e.g., "Lidar: Connected", "Map: Waiting...").
+| `mode` | `"mapping"` or `"live"` |
+| `coverage_pct` | (reserved for future) |
 
 ---
 
-## Sending Commands (Optional)
+### 7. `ping` — Keepalive
 
-The web bridge also **receives** messages. Send any JSON object to control the robot:
+Sent every 5 seconds.
 
-```javascript
-// Example: set robot speed
-ws.send(JSON.stringify({
-  type: 'cmd',
-  action: 'set_speed',
-  linear: 0.2,
-  angular: 0.0,
-}));
+```json
+{ "type": "ping" }
 ```
 
-*(Command handling is currently a pass-through stub — wire up `web_bridge.py` `_handle_command()` to forward to the appropriate ROS topic as needed.)*
+---
+
+## Sending Commands (Web → Robot)
+
+Send any JSON object to control the robot:
+
+```javascript
+// Start mapping mode (scan the room)
+ws.send(JSON.stringify({
+  type: 'cmd',
+  action: 'mapping',
+  command: 'start',
+}));
+
+// Stop mapping and save map (switch to live mode)
+ws.send(JSON.stringify({
+  type: 'cmd',
+  action: 'mapping',
+  command: 'stop',
+}));
+
+// Reset temporary obstacles (in live mode)
+ws.send(JSON.stringify({
+  type: 'cmd',
+  action: 'mapping',
+  command: 'reset',
+}));
+```
 
 ---
 
@@ -263,10 +287,9 @@ ws.send(JSON.stringify({
 
     let mapData = null;
     let robotPose = null;
-    let scanPoints = [];
-    const ROBOT_IP = '192.168.1.100'; // <-- CHANGE THIS
+    let mode = 'live';
 
-    const ws = new WebSocket(`wss://map.nguyen-robot.io.vn`);
+    const ws = new WebSocket('wss://map.nguyen-robot.io.vn');
 
     ws.onopen = () => statusEl.textContent = 'Connected';
 
@@ -274,17 +297,23 @@ ws.send(JSON.stringify({
       const msg = JSON.parse(event.data);
       switch (msg.type) {
         case 'map':    mapData = msg.data; renderMap(); break;
-        case 'scan':   scanPoints = msg.data.points; break;
+        case 'scan':   break;
         case 'pose':   robotPose = msg.data; renderMap(); break;
         case 'status': statusEl.textContent = msg.data; break;
+        case 'mode':   mode = msg.data; break;
         case 'info':   updateDeviceStatus(msg.data); break;
-        case 'ping':   break; // connection alive
+        case 'ping':   break;
       }
     };
 
     function updateDeviceStatus(info) {
       const dot = (ok) => ok ? '🟢' : '⚪';
-      devicesEl.textContent = `${dot(info.lidar)} Lidar ${dot(info.map)} Map ${dot(info.pose)} Pose`;
+      const modeColor = info.mode === 'mapping' ? 'color:#f59e0b' : 'color:#22c55e';
+      devicesEl.innerHTML =
+        `${dot(info.lidar)} Lidar ` +
+        `${dot(info.map)} Map ` +
+        `${dot(info.pose)} Pose ` +
+        `<span style="${modeColor}">[${info.mode.toUpperCase()}]</span>`;
     }
 
     function worldToScreen(wx, wy) {
@@ -303,23 +332,13 @@ ws.send(JSON.stringify({
       for (let i = 0; i < mapData.data.length; i++) {
         const v = mapData.data[i];
         const j = i * 4;
-        if      (v === -1)  { img.data[j]=80;  img.data[j+1]=80;  img.data[j+2]=80;  img.data[j+3]=255; }
-        else if (v === 100) { img.data[j]=30;  img.data[j+1]=30;  img.data[j+2]=30;  img.data[j+3]=255; }
-        else                { img.data[j]=240; img.data[j+1]=240; img.data[j+2]=240; img.data[j+3]=255; }
+        if      (v === -1)  { img.data[j]=60;   img.data[j+1]=60;   img.data[j+2]=80;   img.data[j+3]=255; }
+        else if (v === 100) { img.data[j]=25;   img.data[j+1]=25;   img.data[j+2]=25;   img.data[j+3]=255; }
+        else                { img.data[j]=245;  img.data[j+1]=245;  img.data[j+2]=240;  img.data[j+3]=255; }
       }
       ctx.putImageData(img, 0, 0);
 
-      // Draw lidar points (robot-centric, overlay on map)
       if (robotPose) {
-        ctx.fillStyle = 'rgba(0, 200, 255, 0.4)';
-        for (const pt of scanPoints) {
-          const wx = robotPose.x + pt.x * Math.cos(robotPose.theta) - pt.y * Math.sin(robotPose.theta);
-          const wy = robotPose.y + pt.x * Math.sin(robotPose.theta) + pt.y * Math.cos(robotPose.theta);
-          const s = worldToScreen(wx, wy);
-          ctx.fillRect(s.x, s.y, 2, 2);
-        }
-
-        // Draw robot triangle
         const rp = worldToScreen(robotPose.x, robotPose.y);
         ctx.save();
         ctx.translate(rp.x, rp.y);
@@ -332,10 +351,8 @@ ws.send(JSON.stringify({
         ctx.closePath();
         ctx.fill();
         ctx.restore();
-      }
-
-      if (robotPose) {
-        poseEl.textContent = `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)}`;
+        poseEl.textContent =
+          `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)}`;
       }
     }
   </script>
@@ -349,13 +366,13 @@ ws.send(JSON.stringify({
 
 | Source | Topic | Message Type | Frequency | WebSocket Field |
 |---|---|---|---|---|
+| map_manager | `/map_combined` | OccupancyGrid | ~2 Hz | `map.*` |
 | Lidar driver | `/scan` | LaserScan | ~12 Hz | `scan.points[]` |
-| SLAM Toolbox | `/map` | OccupancyGrid | ~0.7 Hz | `map.*` |
 | TF2 | `map→base_footprint` | TF | 10 Hz | `pose.{x,y,theta}` |
-| brain_node | `/robot_status` | String | 1 Hz | `status.data` |
+| map_manager | `/mapping_status` | String | on change | `mode.*`, `status.data` |
 | web_bridge | — | — | 5s | `info.*` (device status) |
 
-**Hot-plug:** All devices are hot-pluggable. If the lidar is unplugged, `scan` messages stop and resume automatically when reconnected. The `info` message tells you what's currently available.
+**Hot-plug:** All devices are hot-pluggable. The `info` message tells you what's currently available.
 
 ---
 
@@ -364,14 +381,14 @@ ws.send(JSON.stringify({
 | Symptom | Likely Cause |
 |---|---|
 | WebSocket never connects | Wrong IP address, or Cloudflare tunnel pointing to wrong port |
-| `scan.points` is always empty | Lidar not connected — check `info.lidar` is `true` |
-| `pose` never arrives | SLAM not yet localized — robot needs to move to produce map features |
-| `map.data` is all `-1` | SLAM not running or lidar not connected yet |
-| Laggy map | Network latency or browser canvas rendering too slow — reduce render frequency |
+| `map` all gray | map_manager not running or `/map_combined` not published |
+| `pose` jumps around | TF not converged — robot needs to move slowly |
+| Map keeps growing in LIVE mode | Still in MAPPING mode — send `command: 'stop'` |
+| Temporary objects never clear | Normal — they clear after 5 consecutive scans without detection |
 
 To verify the robot is publishing data, SSH into the container and run:
 ```bash
 ros2 topic list
-ros2 topic echo /scan --once
-ros2 topic echo /map --once
+ros2 topic echo /map_combined --once
+ros2 topic pub --once /mapping/control std_msgs/String "data: 'start'"
 ```
