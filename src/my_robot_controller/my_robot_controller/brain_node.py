@@ -10,8 +10,7 @@ Communication with ESP32-S3 via Serial USB (/dev/ttyUSB1, 115200 baud).
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan, Odometry
-from nav_msgs.msg import OccupancyGrid
-from std_msgs.msg import String, Empty
+from std_msgs.msg import String
 import math
 import serial
 import threading
@@ -156,7 +155,6 @@ class BrainNode(Node):
                             target=self._read_serial_loop, daemon=True)
                         self.serial_thread.start()
             time.sleep(2)
-            self.esp_serial = None
 
     def _read_serial_loop(self):
         while rclpy.ok():
