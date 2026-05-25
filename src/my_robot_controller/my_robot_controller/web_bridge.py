@@ -184,8 +184,10 @@ class WebBridge(Node):
                     'theta': round(theta, 4),
                 }
             })
-        except Exception:
+        except Exception as e:
             # Pose not available — normal before SLAM converges
+            if self.pose_seen:
+                self.get_logger().warn(f'Pose TF lookup failed: {e}')
             pass
 
     @staticmethod
