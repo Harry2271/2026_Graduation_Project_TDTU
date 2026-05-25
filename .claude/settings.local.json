@@ -3,7 +3,8 @@
     "allow": [
       "Bash(mkdir -p \"e:/robot-controller/src/esp32_firmware/motor_control\")",
       "Read(//d/taiLieuHoc/robot-for-nguyen//**)",
-      "Read(//d/taiLieuHoc/robot-for-nguyen/**)"
+      "Read(//d/taiLieuHoc/robot-for-nguyen/**)",
+      "WebSearch"
     ]
   }
 }

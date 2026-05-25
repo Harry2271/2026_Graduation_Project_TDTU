@@ -7,6 +7,10 @@ slam_toolbox:
     use_map_saver: true
     mode: online
 
+    # Publish the scan-matched pose estimate as a PoseWithCovarianceStamped topic.
+    # web_bridge.py subscribes to /pose to get real robot position in the map frame.
+    publish_pose: true
+
     # 1. Tăng tốc độ cập nhật bản đồ lên Foxglove (mỗi 1.5s thay vì 5.0s mặc định)
     map_update_interval: 1.5
 

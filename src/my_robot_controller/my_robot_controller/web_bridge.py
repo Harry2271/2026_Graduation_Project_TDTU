@@ -5,9 +5,10 @@ WebSocket bridge node for robot-controller.
 
 Subscribes to:
   /scan          -> cartesian {x, y} points
-  /map           -> occupancy grid metadata + flat data
-  /tf (map->base_footprint) -> robot pose {x, y, theta}
+  /map_combined  -> occupancy grid metadata + flat data
+  /pose          -> robot pose from slam_toolbox {x, y, theta} in map frame
   /robot_status  -> robot state string
+  /mapping_status -> mapping mode state
 
 Publishes clean JSON to all connected WebSocket clients on port 9091.
 
@@ -40,9 +41,8 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from std_msgs.msg import String
-from tf2_ros import TransformListener, Buffer
 
 HOST = '0.0.0.0'
 PORT = 9091
@@ -65,18 +65,14 @@ class WebBridge(Node):
         self.coverage_pct: int = 0
         self.last_info_emit: float = 0.0
 
-        # TF2: get robot pose in map frame
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-
         # Subscriptions — create them, they'll activate when topics are published
         self.create_subscription(LaserScan, '/scan', self._on_scan, 10)
         self.create_subscription(OccupancyGrid, '/map_combined', self._on_map, 10)
         self.create_subscription(String, '/robot_status', self._on_status, 10)
         self.create_subscription(String, '/mapping_status', self._on_mapping_status, 10)
 
-        # Pose polling timer (10 Hz)
-        self.create_timer(0.1, self._poll_pose)
+        # SLAM pose: scan-matched pose estimate in map frame (published by slam_toolbox)
+        self.create_subscription(PoseWithCovarianceStamped, '/pose', self._on_slam_pose, 10)
 
         # Device info broadcast (every 5s)
         self.create_timer(5.0, self._broadcast_info)
@@ -85,7 +81,7 @@ class WebBridge(Node):
         self.create_timer(0.01, self._poll_commands)
 
         self.get_logger().info(f'WebBridge started — serving on ws://{HOST}:{PORT}')
-        self.get_logger().info('Subscribed to /scan, /map_combined, /tf, /robot_status, /mapping_status')
+        self.get_logger().info('Subscribed to /scan, /map_combined, /pose, /robot_status, /mapping_status')
         self.get_logger().info('Topics become active when devices are connected')
 
     def _emit(self, msg: dict):
@@ -169,26 +165,19 @@ class WebBridge(Node):
         self._emit({'type': 'mode', 'data': self.mode})
         self._emit({'type': 'status', 'data': data})
 
-    def _poll_pose(self):
-        try:
-            t: TransformStamped = self.tf_buffer.lookup_transform(
-                'map', 'base_footprint', rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1))
-            q = t.transform.rotation
-            theta = self._euler_from_quat(q.x, q.y, q.z, q.w)
-            self.pose_seen = True
-            self._emit({
-                'type': 'pose',
-                'data': {
-                    'x': round(t.transform.translation.x, 4),
-                    'y': round(t.transform.translation.y, 4),
-                    'theta': round(theta, 4),
-                }
-            })
-        except Exception as e:
-            # Pose not available — normal before SLAM converges
-            if self.pose_seen:
-                self.get_logger().warn(f'Pose TF lookup failed: {e}')
-            pass
+    def _on_slam_pose(self, msg: PoseWithCovarianceStamped):
+        """Handle PoseWithCovarianceStamped from slam_toolbox — the scan-matched pose in map frame."""
+        self.pose_seen = True
+        q = msg.pose.pose.orientation
+        theta = self._euler_from_quat(q.x, q.y, q.z, q.w)
+        self._emit({
+            'type': 'pose',
+            'data': {
+                'x': round(msg.pose.pose.position.x, 4),
+                'y': round(msg.pose.pose.position.y, 4),
+                'theta': round(theta, 4),
+            }
+        })
 
     @staticmethod
     def _euler_from_quat(x, y, z, w) -> float:

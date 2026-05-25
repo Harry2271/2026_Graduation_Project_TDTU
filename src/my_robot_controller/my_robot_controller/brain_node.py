@@ -12,8 +12,6 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan, Odometry
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String, Empty
-from geometry_msgs.msg import TransformStamped
-from tf2_ros import TransformBroadcaster
 import math
 import serial
 import threading
@@ -85,9 +83,6 @@ class BrainNode(Node):
         self.odom_vy = 0.0
         self.odom_omega = 0.0
         self._last_odom_time = self.get_clock().now()
-
-        # TF broadcaster: odom -> base_footprint
-        self.tf_broadcaster = TransformBroadcaster(self)
 
         # Lidar data
         self.last_scan: LaserScan = None
@@ -512,7 +507,9 @@ class BrainNode(Node):
         return self.obstacle_in_front() > MIN_CLEARANCE * 1.5
 
     # -------------------------------------------------------------------------
-    # Odometry Publishing (simulated from commanded velocities)
+    # Odometry Publishing (for slam_toolbox scan matching).
+    # Publishes /odom so slam_toolbox can use it for laser scan matching.
+    # TF odom->base_footprint is broadcast exclusively by slam_toolbox.
     # -------------------------------------------------------------------------
     def _publish_odom(self):
         now = self.get_clock().now()
@@ -550,20 +547,6 @@ class BrainNode(Node):
         odom.twist.twist.linear.y = self.odom_vy
         odom.twist.twist.angular.z = self.odom_omega
         self.odom_publisher.publish(odom)
-
-        # Broadcast odom -> base_footprint transform
-        t = TransformStamped()
-        t.header.stamp = now.to_msg()
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_footprint'
-        t.transform.translation.x = self.odom_x
-        t.transform.translation.y = self.odom_y
-        t.transform.translation.z = 0.0
-        t.transform.rotation.x = qx
-        t.transform.rotation.y = qy
-        t.transform.rotation.z = qz
-        t.transform.rotation.w = qw
-        self.tf_broadcaster.sendTransform(t)
 
     @staticmethod
     def _euler_to_quat(roll, pitch, yaw):

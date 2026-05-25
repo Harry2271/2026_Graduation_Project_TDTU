@@ -294,6 +294,7 @@ ws.send(JSON.stringify({
     let scanPoints = [];
     let mode = 'live';
     let lastScanTime = 0;
+    let deviceInfo = {};  // holds latest info from 'info' message
 
     const ws = new WebSocket('wss://map.nguyen-robot.io.vn');
 
@@ -304,13 +305,46 @@ ws.send(JSON.stringify({
       switch (msg.type) {
         case 'map':    mapData = msg.data; renderMap(); break;
         case 'scan':   scanPoints = msg.data.points; lastScanTime = Date.now(); renderScan(); break;
-        case 'pose':   robotPose = msg.data; renderScan(); break;
+        case 'pose':   robotPose = msg.data; break;  // pose renders in rAF loop
         case 'status': statusEl.textContent = msg.data; break;
         case 'mode':   mode = msg.data; break;
-        case 'info':   updateDeviceStatus(msg.data); break;
+        case 'info':   deviceInfo = msg.data; updateDeviceStatus(deviceInfo); break;
         case 'ping':   break;
       }
     };
+
+    // Render pose and arrow on every animation frame — independent of scan arrival.
+    // This prevents the pose from freezing when scans momentarily stop.
+    function renderPose() {
+      const now = Date.now();
+
+      if (!robotPose) {
+        poseEl.textContent = deviceInfo.pose === false ? 'Locating...' : '';
+        return;
+      }
+
+      // Show "Locating..." when robot is at origin and pose not yet established.
+      // When the robot has actually moved (x²+y² > 0.01), show real coords.
+      const distSq = robotPose.x * robotPose.x + robotPose.y * robotPose.y;
+      if (distSq < 0.01 && !deviceInfo.pose) {
+        poseEl.textContent = 'Locating...';
+      } else {
+        poseEl.textContent =
+          `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)}` +
+          (scanPoints.length > 0 ? ` [${scanPoints.length} pts]` : '');
+      }
+
+      // Draw robot heading arrow (only when map is loaded)
+      if (mapData && robotPose) {
+        const rp = worldToScreen(robotPose.x, robotPose.y);
+        // Arrow drawn on scanCanvas — actual draw deferred to renderScan
+        // Store for use by renderScan
+        renderScan.poseScreenPos = rp;
+      }
+
+      requestAnimationFrame(renderPose);
+    }
+    requestAnimationFrame(renderPose);
 
     function updateDeviceStatus(info) {
       const dot = (ok) => ok ? '🟢' : '⚪';
@@ -383,8 +417,6 @@ ws.send(JSON.stringify({
         scanCtx.closePath();
         scanCtx.fill();
         scanCtx.restore();
-        poseEl.textContent =
-          `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)} [${scanPoints.length} pts]`;
       }
     }
 
@@ -419,7 +451,7 @@ ws.send(JSON.stringify({
 |---|---|---|---|---|
 | map_manager | `/map_combined` | OccupancyGrid | ~1 Hz | `map.*` (800×800 cells @ 5cm) |
 | Lidar driver | `/scan` | LaserScan | ~12 Hz | `scan.points[]` (rendered as cyan dots) |
-| TF2 | `map→base_footprint` | TF | 10 Hz | `pose.{x,y,theta}` |
+| slam_toolbox | `/pose` | PoseWithCovarianceStamped | ~10 Hz | `pose.{x,y,theta}` |
 | map_manager | `/mapping_status` | String | on change | `mode.*`, `status.data` |
 | web_bridge | — | — | 5s | `info.*` (device status) |
 
