@@ -572,7 +572,7 @@ export default function MapPage() {
               break;
             case 'pose':
               setPose({ ...(msg.data as PoseData) });
-              poseRef.current = msg.data as PoseData;
+              poseRef.current = { ...(msg.data as PoseData) };
               break;
             case 'scan':
               setScanData({ ...(msg.data as ScanData) });
