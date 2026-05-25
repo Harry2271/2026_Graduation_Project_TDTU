@@ -19,6 +19,7 @@ grid's bounding box for 10 seconds (room fully scanned).
 import math
 import os
 import time
+import json
 
 import numpy as np
 import rclpy
@@ -80,7 +81,15 @@ class MapManager(Node):
         self.last_update_pose_y = 0.0
 
         # --- Mode state ---
-        self.mode = 'IDLE'  # IDLE | MAPPING | LIVE
+        # Read initial mode from MAPPING_MODE env (set by docker-compose)
+        env_mode = os.environ.get('MAPPING_MODE', '').strip().lower()
+        if env_mode == 'mapping':
+            self.mode = 'MAPPING'
+        elif env_mode == 'live':
+            self.mode = 'LIVE'
+            self._load_persistent_map()
+        else:
+            self.mode = 'IDLE'
         self.mapping_start_time = 0.0
 
         # --- Publishers ---
@@ -105,6 +114,8 @@ class MapManager(Node):
             f'MapManager started — grid: {GRID_CELLS}x{GRID_CELLS} '
             f'({GRID_SIZE_METERS}m x {GRID_SIZE_METERS}m, {GRID_RESOLUTION}m/cell)'
         )
+        # Publish initial mode so subscribers (web_bridge) immediately see the state
+        self._switch_mode(self.mode)
 
     # -------------------------------------------------------------------------
     # Raycasting — numpy-vectorized (processes all beams simultaneously)
@@ -411,7 +422,6 @@ class MapManager(Node):
     # -------------------------------------------------------------------------
     def _save_persistent_map(self):
         try:
-            import json
             data = {
                 'grid': self.persistent_grid,
                 'bbox': {
@@ -430,7 +440,6 @@ class MapManager(Node):
 
     def _load_persistent_map(self):
         try:
-            import json
             if not os.path.exists(SAVE_PATH):
                 self.get_logger().warn(f'No saved map found at {SAVE_PATH}')
                 return
