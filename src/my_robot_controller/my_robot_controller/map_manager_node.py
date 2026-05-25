@@ -269,21 +269,31 @@ class MapManager(Node):
         cmd = msg.data.strip().lower()
         if cmd == 'start':
             if self.mode == 'LIVE':
-                self.get_logger().warn('Already in LIVE mode — reset first')
-                return
-            self.get_logger().info('Starting MAPPING mode')
-            self._reset_grids()
-            self.mode = 'MAPPING'
-            self.mapping_start_time = time.time()
+                self.get_logger().info('Switching LIVE -> MAPPING')
+                self._reset_grids()
+                self.mode = 'MAPPING'
+                self.mapping_start_time = time.time()
+            elif self.mode == 'IDLE':
+                self.get_logger().info('Starting MAPPING mode')
+                self._reset_grids()
+                self.mode = 'MAPPING'
+                self.mapping_start_time = time.time()
         elif cmd == 'stop':
             self.get_logger().info('Stopping MAPPING mode, switching to LIVE')
             self._save_persistent_map()
             self._switch_mode('LIVE')
         elif cmd == 'reset':
-            self.get_logger().info('Resetting — clearing all maps')
-            self._reset_grids()
-            self._load_persistent_map()
-            self.mode = 'LIVE'
+            if self.mode == 'LIVE':
+                # Only clear temporary obstacles, keep the saved map
+                self.get_logger().info('Resetting temporary obstacles')
+                self.temporary_grid = [CELL_UNKNOWN] * (GRID_CELLS * GRID_CELLS)
+                self.temp_hit_count = [0] * (GRID_CELLS * GRID_CELLS)
+            else:
+                # MAPPING/IDLE: clear everything and start fresh
+                self.get_logger().info('Resetting — clearing all maps')
+                self._reset_grids()
+                self._load_persistent_map()
+                self.mode = 'LIVE'
 
     def _reset_grids(self):
         self.persistent_grid = [CELL_UNKNOWN] * (GRID_CELLS * GRID_CELLS)
