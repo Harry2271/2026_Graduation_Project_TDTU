@@ -108,7 +108,7 @@ export default function InventoryPage() {
       const slot = positionSlotMap[slotKey];
       if (slot?.packageId) {
         notification.warning({
-          message: 'Ô đích đã có kiện hàng',
+          title: 'Ô đích đã có kiện hàng',
           description: 'Vui lòng chọn một ô trống để di chuyển.',
           placement: 'topRight',
         });
@@ -118,7 +118,7 @@ export default function InventoryPage() {
       setIsConfirmDestOpen(true);
     } else {
       notification.warning({
-        message: 'Chỉ được chọn tối đa 2 ô',
+        title: 'Chỉ được chọn tối đa 2 ô',
         description: 'Hãy huỷ ô đã chọn để chọn lại.',
         placement: 'topRight',
       });
@@ -158,7 +158,7 @@ export default function InventoryPage() {
   const handleSubmit = async () => {
     if (!source || !dest) {
       notification.warning({
-        message: 'Chưa chọn đủ vị trí',
+        title: 'Chưa chọn đủ vị trí',
         description: 'Vui lòng chọn đủ ô nguồn và ô đích trước khi gửi lệnh.',
         placement: 'topRight',
       });
@@ -170,7 +170,7 @@ export default function InventoryPage() {
       const targetSlotCode = toSlotCode(dest.shelfId, dest.cell);
       await movePackage({ sourceSlotCode, targetSlotCode }).unwrap();
       notification.success({
-        message: 'Thành công',
+        title: 'Thành công',
         description: 'Gửi lệnh di chuyển thành công!',
         placement: 'topRight',
       });
@@ -181,7 +181,7 @@ export default function InventoryPage() {
         (err as { error?: string })?.error ||
         'Gửi lệnh thất bại!';
       notification.error({
-        message: 'Thất bại',
+        title: 'Thất bại',
         description: errMsg,
         placement: 'topRight',
       });

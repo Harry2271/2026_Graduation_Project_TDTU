@@ -67,20 +67,20 @@ export default function ProductsPage() {
 
   const handleAssign = async () => {
     if (!assignModal?.shelfId || !assignModal?.cell || !assignModal?.pkg) {
-      notification.warning({ message: "Chưa chọn vị trí", description: "Vui lòng chọn kệ và ô.", placement: "topRight" });
+      notification.warning({ title: "Chưa chọn vị trí", description: "Vui lòng chọn kệ và ô.", placement: "topRight" });
       return;
     }
     try {
       const slotCode = toSlotCode(assignModal.shelfId, assignModal.cell);
       await assignToSlot({ slotCode, packageId: assignModal.pkg._id }).unwrap();
-      notification.success({ message: "Thành công", description: "Xếp kiện hàng vào kệ thành công!", placement: "topRight" });
+      notification.success({ title: "Thành công", description: "Xếp kiện hàng vào kệ thành công!", placement: "topRight" });
       closeAssignModal();
     } catch (err: unknown) {
       const errMsg =
         (err as { data?: { message?: string } })?.data?.message ||
         (err as { error?: string })?.error ||
         "Xếp kiện hàng thất bại!";
-      notification.error({ message: "Thất bại", description: errMsg, placement: "topRight" });
+      notification.error({ title: "Thất bại", description: errMsg, placement: "topRight" });
     }
   };
 
@@ -133,7 +133,7 @@ export default function ProductsPage() {
   const handleAdd = async (values: { packageName: string }) => {
     try {
       await createPackage(values).unwrap();
-      notification.success({ message: "Thành công", description: "Thêm kiện hàng thành công!", placement: "topRight" });
+      notification.success({ title: "Thành công", description: "Thêm kiện hàng thành công!", placement: "topRight" });
       form.resetFields();
       setIsAddModalOpen(false);
     } catch (err: unknown) {
@@ -141,20 +141,20 @@ export default function ProductsPage() {
         (err as { data?: { message?: string } })?.data?.message ||
         (err as { error?: string })?.error ||
         "Thêm kiện hàng thất bại!";
-      notification.error({ message: "Thất bại", description: errMsg, placement: "topRight" });
+      notification.error({ title: "Thất bại", description: errMsg, placement: "topRight" });
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
       await deletePackage(id).unwrap();
-      notification.success({ message: "Thành công", description: "Xóa kiện hàng thành công!", placement: "topRight" });
+      notification.success({ title: "Thành công", description: "Xóa kiện hàng thành công!", placement: "topRight" });
     } catch (err: unknown) {
       const errMsg =
         (err as { data?: { message?: string } })?.data?.message ||
         (err as { error?: string })?.error ||
         "Xóa kiện hàng thất bại!";
-      notification.error({ message: "Thất bại", description: errMsg, placement: "topRight" });
+      notification.error({ title: "Thất bại", description: errMsg, placement: "topRight" });
     }
   };
 

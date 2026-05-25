@@ -61,6 +61,28 @@ export const inventoryApi = baseApi.injectEndpoints({
         { type: "Packages" },
         { type: "Packages", id },
       ],
+      async onCacheEntryAdded(arg, { updateCachedData, cacheEntryRemoved, dispatch }) {
+        const socket = getSocket();
+
+        socket.on("package:updated", (updatedPkg: Package) => {
+          if (updatedPkg._id !== arg) return;
+          updateCachedData((draft) => {
+            if (!draft) return;
+            Object.assign(draft, updatedPkg);
+          });
+        });
+
+        socket.on("package:deleted", (id: string) => {
+          if (id !== arg) return;
+          dispatch(
+            inventoryApi.util.invalidateTags([{ type: "Packages", id }])
+          );
+        });
+
+        await cacheEntryRemoved;
+        socket.off("package:updated");
+        socket.off("package:deleted");
+      },
     }),
 
     createPackage: builder.mutation<Package, { packageName: string }>({

@@ -7,7 +7,12 @@
       "Bash(npx next *)",
       "Bash(ls -la \"d:/taiLieuHoc/robot-for-nguyen/nguyen-web-app/public/\" 2>/dev/null || dir \"D:\\\\taiLieuHoc\\\\robot-for-nguyen\\\\nguyen-web-app\\\\public\" /b 2>nul; ls -la \"d:/taiLieuHoc/robot-for-nguyen/nguyen-web-app/src/app/favicon.ico\" 2>/dev/null; ls \"d:/taiLieuHoc/robot-for-nguyen/nguyen-web-app/public/LOGO.png\" 2>/dev/null)",
       "Bash(rm \"d:/taiLieuHoc/robot-for-nguyen/nguyen-web-app/src/app/favicon.ico\")",
-      "Bash(yarn add *)"
+      "Bash(yarn add *)",
+      "Bash(echo \"EXIT: $?\")"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "Puppeteer"
+  ],
+  "enableAllProjectMcpServers": true
 }

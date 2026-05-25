@@ -27,6 +27,35 @@ import { QRCodeSVG } from "qrcode.react";
 
 const { Content } = Layout;
 
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: "0.5rem",
+        padding: "10px 0",
+        borderBottom: "1px solid #f3f4f6",
+      }}
+    >
+      <span
+        style={{
+          minWidth: 140,
+          fontSize: "13px",
+          color: "#9ca3af",
+          fontWeight: 500,
+          flexShrink: 0,
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ fontSize: "14px", color: "#374151", fontWeight: 600, wordBreak: "break-word" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 export default function ProductDetailPage({
   params,
 }: {
@@ -66,12 +95,12 @@ export default function ProductDetailPage({
 
   const handleUpdate = async () => {
     if (!pendingName.trim()) {
-      notification.warning({ message: "Chưa nhập tên", description: "Tên kiện hàng không được để trống.", placement: "topRight" });
+      notification.warning({ title: "Chưa nhập tên", description: "Tên kiện hàng không được để trống.", placement: "topRight" });
       return;
     }
     try {
       await updatePackage({ id, packageName: pendingName.trim() }).unwrap();
-      notification.success({ message: "Thành công", description: "Cập nhật kiện hàng thành công!", placement: "topRight" });
+      notification.success({ title: "Thành công", description: "Cập nhật kiện hàng thành công!", placement: "topRight" });
       editForm.setFieldsValue({ packageName: pendingName.trim() });
       setIsEditModalOpen(false);
       setIsConfirmOpen(false);
@@ -80,7 +109,7 @@ export default function ProductDetailPage({
         (err as { data?: { message?: string } })?.data?.message ||
         (err as { error?: string })?.error ||
         "Cập nhật kiện hàng thất bại!";
-      notification.error({ message: "Thất bại", description: errMsg, placement: "topRight" });
+      notification.error({ title: "Thất bại", description: errMsg, placement: "topRight" });
       setIsConfirmOpen(false);
     }
   };
@@ -89,8 +118,12 @@ export default function ProductDetailPage({
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
 
+  const autoPrintOpenedRef = useRef(false);
   useEffect(() => {
-    if (autoPrint && pkg) setIsPrintModalOpen(true);
+    if (autoPrint && pkg && !autoPrintOpenedRef.current) {
+      autoPrintOpenedRef.current = true;
+      setIsPrintModalOpen(true);
+    }
   }, [autoPrint, pkg]);
 
   const handlePrint = () => setIsPrintModalOpen(true);
@@ -101,7 +134,7 @@ export default function ProductDetailPage({
 
     const win = window.open("", "_blank", "width=420,height=560");
     if (!win) {
-      notification.error({ message: "Không thể in", description: "Không thể mở cửa sổ in. Vui lòng kiểm tra popup blocker.", placement: "topRight" });
+      notification.error({ title: "Không thể in", description: "Không thể mở cửa sổ in. Vui lòng kiểm tra popup blocker.", placement: "topRight" });
       return;
     }
 
@@ -133,34 +166,6 @@ export default function ProductDetailPage({
     `);
     win.document.close();
   };
-
-  // ── Info row helper ─────────────────────────────────────────────────
-  const InfoRow = ({ label, value }: { label: string; value: React.ReactNode }) => (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "baseline",
-        gap: "0.5rem",
-        padding: "10px 0",
-        borderBottom: "1px solid #f3f4f6",
-      }}
-    >
-      <span
-        style={{
-          minWidth: 140,
-          fontSize: "13px",
-          color: "#9ca3af",
-          fontWeight: 500,
-          flexShrink: 0,
-        }}
-      >
-        {label}
-      </span>
-      <span style={{ fontSize: "14px", color: "#374151", fontWeight: 600, wordBreak: "break-word" }}>
-        {value}
-      </span>
-    </div>
-  );
 
   return (
     <Layout style={{ minHeight: "100vh", background: "#f0f2f5" }}>

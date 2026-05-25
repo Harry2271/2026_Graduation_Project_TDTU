@@ -1,699 +1,901 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Move, Ruler, Compass, Target, AlertTriangle, Activity, WifiOff } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Ruler, Compass, Target, WifiOff } from 'lucide-react';
 import { Button, notification, Tooltip, Modal } from 'antd';
 
-const WS_URL = "wss://map.nguyen-robot.io.vn"; // Tunnel trỏ vào port 9090 (rosbridge)
+const WS_URL = 'wss://map.nguyen-robot.io.vn';
 
-interface TFNode {
-  parent: string;
-  x: number;
-  y: number;
-  yaw: number;
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+interface ScanData {
+  points: { x: number; y: number }[];
+  count: number;
 }
+
+interface MapData {
+  width: number;
+  height: number;
+  resolution: number;
+  origin_x: number;
+  origin_y: number;
+  origin_theta: number;
+  data: number[];
+}
+
+interface PoseData { x: number; y: number; theta: number; }
+
+interface InfoData { lidar: boolean; map: boolean; pose: boolean; mode: string; coverage_pct?: number; }
+
+// ─── Coordinate helpers ────────────────────────────────────────────────────
+
+/** World → canvas pixel (canvas Y is down, grid Y is up → flip) */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function worldToCanvas(wx: number, wy: number, map: MapData): { cx: number; cy: number } {
+  return {
+    cx: (wx - map.origin_x) / map.resolution,
+    cy: (map.height - 1) - (wy - map.origin_y) / map.resolution,
+  };
+}
+
+/** Scan frame → world frame, based on lidarAxis orientation */
+function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number): { wx: number; wy: number } {
+  const c = Math.cos(pose.theta);
+  const s = Math.sin(pose.theta);
+  let fx: number, fy: number;
+  switch (lidarAxis) {
+    case 0: fx =  rx; fy =  ry; break; // +X = forward
+    case 1: fx =  ry; fy = -rx; break; // +Y = forward
+    case 2: fx = -rx; fy = -ry; break; // -X = forward
+    case 3: fx = -ry; fy =  rx; break; // -Y = forward
+    default: fx =  rx; fy =  ry; break;
+  }
+  return { wx: c * fx - s * fy + pose.x, wy: s * fx + c * fy + pose.y };
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────
 
 export default function MapPage() {
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [lidarStatus, setLidarStatus] = useState<'connected' | 'disconnected' | 'waiting'>('waiting');
-  const [isResetting, setIsResetting] = useState(false);
-  const [mapMetadata, setMapMetadata] = useState<{ width: number; height: number; resolution: number } | null>(null);
-  const [viewportScaleMeters, setViewportScaleMeters] = useState<number>(10);
-  
-  // Các chế độ hiển thị & theo dõi vị trí Lidar
-  const [isHeadingUp, setIsHeadingUp] = useState<boolean>(true); // Xoay bản đồ theo hướng Lidar (Heading-Up)
-  const [isRobotLock, setIsRobotLock] = useState<boolean>(true); // Khóa vị trí Lidar ở trung tâm
+  const [mapData, setMapData] = useState<MapData | null>(null);
+  const [pose, setPose] = useState<PoseData | null>(null);
+  const [scanData, setScanData] = useState<ScanData | null>(null);
+  const [statusText, setStatusText] = useState('');
+  const [info, setInfo] = useState<InfoData>({ lidar: false, map: false, pose: false, mode: 'live' });
 
-  // Dùng Ref để lưu trữ thông số tham chiếu tính toán và cây TF real-time
-  const mapMetadataRef = useRef<{ width: number; height: number; resolution: number; origin: any } | null>(null);
-  const viewportScaleRef = useRef<number>(10);
-  const tfTreeRef = useRef<{ [childFrame: string]: TFNode }>({});
-  const lastMsgTimeRef = useRef<number>(0);
+  // Viewport state
+  const [isHeadingUp, setIsHeadingUp] = useState(true);
+  const [isRobotLock, setIsRobotLock] = useState(true);
+  const [zoom, setZoom] = useState(1);
+  // Debug: lidar axis orientation (0=+X, 1=+Y, 2=-X, 3=-Y)
+  const [lidarAxis, setLidarAxis] = useState(1);
 
-  // Watchdog timer giám sát luồng dữ liệu từ Lidar
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (wsStatus === 'connected') {
-        const now = Date.now();
-        // Nếu quá 3 giây (3000ms) không nhận được bất kỳ dữ liệu TF/Map nào từ ROS 2
-        if (lastMsgTimeRef.current > 0 && now - lastMsgTimeRef.current <= 3000) {
-          setLidarStatus('connected');
-        } else {
-          setLidarStatus('disconnected');
-        }
-      } else {
-        setLidarStatus('waiting');
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [wsStatus]);
-
-  // Quản lý trạng thái Zoom (1.0 = 100% của khung nhìn vật lý)
-  const zoomRef = useRef<number>(1.0);
-  const [zoomScaleUI, setZoomScaleUI] = useState<number>(1.0);
-  const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const isDraggingRef = useRef<boolean>(false);
-  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
+  // Refs (mutable state that doesn't trigger re-renders)
+  const mapDataRef = useRef<MapData | null>(null);
+  const poseRef = useRef<PoseData | null>(null);
+  const scanDataRef = useRef<ScanData | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animFrameRef = useRef<number | null>(null);
+  const animRef = useRef<number>(0);
+  const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const zoomRef = useRef<number>(1);
+  const headingUpRef = useRef<boolean>(true);
+  const connectWsRef = useRef<() => void>(() => {});
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectDelayRef = useRef(1000);
+  const lidarAxisRef = useRef<number>(1);
 
-  // Thuật toán tìm vị trí và hướng Lidar real-time từ cây TF
-  const getRobotPose = useCallback(() => {
-    const tree = tfTreeRef.current;
-    if (Object.keys(tree).length === 0) return null;
+  // Generated occupancy grid (from accumulated LIDAR scans)
+  const occGridRef = useRef<MapData | null>(null);
+  const occScaleRef = useRef<number>(0.05); // 5 cm/cell
+  const occSizeRef = useRef<number>(500);    // 500×500 cells = ±12.5 m at 5cm/cell
 
-    // Tìm frame Lidar/Robot (ưu tiên laser, sllidar_base_link, base_link, base_footprint)
-    const robotFrame = ['laser', 'sllidar_base_link', 'base_link', 'base_footprint'].find(f => tree[f]) 
-      || Object.keys(tree).find(k => k.includes('laser') || k.includes('lidar'))
-      || Object.keys(tree).find(k => tree[k].parent === 'map' || tree[k].parent === 'odom');
+  // Accumulated scan bounds for auto-fit scale
+  const scanBoundsRef = useRef<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
 
-    if (!robotFrame) return null;
+  // Sync state → refs
+  useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
+  useEffect(() => { poseRef.current = pose; }, [pose]);
+  useEffect(() => { scanDataRef.current = scanData; }, [scanData]);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { headingUpRef.current = isHeadingUp; }, [isHeadingUp]);
+  useEffect(() => { lidarAxisRef.current = lidarAxis; }, [lidarAxis]);
 
-    let current: string | null = robotFrame;
-    let netX = 0;
-    let netY = 0;
-    let netYaw = 0;
-    let iterations = 0;
+  // ─── Canvas resize ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement;
+    if (!container) return;
 
-    // Lần ngược cây TF lên tới gốc 'map'
-    while (current && iterations < 10) {
-      const node: TFNode | undefined = tree[current];
-      if (!node) break;
-
-      const cos = Math.cos(netYaw);
-      const sin = Math.sin(netYaw);
-      netX = node.x + netX * cos - netY * sin;
-      netY = node.y + netX * sin + netY * cos;
-      netYaw = node.yaw + netYaw;
-
-      if (node.parent === 'map' || node.parent === 'world') break;
-      current = node.parent;
-      iterations++;
-    }
-
-    if (!mapMetadataRef.current || !mapMetadataRef.current.origin) {
-      return { x: netX, y: netY, yaw: netYaw, canvasX: 0, canvasY: 0 };
-    }
-
-    const { origin, resolution, width, height } = mapMetadataRef.current;
-    const dx = netX - origin.position.x;
-    const dy = netY - origin.position.y;
-    const cellX = dx / resolution;
-    const cellY = dy / resolution;
-
-    // Tọa độ tương đối so với tâm offscreen canvas (trục Y canvas hướng xuống)
-    const canvasX = cellX - width / 2;
-    const canvasY = -(cellY - height / 2);
-
-    return { x: netX, y: netY, yaw: netYaw, canvasX, canvasY };
+    const observer = new ResizeObserver(() => {
+      canvas.width = container.clientWidth;
+      canvas.height = container.clientHeight;
+    });
+    observer.observe(container);
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+    return () => observer.disconnect();
   }, []);
 
-  // Hàm redraw chính: tính toán ma trận xoay & tịnh tiến Heading-Up
-  const redrawDisplayCanvas = useCallback(() => {
-    const dispCanvas = canvasRef.current;
-    const offCanvas = offscreenCanvasRef.current;
-    if (!dispCanvas || !offCanvas) return;
+  // ─── Offscreen canvas for map grid (incremental updates) ───────
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const prevMapDataRef = useRef<number[] | null>(null);
+  const [occGridVersion, setOccGridVersion] = useState(0);
 
-    const dispCtx = dispCanvas.getContext('2d');
-    if (!dispCtx) return;
+  // Offscreen canvas for generated occupancy grid
+  const occOffscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const prevOccGridRef = useRef<number[] | null>(null);
 
-    dispCtx.imageSmoothingEnabled = false;
-    (dispCtx as any).webkitImageSmoothingEnabled = false;
-    (dispCtx as any).mozImageSmoothingEnabled = false;
+  // Build generated grid image whenever the grid is updated
+  useEffect(() => {
+    const grid = occGridRef.current;
+    if (!grid) return;
+    const { width: gw, height: gh } = grid;
 
-    dispCtx.clearRect(0, 0, dispCanvas.width, dispCanvas.height);
-    dispCtx.save();
-    
-    // Đưa gốc tọa độ về trung tâm màn hình và cộng độ lệch pan
-    dispCtx.translate(dispCanvas.width / 2 + panRef.current.x, dispCanvas.height / 2 + panRef.current.y);
-    
-    const res = mapMetadataRef.current ? mapMetadataRef.current.resolution : 0.05;
-    const targetMapPixels = viewportScaleRef.current / res;
-    const basePhysicalScale = dispCanvas.width / targetMapPixels;
-    const effectiveScale = basePhysicalScale * zoomRef.current;
+    let off = occOffscreenRef.current;
+    if (!off || off.width !== gw || off.height !== gh) {
+      off = document.createElement('canvas');
+      off.width = gw;
+      off.height = gh;
+      occOffscreenRef.current = off;
+      prevOccGridRef.current = null;
+    }
 
-    const robot = getRobotPose();
+    const ctx = off.getContext('2d');
+    if (!ctx) return;
+    let imgData: ImageData;
+    try {
+      imgData = ctx.getImageData(0, 0, gw, gh);
+    } catch {
+      return;
+    }
+    const buf = imgData.data;
+    const prev = prevOccGridRef.current;
 
-    // Nếu khóa trung tâm hoặc xoay bản đồ theo Lidar
-    if (robot && (isRobotLock || isHeadingUp)) {
-      // Góc xoay bản đồ để Lidar hướng thẳng lên trên (Heading-Up)
-      const mapRotation = isHeadingUp ? (-robot.yaw - Math.PI / 2) : 0;
-      dispCtx.rotate(mapRotation);
-      dispCtx.scale(effectiveScale, effectiveScale);
-
-      // Nếu khóa trung tâm, dịch gốc xoay về đúng vị trí Lidar
-      if (isRobotLock) {
-        dispCtx.translate(-robot.canvasX, -robot.canvasY);
+    if (prev && prev.length === grid.data.length) {
+      for (let i = 0; i < grid.data.length; i++) {
+        if (prev[i] !== grid.data[i]) {
+          const j = i * 4;
+          const v = grid.data[i];
+          if (v === 100) {
+            buf[j] = 0; buf[j+1] = 0; buf[j+2] = 0; buf[j+3] = 255;
+          } else if (v === 0) {
+            buf[j] = 255; buf[j+1] = 255; buf[j+2] = 255; buf[j+3] = 255;
+          } else {
+            buf[j] = 128; buf[j+1] = 128; buf[j+2] = 128; buf[j+3] = 255;
+          }
+        }
       }
     } else {
-      dispCtx.scale(effectiveScale, effectiveScale);
-    }
-    
-    // Vẽ bản đồ OccupancyGrid từ offscreen
-    dispCtx.drawImage(offCanvas, -offCanvas.width / 2, -offCanvas.height / 2);
-
-    // --- Vẽ biểu tượng Robot/Lidar real-time ---
-    if (robot) {
-      dispCtx.save();
-      dispCtx.translate(robot.canvasX, robot.canvasY);
-      
-      // Xoay theo hướng Lidar (trên hệ tọa độ canvas, góc xoay là -yaw)
-      dispCtx.rotate(-robot.yaw);
-
-      // 1. Vẽ chấm tròn xanh lá (vị trí Lidar)
-      dispCtx.beginPath();
-      dispCtx.arc(0, 0, 7 / effectiveScale, 0, Math.PI * 2);
-      dispCtx.fillStyle = '#22c55e'; // Green 500
-      dispCtx.fill();
-      dispCtx.lineWidth = 2.5 / effectiveScale;
-      dispCtx.strokeStyle = '#ffffff';
-      dispCtx.stroke();
-
-      // 2. Vẽ mũi tên chỉ hướng (nón đỏ nhô ra phía trước +X)
-      dispCtx.beginPath();
-      dispCtx.moveTo(16 / effectiveScale, 0); // Đỉnh mũi tên phía trước
-      dispCtx.lineTo(5 / effectiveScale, -6 / effectiveScale);
-      dispCtx.lineTo(5 / effectiveScale, 6 / effectiveScale);
-      dispCtx.closePath();
-      dispCtx.fillStyle = '#ef4444'; // Red 500
-      dispCtx.fill();
-
-      dispCtx.restore();
-    }
-
-    dispCtx.restore();
-  }, [getRobotPose, isHeadingUp, isRobotLock]);
-
-  // Xử lý dữ liệu Occupancy Grid: Tối ưu độ tương phản dịu mắt (Nền xám tối, Lối đi trắng sáng, Vách tường đen đậm)
-  const processMapGrid = useCallback((info: { width: number; height: number; resolution: number; origin: any }, gridData: number[]) => {
-    const { width, height, resolution, origin } = info;
-    mapMetadataRef.current = { width, height, resolution, origin };
-    setMapMetadata({ width, height, resolution });
-
-    if (!offscreenCanvasRef.current) {
-      const off = document.createElement('canvas');
-      off.width = width;
-      off.height = height;
-      offscreenCanvasRef.current = off;
-    }
-
-    const offCanvas = offscreenCanvasRef.current;
-    if (offCanvas.width !== width || offCanvas.height !== height) {
-      offCanvas.width = width;
-      offCanvas.height = height;
-    }
-
-    const ctx = offCanvas.getContext('2d');
-    if (!ctx) return;
-
-    const imgData = ctx.createImageData(width, height);
-    const dataArr = imgData.data;
-
-    for (let i = 0; i < gridData.length; i++) {
-      const val = gridData[i];
-      const r = Math.floor(i / width);
-      const c = i % width;
-      const canvasIdx = ((height - 1 - r) * width + c) * 4;
-
-      if (val === -1) {
-        // Vùng chưa biết (Unknown): Màu xám slate tối dịu mắt (#1e293b) - Tạo chiều sâu hoàn hảo trên nền web sáng
-        dataArr[canvasIdx] = 30;     // R
-        dataArr[canvasIdx + 1] = 41; // G
-        dataArr[canvasIdx + 2] = 59; // B
-        dataArr[canvasIdx + 3] = 255;
-      } else if (val === 0) {
-        // Lối đi (Free space): Màu trắng tinh khiết (#ffffff) - Nổi bật rõ ràng khu vực robot đã quét
-        dataArr[canvasIdx] = 255;
-        dataArr[canvasIdx + 1] = 255;
-        dataArr[canvasIdx + 2] = 255;
-        dataArr[canvasIdx + 3] = 255;
-      } else if (val > 50) {
-        // Vách tường / Chướng ngại vật: Màu đen tuyền (#000000) - Phân cách sắc nét ranh giới tường và lối đi
-        dataArr[canvasIdx] = 0;
-        dataArr[canvasIdx + 1] = 0;
-        dataArr[canvasIdx + 2] = 0;
-        dataArr[canvasIdx + 3] = 255;
+      for (let i = 0; i < grid.data.length; i++) {
+        const v = grid.data[i];
+        const j = i * 4;
+        if (v === 100) {
+          buf[j] = 0; buf[j+1] = 0; buf[j+2] = 0; buf[j+3] = 255;
+        } else if (v === 0) {
+          buf[j] = 255; buf[j+1] = 255; buf[j+2] = 255; buf[j+3] = 255;
+        } else {
+          buf[j] = 128; buf[j+1] = 128; buf[j+2] = 128; buf[j+3] = 255;
+        }
       }
     }
+
+    prevOccGridRef.current = [...grid.data];
     ctx.putImageData(imgData, 0, 0);
+    setOccGridVersion(v => v + 1);
+  }, [occGridRef.current?.data.length]);
 
-    redrawDisplayCanvas();
-  }, [redrawDisplayCanvas]);
+  const buildMapImage = useCallback(() => {
+    const map = mapDataRef.current;
+    if (!map) return;
+    const { width: gw, height: gh } = map;
 
-  const connectWs = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+    let off = offscreenRef.current;
+    if (!off || off.width !== gw || off.height !== gh) {
+      off = document.createElement('canvas');
+      off.width = gw;
+      off.height = gh;
+      offscreenRef.current = off;
+      prevMapDataRef.current = null;
+    }
+
+    const ctx = off.getContext('2d');
+    if (!ctx) return;
+
+    // Get existing pixel buffer — avoids allocate/free every update
+    let imgData: ImageData;
+    try {
+      imgData = ctx.getImageData(0, 0, gw, gh);
+    } catch {
+      // Canvas not ready — skip
+      return;
+    }
+    const buf = imgData.data;
+    const prev = prevMapDataRef.current;
+
+    if (prev && prev.length === map.data.length) {
+      // Incremental: only update cells that changed
+      for (let i = 0; i < map.data.length; i++) {
+        if (prev[i] !== map.data[i]) {
+          const j = i * 4;
+          const v = map.data[i];
+          if (v === 100) {
+            // Occupied — black
+            buf[j] = 0; buf[j+1] = 0; buf[j+2] = 0; buf[j+3] = 255;
+          } else if (v === 0) {
+            // Free — white
+            buf[j] = 255; buf[j+1] = 255; buf[j+2] = 255; buf[j+3] = 255;
+          } else {
+            // Unknown — gray
+            buf[j] = 128; buf[j+1] = 128; buf[j+2] = 128; buf[j+3] = 255;
+          }
+        }
+      }
+    } else {
+      // Full rebuild on first load or resize
+      for (let i = 0; i < map.data.length; i++) {
+        const v = map.data[i];
+        const j = i * 4;
+        if (v === 100) {
+          buf[j] = 0; buf[j+1] = 0; buf[j+2] = 0; buf[j+3] = 255;
+        } else if (v === 0) {
+          buf[j] = 255; buf[j+1] = 255; buf[j+2] = 255; buf[j+3] = 255;
+        } else {
+          buf[j] = 128; buf[j+1] = 128; buf[j+2] = 128; buf[j+3] = 255;
+        }
+      }
+    }
+
+    prevMapDataRef.current = [...map.data];
+    ctx.putImageData(imgData, 0, 0);
+  }, []);
+
+  // Rebuild map image whenever map data changes
+  useEffect(() => {
+    if (mapData) buildMapImage();
+  }, [mapData, buildMapImage]);
+
+  // ─── Build occupancy grid from accumulated LIDAR scans ─────────────────
+  function buildOccupancyGrid(scan: ScanData) {
+    const p = poseRef.current;
+    if (!p || !scan.points.length) return;
+
+    const res = occScaleRef.current;
+    const size = occSizeRef.current;
+    const half = (size * res) / 2;
+
+    // Init or re-use grid
+    let grid = occGridRef.current;
+    if (!grid || grid.width !== size || grid.height !== size) {
+      grid = {
+        width: size,
+        height: size,
+        resolution: res,
+        origin_x: -half,
+        origin_y: -half,
+        origin_theta: 0,
+        data: new Array(size * size).fill(-1), // -1 = unknown
+      };
+      occGridRef.current = grid;
+    }
+
+    // Track per-ray passes to avoid double-counting
+    const visitedFree = new Set<number>();
+
+    for (let i = 0; i < scan.points.length; i++) {
+      const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
+      const wx = wp.wx;
+      const wy = wp.wy;
+
+      // Mark free cells along the ray (bresenham from robot to endpoint)
+      const rx = Math.round((p.x + half) / res);
+      const ry = Math.round(size - (p.y + half) / res);
+      const ex = Math.round((wx + half) / res);
+      const ey = Math.round(size - (wy + half) / res);
+
+      const dx = Math.abs(ex - rx);
+      const dy = Math.abs(ey - ry);
+      const sx = rx < ex ? 1 : -1;
+      const sy = ry < ey ? 1 : -1;
+      let err = dx - dy;
+      let cx = rx;
+      let cy = ry;
+
+      while (true) {
+        if (cx < 0 || cx >= size || cy < 0 || cy >= size) break;
+        const idx = cy * size + cx;
+        if (cx === ex && cy === ey) break;
+        if (!visitedFree.has(idx)) {
+          visitedFree.add(idx);
+          if (grid!.data[idx] === -1) grid!.data[idx] = 0; // free
+        }
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; cx += sx; }
+        if (e2 < dx) { err += dx; cy += sy; }
+      }
+
+      // Mark endpoint as occupied
+      if (ex >= 0 && ex < size && ey >= 0 && ey < size) {
+        const idx = ey * size + ex;
+        if (grid!.data[idx] !== 0) grid!.data[idx] = 100; // occupied
+      }
+
+      // Track world bounds of all scan endpoints for auto-fit
+      const b = scanBoundsRef.current;
+      if (!b) {
+        scanBoundsRef.current = { minX: wx, maxX: wx, minY: wy, maxY: wy };
+      } else {
+        scanBoundsRef.current = {
+          minX: Math.min(b.minX, wx),
+          maxX: Math.max(b.maxX, wx),
+          minY: Math.min(b.minY, wy),
+          maxY: Math.max(b.maxY, wy),
+        };
+      }
+    }
+  }
+
+  // ─── Draw overlay (robot + LIDAR on top of map image) ─────────────────
+  function drawOverlay() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const zoom = zoomRef.current;
+    const isHU = headingUpRef.current;
+    const p = poseRef.current;
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, W, H);
+
+    const map = mapDataRef.current || occGridRef.current;
+
+    // ── Map-based drawing ────────────────────────────────────────────────
+    if (map) {
+      const isGenerated = !mapDataRef.current;
+      const off = isGenerated ? occOffscreenRef.current : offscreenRef.current;
+      if (!off) return;
+
+      const { width: gw, height: gh, resolution: res, origin_x, origin_y } = map;
+      const scaleX = (W / gw) * zoom;
+      const scaleY = (H / gh) * zoom;
+      const scale = Math.min(scaleX, scaleY);
+      const mapX = (W - gw * scale) / 2;
+      const mapY = (H - gh * scale) / 2;
+
+      ctx.save();
+      if (p && isHU) {
+        const cx = mapX + (p.x - origin_x) / res * scale;
+        const cy = mapY + (gh - (p.y - origin_y) / res) * scale;
+        ctx.translate(cx, cy);
+        ctx.rotate(-p.theta - Math.PI / 2);
+        ctx.translate(-cx, -cy);
+      }
+      ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
+      ctx.restore();
+
+      const worldToScreen = (wx: number, wy: number) => {
+        const gx = (wx - origin_x) / res;
+        const gy = (wy - origin_y) / res;
+        let sx = mapX + gx * scale;
+        let sy = mapY + gy * scale;
+        if (p && isHU) {
+          const cx = mapX + (p.x - origin_x) / res * scale;
+          const cy = mapY + (p.y - origin_y) / res * scale;
+          const cos = Math.cos(-p.theta - Math.PI / 2);
+          const sin = Math.sin(-p.theta - Math.PI / 2);
+          const dx = sx - cx; const dy = sy - cy;
+          sx = cx + cos * dx - sin * dy;
+          sy = cy + sin * dx + cos * dy;
+        }
+        return { sx, sy };
+      };
+
+      // LIDAR scan on map
+      const scan = scanDataRef.current;
+      if (p && scan && scan.points.length > 0) {
+        ctx.beginPath();
+        for (let i = 0; i < scan.points.length; i++) {
+          const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
+          const sp = worldToScreen(wp.wx, wp.wy);
+          if (i === 0) ctx.moveTo(sp.sx, sp.sy);
+          else ctx.lineTo(sp.sx, sp.sy);
+        }
+        ctx.strokeStyle = 'rgba(59,130,246,0.12)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(59,130,246,0.6)';
+        for (let i = 0; i < scan.points.length; i += 2) {
+          const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
+          const sp = worldToScreen(wp.wx, wp.wy);
+          ctx.beginPath();
+          ctx.arc(sp.sx, sp.sy, 1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Robot on map
+      if (p) {
+        const rp = worldToScreen(p.x, p.y);
+        drawRobot(ctx, rp.sx, rp.sy, zoom);
+      }
+
+      return;
+    }
+
+    // ── No map: draw robot + LIDAR scan in world-scaled space ────────────
+    const scan = scanDataRef.current;
+    const hasScan = p && scan && scan.points.length > 0;
+
+    // Auto-fit: calculate scale from accumulated scan bounds so everything fits in canvas
+    const bounds = scanBoundsRef.current;
+    const padding = 0.3; // meters of padding around the scan
+    let scale: number;
+    if (bounds) {
+      const worldW = bounds.maxX - bounds.minX + padding * 2;
+      const worldH = bounds.maxY - bounds.minY + padding * 2;
+      scale = Math.min((W - 40) / worldW, (H - 40) / worldH) * zoom;
+    } else {
+      // No scans yet — use default: fit 6 m range in the shorter canvas dimension
+      const defaultRange = 6.0;
+      scale = Math.min(W, H) / defaultRange * zoom;
+    }
+    // Canvas center (also rotation center for heading-up)
+    const cx = W / 2;
+    const cy = H / 2;
+
+    // world→canvas: center on accumulated bounds (or world origin if no bounds yet)
+    const worldToCanvas = (wx: number, wy: number) => {
+      let sx: number, sy: number;
+      if (bounds) {
+        // Center the bounds region in the canvas
+        const worldCX = (bounds.minX + bounds.maxX) / 2;
+        const worldCY = (bounds.minY + bounds.maxY) / 2;
+        sx = cx + (wx - worldCX) * scale;
+        sy = cy + (wy - worldCY) * scale;
+      } else {
+        sx = cx + wx * scale;
+        sy = cy + wy * scale;
+      }
+      if (isHU && p) {
+        const cos = Math.cos(-p.theta - Math.PI / 2);
+        const sin = Math.sin(-p.theta - Math.PI / 2);
+        const dx = sx - cx; const dy = sy - cy;
+        sx = cx + cos * dx - sin * dy;
+        sy = cy + sin * dx + cos * dy;
+      }
+      return { sx, sy };
+    };
+
+    // Draw robot at bounds-center (or at pose if tracking)
+    const robotPx = Math.max(14, scale * 0.15);
+    const robotPos = isHU && p ? worldToCanvas(p.x, p.y) : worldToCanvas(0, 0);
+    drawRobot(ctx, robotPos.sx, robotPos.sy, zoom);
+
+    // Draw LIDAR scan
+    if (hasScan) {
+      ctx.beginPath();
+      for (let i = 0; i < scan.points.length; i++) {
+        const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p!, lidarAxisRef.current);
+        const sp = worldToCanvas(wp.wx, wp.wy);
+        if (i === 0) ctx.moveTo(sp.sx, sp.sy);
+        else ctx.lineTo(sp.sx, sp.sy);
+      }
+      ctx.strokeStyle = 'rgba(59,130,246,0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(59,130,246,0.7)';
+      for (let i = 0; i < scan.points.length; i += 2) {
+        const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p!, lidarAxisRef.current);
+        const sp = worldToCanvas(wp.wx, wp.wy);
+        ctx.beginPath();
+        ctx.arc(sp.sx, sp.sy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // ─── Draw robot shape at screen position ───────────────────────────────
+  function drawRobot(ctx: CanvasRenderingContext2D, sx: number, sy: number, zoom: number) {
+    const robotPx = Math.max(12, zoom * 0.8);
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.beginPath();
+    ctx.arc(0, 0, robotPx, 0, Math.PI * 2);
+    ctx.fillStyle = '#22c55e';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    const aLen = robotPx * 2;
+    const aW = robotPx * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(aLen, 0);
+    ctx.lineTo(aLen - aW, -aW * 0.5);
+    ctx.lineTo(aLen - aW, aW * 0.5);
+    ctx.closePath();
+    ctx.fillStyle = '#ef4444';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ─── Render loop ────────────────────────────────────────────────────────
+  useEffect(() => {
+    let lastTs = 0;
+
+    const loop = (ts: number) => {
+      if (ts - lastTs >= 33) {
+        drawOverlay();
+        lastTs = ts;
+      }
+      animRef.current = requestAnimationFrame(loop);
+    };
+
+    animRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animRef.current);
+  }, []);
+
+  // ─── WebSocket ───────────────────────────────────────────────────────
+  function connectWs() {
+    if (typeof window === 'undefined') return;
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     setWsStatus('connecting');
     try {
       const ws = new WebSocket(WS_URL);
-      ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
         setWsStatus('connected');
-        lastMsgTimeRef.current = 0;
-        
-        // Đăng ký topic /map
-        try {
-          ws.send(JSON.stringify({ op: "subscribe", topic: "/map", type: "nav_msgs/msg/OccupancyGrid" }));
-        } catch (e) {
-          console.error("Sub map error", e);
-        }
-
-        // Đăng ký luồng TF để theo dõi vị trí và hướng Lidar
-        try {
-          ws.send(JSON.stringify({ op: "subscribe", topic: "/tf", type: "tf2_msgs/msg/TFMessage" }));
-          ws.send(JSON.stringify({ op: "subscribe", topic: "/tf_static", type: "tf2_msgs/msg/TFMessage" }));
-        } catch (e) {
-          console.error("Sub tf error", e);
-        }
+        reconnectDelayRef.current = 1000; // reset backoff on successful connect
+        pingRef.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 5000);
       };
 
       ws.onmessage = (event) => {
-        if (typeof event.data === 'string') {
-          try {
-            const data = JSON.parse(event.data);
-            
-            // Xử lý bản đồ
-            if (data.op === 'publish' && data.topic === '/map' && data.msg) {
-              lastMsgTimeRef.current = Date.now();
-              const { info, data: gridData } = data.msg;
-              processMapGrid(info, gridData);
-            }
-            // Xử lý dữ liệu TF real-time
-            else if (data.op === 'publish' && (data.topic === '/tf' || data.topic === '/tf_static') && data.msg?.transforms) {
-              lastMsgTimeRef.current = Date.now();
-              for (const tf of data.msg.transforms) {
-                const parent = tf.header?.frame_id;
-                const child = tf.child_frame_id;
-                const trans = tf.transform?.translation;
-                const rot = tf.transform?.rotation;
-                if (parent && child && trans && rot) {
-                  const { z, w } = rot;
-                  const yaw = Math.atan2(2 * (w * z), 1 - 2 * (z * z));
-                  tfTreeRef.current[child] = { parent, x: trans.x, y: trans.y, yaw };
-                }
-              }
-            }
-            // Xử lý service reset
-            else if (data.op === 'service_response' && data.service === '/slam_toolbox/reset') {
-              setIsResetting(false);
-              if (data.result === false) {
-                notification.error({ message: 'Lỗi reset bản đồ', description: 'service_response: false', placement: 'topRight' });
-              } else {
-                notification.success({ message: 'Thành công', description: 'Đã reset bản đồ thành công!', placement: 'topRight' });
-              }
-            }
-          } catch (e) {
-            console.error("Error parsing WS JSON", e);
+        try {
+          const msg: { type: string; data?: unknown } = JSON.parse(event.data as string);
+          switch (msg.type) {
+            case 'map':
+              setMapData({ ...(msg.data as MapData) });
+              mapDataRef.current = msg.data as MapData;
+              break;
+            case 'pose':
+              setPose({ ...(msg.data as PoseData) });
+              poseRef.current = msg.data as PoseData;
+              break;
+            case 'scan':
+              setScanData({ ...(msg.data as ScanData) });
+              scanDataRef.current = msg.data as ScanData;
+              buildOccupancyGrid(msg.data as ScanData);
+              break;
+            case 'status':
+              setStatusText((msg.data as string) || '');
+              break;
+            case 'info':
+              setInfo(msg.data as InfoData);
+              break;
+            case 'mode':
+              setInfo(prev => ({ ...prev, mode: msg.data as string }));
+              break;
+            case 'pong':
+              break;
           }
+        } catch {
+          // ignore
         }
       };
 
       ws.onclose = () => {
         setWsStatus('disconnected');
-        setLidarStatus('waiting');
+        if (pingRef.current) clearInterval(pingRef.current);
+        // Auto-reconnect with exponential backoff
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, 30000);
+          connectWs();
+        }, reconnectDelayRef.current);
       };
-
       ws.onerror = () => {
-        // Tránh log lỗi Event thô gây ra màn hình overlay đỏ trên Next.js dev mode
-        console.warn(`[ROS 2 WebSocket] Không thể kết nối tới ${WS_URL}. Vui lòng kiểm tra lại server robot hoặc đường truyền.`);
         setWsStatus('disconnected');
-        setLidarStatus('waiting');
       };
 
       wsRef.current = ws;
-    } catch (err) {
-      console.warn('[ROS 2 WebSocket] Khởi tạo kết nối thất bại:', err);
+    } catch {
       setWsStatus('disconnected');
-      setLidarStatus('waiting');
     }
-  }, [processMapGrid]);
+  }
+
+  useEffect(() => { connectWsRef.current = connectWs; });
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    connectWs();
+    connectWsRef.current();
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
-      }
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      wsRef.current?.close();
+      if (pingRef.current) clearInterval(pingRef.current);
     };
-  }, [connectWs]);
+  }, []);
 
-  // Luồng render 30fps mượt mà để cập nhật mũi tên và xoay bản đồ theo luồng TF
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (wsStatus === 'connected') {
-        redrawDisplayCanvas();
-      }
-    }, 33); // ~30fps
-    return () => clearInterval(interval);
-  }, [wsStatus, redrawDisplayCanvas]);
+  // ─── Controls ─────────────────────────────────────────────────────────
+  const handleZoomIn = () => setZoom(v => Math.min(8, +(v + 0.5).toFixed(2)));
+  const handleZoomOut = () => setZoom(v => Math.max(0.1, +(v - 0.5).toFixed(2)));
+  const resetView = () => { setZoom(1); };
 
-  useEffect(() => {
-    redrawDisplayCanvas();
-  }, [viewportScaleMeters, isHeadingUp, isRobotLock, redrawDisplayCanvas]);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
-  // --- Chức năng Zoom & Pan ---
-  const handleZoom = (delta: number) => {
-    let newScale = zoomRef.current + delta;
-    if (newScale < 0.2) newScale = 0.2;
-    if (newScale > 10.0) newScale = 10.0;
-    zoomRef.current = parseFloat(newScale.toFixed(2));
-    setZoomScaleUI(zoomRef.current);
-    redrawDisplayCanvas();
-  };
-
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.15 : -0.15;
-    handleZoom(delta);
-  };
-
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    isDraggingRef.current = true;
-    dragStartRef.current = {
-      x: e.clientX - panRef.current.x,
-      y: e.clientY - panRef.current.y,
-    };
-  };
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isDraggingRef.current) return;
-    panRef.current = {
-      x: e.clientX - dragStartRef.current.x,
-      y: e.clientY - dragStartRef.current.y,
-    };
-    redrawDisplayCanvas();
-  };
-
-  const handleMouseUpOrLeave = () => {
-    isDraggingRef.current = false;
-  };
-
-  const resetView = () => {
-    zoomRef.current = 1.0;
-    setZoomScaleUI(1.0);
-    panRef.current = { x: 0, y: 0 };
-    redrawDisplayCanvas();
-  };
-  // ----------------------------
-
-  const handleResetMap = () => {
+  const sendCmd = useCallback((command: string, label: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      notification.warning({ message: 'Đang kết nối lại', description: 'Đang kết nối lại với robot...', placement: 'topRight' });
-      connectWs();
+      notification.warning({ title: 'Mất kết nối', description: 'Không thể gửi lệnh. Đang thử kết nối lại...', placement: 'topRight' });
+      connectWsRef.current();
       return;
     }
+    wsRef.current.send(JSON.stringify({ type: 'cmd', action: 'mapping', command }));
+    notification.success({ title: 'Thành công', description: `Đã gửi lệnh ${label}`, placement: 'topRight' });
+  }, []);
 
+  const handleStartScan = () => {
+    setIsStarting(true);
+    sendCmd('start', 'bắt đầu quét bản đồ');
+    occGridRef.current = null;
+    occOffscreenRef.current = null;
+    scanBoundsRef.current = null;
+    setTimeout(() => setIsStarting(false), 1500);
+  };
+
+  const handleStopScan = () => {
+    setIsStopping(true);
+    sendCmd('stop', 'dừng quét bản đồ');
+    setTimeout(() => setIsStopping(false), 1500);
+  };
+
+  const handleResetMap = () => {
     setIsResetting(true);
-
-    try {
-      wsRef.current.send(JSON.stringify({
-        op: "call_service",
-        service: "/slam_toolbox/reset",
-        args: {}
-      }));
-
-      setTimeout(() => {
-        setIsResetting((prev) => {
-          if (prev) {
-            notification.success({ message: 'Thành công', description: 'Đã gửi lệnh reset bản đồ (rosbridge) thành công!', placement: 'topRight' });
-            return false;
-          }
-          return prev;
-        });
-      }, 1500);
-    } catch (err) {
-      console.error('Error sending rosbridge reset call:', err);
-      setIsResetting(false);
-      notification.error({ message: 'Thất bại', description: 'Không thể gửi lệnh reset tới robot.', placement: 'topRight' });
-    }
+    sendCmd('reset', 'xóa bản đồ');
+    mapDataRef.current = null;
+    setMapData(null);
+    occGridRef.current = null;
+    occOffscreenRef.current = null;
+    scanBoundsRef.current = null;
+    setTimeout(() => setIsResetting(false), 1500);
   };
 
   const confirmReset = () => {
     Modal.confirm({
-      title: 'Xác nhận vẽ lại bản đồ mới',
-      content: 'Thao tác này sẽ xóa toàn bộ dữ liệu vách tường, chướng ngại vật đã quét và bắt đầu vẽ lại bản đồ SLAM từ đầu. Bạn có chắc chắn muốn thực hiện?',
-      okText: 'Xác nhận Reset',
-      cancelText: 'Hủy bỏ',
+      title: 'Xác nhận xóa bản đồ',
+      content: 'Thao tác này sẽ xóa toàn bộ dữ liệu bản đồ. Tiếp tục?',
+      okText: 'Xác nhận Xóa',
+      cancelText: 'Hủy',
       okButtonProps: { danger: true },
-      onOk: () => handleResetMap(),
+      onOk: handleResetMap,
     });
   };
 
+  const isOnline = wsStatus === 'connected';
+
   return (
-    <div className="p-8 min-h-screen flex flex-col bg-slate-100 text-slate-900 font-sans select-none transition-colors duration-500">
+    <div className="p-8 min-h-screen flex flex-col bg-slate-100 select-none font-sans">
+      {/* ── Header ── */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-6">
         <div>
           <h1 className="text-3xl font-extrabold text-slate-900 flex items-center gap-3 tracking-tight">
-            <MapPin className="text-red-500 animate-bounce" size={32} />
-            Hệ Thống Bản Đồ SLAM & TF Real-time
+            <MapPin className="text-red-500" size={32} />
+            Bản Đồ SLAM — Real-time
           </h1>
-          <p className="text-sm text-slate-500 mt-1 font-medium">
-            Màn hình Radar SLAM tối màu tương phản dịu mắt trên nền giao diện Web sáng (Bảo vệ mắt tối đa khi quan sát lâu)
+          <p className="text-sm text-slate-500 mt-1">
+            LIDAR scan · Occupancy Grid · Robot pose trực tiếp từ robot
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* ROS 2 WebSocket Status Badge */}
-          <div className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm bg-white border ${
-            wsStatus === 'connected' ? 'text-emerald-600 border-emerald-300' :
-            wsStatus === 'connecting' ? 'text-amber-600 border-amber-300' :
-            'text-rose-600 border-rose-300'
-          }`}>
-            <span className={`w-2.5 h-2.5 rounded-full ${
-              wsStatus === 'connected' ? 'bg-emerald-500 animate-pulse' :
-              wsStatus === 'connecting' ? 'bg-amber-500 animate-ping' :
-              'bg-rose-500'
-            }`} />
-            <span>
-              {wsStatus === 'connected' ? 'ROS 2 Online' :
-               wsStatus === 'connecting' ? 'Đang kết nối ROS 2...' :
-               'ROS 2 Ngắt Kết Nối'}
-            </span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold border ${isOnline ? 'text-emerald-600 border-emerald-300 bg-emerald-50' : 'text-rose-600 border-rose-300 bg-rose-50'}`}>
+            <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+            {isOnline ? 'Robot Online' : 'Robot Offline'}
           </div>
 
-          {/* Lidar Hardware Status Badge */}
-          <Tooltip title={
-            wsStatus !== 'connected' ? 'Chưa kết nối máy chủ ROS 2' :
-            lidarStatus === 'connected' ? 'Cảm biến Lidar hoạt động tốt và đang quét real-time' :
-            lidarStatus === 'waiting' ? 'Đang chờ nhận gói tin quét đầu tiên từ Lidar...' :
-            'ROS 2 hoạt động nhưng không có dữ liệu Lidar. Vui lòng kiểm tra dây nguồn và cáp USB (/dev/ttyUSB0)'
-          }>
-            <div className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm bg-white border ${
-              wsStatus !== 'connected' ? 'text-slate-400 border-slate-200 bg-slate-50' :
-              lidarStatus === 'connected' ? 'text-blue-600 border-blue-300' :
-              lidarStatus === 'waiting' ? 'text-amber-600 border-amber-300 bg-amber-50/50' :
-              'text-rose-600 border-rose-300 bg-rose-50/80 animate-pulse'
-            }`}>
-              {wsStatus !== 'connected' ? (
-                <WifiOff size={16} className="text-slate-400" />
-              ) : lidarStatus === 'connected' ? (
-                <Activity size={16} className="text-blue-500 animate-spin" />
-              ) : (
-                <AlertTriangle size={16} className={lidarStatus === 'waiting' ? "text-amber-500" : "text-rose-500"} />
-              )}
-              <span>
-                {wsStatus !== 'connected' ? 'Lidar Offline' :
-                 lidarStatus === 'connected' ? 'Lidar Đã Kết Nối' :
-                 lidarStatus === 'waiting' ? 'Đang Dò Lidar...' :
-                 'Lidar Mất Tín Hiệu'}
+          {isOnline && (
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold border border-slate-200 bg-slate-50 text-slate-600">
+              <span className={`w-2 h-2 rounded-full ${info.lidar ? 'bg-blue-500 animate-pulse' : 'bg-slate-300'}`} title="LIDAR" />
+              <span className={`w-2 h-2 rounded-full ${info.map ? 'bg-emerald-500' : 'bg-slate-300'}`} title="Map" />
+              <span className={`w-2 h-2 rounded-full ${info.pose ? 'bg-amber-500' : 'bg-slate-300'}`} title="Pose" />
+              <span className={`ml-1 px-2 py-0.5 rounded font-mono font-bold ${info.mode === 'mapping' ? 'text-yellow-600' : info.mode === 'live' ? 'text-emerald-600' : 'text-slate-500'}`}>
+                {info.mode?.toUpperCase() || 'IDLE'}
               </span>
+              {info.coverage_pct !== undefined && (
+                <span className="font-mono text-blue-600" title="Độ phủ bản đồ">{info.coverage_pct}%</span>
+              )}
+              <span className="font-mono text-slate-400">{statusText || 'IDLE'}</span>
             </div>
-          </Tooltip>
+          )}
 
-          <Tooltip title="Xóa toàn bộ bản đồ SLAM hiện tại trên RAM và bắt đầu quét lại phòng mới">
-            <Button 
-              type="primary" 
-              danger 
-              size="large"
-              icon={<RotateCcw size={18} className={isResetting ? "animate-spin" : ""} />}
-              loading={isResetting}
-              onClick={confirmReset}
-              className="flex items-center gap-2 px-6 py-3 rounded-2xl font-bold shadow-md hover:shadow-red-500/20 transition-all text-sm ml-1"
-            >
-              Reset Bản Đồ
-            </Button>
-          </Tooltip>
+          {pose && isOnline && (
+            <div className="px-3.5 py-2.5 rounded-2xl text-xs font-mono font-bold text-slate-600 border border-slate-200 bg-slate-50">
+              x:{pose.x.toFixed(2)} y:{pose.y.toFixed(2)} θ:{(pose.theta * 180 / Math.PI).toFixed(0)}°
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <Tooltip title="Bắt đầu quét bản đồ (mapping mode)">
+              <Button
+                type="primary"
+                size="large"
+                icon={<MapPin size={18} className={isStarting ? 'animate-pulse' : ''} />}
+                loading={isStarting}
+                onClick={handleStartScan}
+                disabled={info.mode === 'mapping'}
+                className="flex items-center gap-2 rounded-2xl font-bold shadow-md"
+              >
+                Bắt Đầu Quét
+              </Button>
+            </Tooltip>
+
+            <Tooltip title="Dừng quét, chuyển sang chế độ định vị">
+              <Button
+                size="large"
+                icon={<Target size={18} className={isStopping ? 'animate-pulse' : ''} />}
+                loading={isStopping}
+                onClick={handleStopScan}
+                disabled={info.mode !== 'mapping'}
+                className="flex items-center gap-2 rounded-2xl font-bold shadow-md border-amber-400 text-amber-600 hover:text-amber-700 hover:border-amber-500"
+              >
+                Dừng Quét
+              </Button>
+            </Tooltip>
+
+            <Tooltip title="Xóa bản đồ và quét lại từ đầu">
+              <Button
+                type="primary"
+                danger
+                size="large"
+                icon={<RotateCcw size={18} className={isResetting ? 'animate-spin' : ''} />}
+                loading={isResetting}
+                onClick={confirmReset}
+                className="flex items-center gap-2 rounded-2xl font-bold shadow-md"
+              >
+                Xóa Bản Đồ
+              </Button>
+            </Tooltip>
+          </div>
         </div>
       </div>
 
-      {/* Alert Banner cảnh báo khi Lidar mất kết nối */}
-      {wsStatus === 'connected' && (lidarStatus === 'disconnected' || lidarStatus === 'waiting') && (
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-amber-50/90 border border-amber-200 text-amber-950 px-6 py-4 rounded-3xl shadow-sm transition-all">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-amber-100/80 flex items-center justify-center text-amber-600 shrink-0 border border-amber-200/50 shadow-inner">
-              <AlertTriangle size={24} className="animate-bounce" />
-            </div>
-            <div>
-              <h4 className="font-extrabold text-base text-amber-950 flex items-center gap-2">
-                Không phát hiện luồng dữ liệu từ cảm biến Lidar
-                <span className="bg-amber-200 text-amber-800 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider font-mono">
-                  Diagnostics
-                </span>
-              </h4>
-              <p className="text-sm text-amber-800 mt-1 max-w-4xl leading-relaxed">
-                Cổng WebSocket <strong>ROS 2</strong> hoạt động bình thường, nhưng hệ thống không nhận được tín hiệu quét bản đồ (TF/OccupancyGrid). 
-                Khả năng cao Lidar chưa được kết nối vào cổng <code className="bg-amber-200/70 font-bold px-1.5 py-0.5 rounded text-amber-900 font-mono">/dev/ttyUSB0</code> hoặc cáp USB bị lỏng khiến container <code className="bg-amber-200/70 font-bold px-1.5 py-0.5 rounded text-amber-900 font-mono">robot-core</code> đang đứng ở chế độ chờ thiết bị.
-              </p>
-            </div>
+      {/* ── Canvas viewer — fills remaining height ── */}      <div className="flex-1 min-h-0">
+        <div className="relative w-full h-full bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl overflow-hidden">
+
+          {/* Legend — top left */}
+          <div className="absolute top-4 left-4 z-10 flex items-center gap-5 bg-slate-950/85 backdrop-blur-md px-5 py-3 rounded-2xl border border-slate-800 text-xs font-bold tracking-wide text-slate-300 pointer-events-none">
+            <span className="flex items-center gap-2"><span className="w-3.5 h-3.5 rounded-sm bg-white border border-slate-300 inline-block" /> Lối đi</span>
+            <span className="flex items-center gap-2"><span className="w-3.5 h-3.5 rounded-sm bg-slate-500 border border-slate-600 inline-block" /> Chưa biết</span>
+            <span className="flex items-center gap-2"><span className="w-3.5 h-3.5 rounded-sm bg-black border border-slate-600 inline-block" /> Vách tường</span>
+            <span className="flex items-center gap-2 border-l border-slate-700 pl-4"><span className="w-3.5 h-3.5 rounded-full bg-green-500 border-2 border-white inline-block" /> Robot</span>
+            <span className="flex items-center gap-2 border-l border-slate-700 pl-4"><span className="w-3.5 h-3.5 rounded-full bg-blue-500/60 border border-blue-400 inline-block" /> LIDAR scan</span>
+            {mapData && (
+              <span className="border-l border-slate-700 pl-4 font-mono text-slate-400 text-xs">
+                {mapData.width}×{mapData.height} @ {mapData.resolution}m
+              </span>
+            )}
+            {!mapData && occGridRef.current && (
+              <span className="border-l border-slate-700 pl-4 font-mono text-slate-400 text-xs">
+                {occGridRef.current.width}×{occGridRef.current.height} @ {occGridRef.current.resolution}m (từ LIDAR)
+              </span>
+            )}
           </div>
-          <Button 
-            type="default" 
-            size="middle" 
-            onClick={() => {
-              notification.info({ message: 'Đang thử kết nối lại...', placement: 'topRight' });
-              connectWs();
-            }}
-            className="border-amber-300 text-amber-900 font-bold rounded-2xl px-5 py-2.5 shadow-sm hover:border-amber-400 hover:bg-amber-100/50 transition-all text-xs uppercase"
-          >
-            Thử Kết Nối Lại
-          </Button>
-        </div>
-      )}
 
-      {/* Standalone Native HTML5 Canvas 2D Viewer: Màn hình Radar tối màu (Dark Slate) nằm lọt lòng giữa nền Web sáng */}
-      <div 
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUpOrLeave}
-        onMouseLeave={handleMouseUpOrLeave}
-        className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl overflow-hidden relative flex flex-col items-center justify-center p-6 min-h-[650px] cursor-grab active:cursor-grabbing"
-      >
-        {/* Chú thích Bảng màu (Tường Đen, Lối đi trắng, Chưa biết xám tối, Robot xanh) */}
-        <div className="absolute top-6 left-6 z-10 flex items-center gap-5 bg-slate-950/85 backdrop-blur-md px-5 py-3 rounded-2xl border border-slate-800 shadow-xl text-xs font-bold tracking-wide text-slate-300 pointer-events-auto">
-          <span className="flex items-center gap-2">
-            <span className="w-3.5 h-3.5 rounded-md bg-black border border-slate-700 inline-block shadow-xs" /> Vách Tường (Đen)
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="w-3.5 h-3.5 rounded-md bg-white inline-block shadow-xs" /> Lối Đi (Trắng)
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="w-3.5 h-3.5 rounded-md bg-slate-800 inline-block shadow-xs" /> Chưa Biết (Xám Tối)
-          </span>
-          <span className="flex items-center gap-2 border-l border-slate-800 pl-4">
-            <span className="w-3.5 h-3.5 rounded-full bg-green-500 border border-white inline-block shadow-sm shadow-green-500/50 animate-pulse" /> Vị Trí Lidar
-          </span>
-          {mapMetadata && (
-            <span className="text-slate-400 border-l border-slate-800 pl-4 font-mono text-xs font-normal">
-              {mapMetadata.width}x{mapMetadata.height} ({mapMetadata.resolution}m/cell)
-            </span>
-          )}
-        </div>
-
-        {/* Cụm công tắc chế độ xoay bản đồ & Khóa vị trí ở góc trên bên phải */}
-        <div className="absolute top-6 right-6 z-10 flex items-center gap-2 bg-slate-950/85 backdrop-blur-md p-1.5 rounded-2xl border border-slate-800 shadow-xl pointer-events-auto">
-          <Tooltip title={isHeadingUp ? "Đang bật chế độ Heading-Up (Xoay bản đồ theo hướng Lidar)" : "Đang cố định bản đồ (Góc nhìn North-Up)"}>
-            <button
-              onClick={() => setIsHeadingUp(!isHeadingUp)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                isHeadingUp 
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30' 
-                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Compass size={16} className={isHeadingUp ? 'animate-spin' : ''} />
-              <span>Xoay Theo Lidar</span>
-            </button>
-          </Tooltip>
-
-          <Tooltip title={isRobotLock ? "Đang khóa trung tâm camera vào vị trí Lidar" : "Đang cho phép tự do dịch chuyển (Pan)"}>
-            <button
-              onClick={() => setIsRobotLock(!isRobotLock)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                isRobotLock 
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/30' 
-                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Target size={16} />
-              <span>Khóa Trung Tâm</span>
-            </button>
-          </Tooltip>
-        </div>
-
-        {/* Bộ chọn hệ quy chiếu vật lý (2m, 5m, 10m, 20m) ở góc dưới bên trái */}
-        <div className="absolute bottom-6 left-6 z-10 flex items-center gap-2 bg-slate-950/85 backdrop-blur-md p-2 rounded-2xl border border-slate-800 shadow-xl pointer-events-auto">
-          <div className="flex items-center gap-1.5 px-2 text-slate-400 text-xs font-bold">
-            <Ruler size={16} className="text-blue-400" />
-            <span>Khung nhìn thực tế:</span>
-          </div>
-          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
-            {[2, 5, 10, 20].map((meters) => (
+          {/* Heading-up / robot-lock — top right */}
+          <div className="absolute top-4 right-4 z-10 flex items-center gap-2 bg-slate-950/85 backdrop-blur-md p-1.5 rounded-2xl border border-slate-800">
+            <Tooltip title="Xoay bản đồ để robot luôn hướng lên">
               <button
-                key={meters}
-                onClick={() => {
-                  setViewportScaleMeters(meters);
-                  viewportScaleRef.current = meters;
-                  zoomRef.current = 1.0;
-                  setZoomScaleUI(1.0);
-                  panRef.current = { x: 0, y: 0 };
-                  redrawDisplayCanvas();
-                }}
-                className={`px-3.5 py-1.5 rounded-lg font-mono text-xs font-bold transition-all cursor-pointer ${
-                  viewportScaleMeters === meters 
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30 scale-105' 
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                }`}
+                onClick={() => setIsHeadingUp(v => !v)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${isHeadingUp ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
               >
-                {meters}m
+                <Compass size={16} />
+                Heading-Up
+              </button>
+            </Tooltip>
+            <Tooltip title="Giữ robot ở trung tâm màn hình">
+              <button
+                onClick={() => setIsRobotLock(v => !v)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${isRobotLock ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+              >
+                <Target size={16} />
+                Khóa Trung Tâm
+              </button>
+            </Tooltip>
+          </div>
+
+          {/* Debug: lidar axis — top center */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-slate-950/85 backdrop-blur-md p-1.5 rounded-2xl border border-slate-800 text-xs font-bold">
+            <span className="text-slate-400 px-2">Lidar AX:</span>
+            {[
+              { val: 0, label: '+X' },
+              { val: 1, label: '+Y' },
+              { val: 2, label: '-X' },
+              { val: 3, label: '-Y' },
+            ].map(({ val, label }) => (
+              <button
+                key={val}
+                onClick={() => setLidarAxis(val)}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${lidarAxis === val ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+              >
+                {label}
               </button>
             ))}
           </div>
+
+          {/* Zoom presets — bottom left */}
+          <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 bg-slate-950/85 backdrop-blur-md p-2 rounded-2xl border border-slate-800">
+            <div className="flex items-center gap-1.5 px-2 text-slate-400 text-xs font-bold">
+              <Ruler size={16} className="text-blue-400" />
+              <span>Zoom:</span>
+            </div>
+            <div className="flex gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+              {[0.5, 1, 2, 4].map(z => (
+                <button
+                  key={z}
+                  onClick={() => setZoom(z)}
+                  className={`px-3.5 py-1.5 rounded-lg font-mono text-xs font-bold cursor-pointer transition-all ${zoom === z ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                >
+                  {z}×
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Zoom controls — bottom right */}
+          <div className="absolute bottom-4 right-4 z-10 flex items-center gap-2 bg-slate-950/85 backdrop-blur-md p-2 rounded-2xl border border-slate-800">
+            <Tooltip title="Thu nhỏ">
+              <button onClick={handleZoomOut} className="w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-blue-400 flex items-center justify-center transition-all border border-slate-800 cursor-pointer">
+                <ZoomOut size={18} />
+              </button>
+            </Tooltip>
+            <span className="font-mono text-sm px-2 font-bold text-amber-400 min-w-[56px] text-center">
+              {Math.round(zoom * 100)}%
+            </span>
+            <Tooltip title="Phóng to">
+              <button onClick={handleZoomIn} className="w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-blue-400 flex items-center justify-center transition-all border border-slate-800 cursor-pointer">
+                <ZoomIn size={18} />
+              </button>
+            </Tooltip>
+            <div className="w-px h-6 bg-slate-800 mx-1" />
+            <Tooltip title="Đặt lại tầm nhìn">
+              <button onClick={resetView} className="w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-emerald-400 flex items-center justify-center transition-all border border-slate-800 cursor-pointer">
+                <Maximize2 size={18} />
+              </button>
+            </Tooltip>
+          </div>
+
+          {/* Disconnected overlay */}
+          {!isOnline && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-3xl gap-4">
+              <WifiOff size={48} className="text-slate-500" />
+              <div className="text-center">
+                <p className="text-slate-300 font-bold text-lg">Mất kết nối với robot</p>
+                <p className="text-slate-500 text-sm mt-1">Đang thử kết nối lại...</p>
+              </div>
+              <Button onClick={() => connectWsRef.current()} className="rounded-xl font-bold">Thử kết nối lại</Button>
+            </div>
+          )}
+
+          {/* Canvas */}
+          <canvas
+            ref={canvasRef}
+            className="w-full h-full block"
+            style={{ imageRendering: 'pixelated' }}
+          />
         </div>
-
-        {/* Zoom & Reset Controls ở góc dưới bên phải */}
-        <div className="absolute bottom-6 right-6 z-10 flex items-center gap-2 bg-slate-950/85 backdrop-blur-md p-2 rounded-2xl border border-slate-800 shadow-xl pointer-events-auto">
-          <Tooltip title="Thu nhỏ (-)">
-            <button 
-              onClick={() => handleZoom(-0.2)}
-              className="w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 flex items-center justify-center transition-all shadow-sm hover:text-blue-400 border border-slate-800"
-            >
-              <ZoomOut size={18} />
-            </button>
-          </Tooltip>
-
-          <span className="font-mono text-sm px-3 font-bold text-amber-400 min-w-[64px] text-center">
-            {Math.round(zoomScaleUI * 100)}%
-          </span>
-
-          <Tooltip title="Phóng to (+)">
-            <button 
-              onClick={() => handleZoom(0.2)}
-              className="w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 flex items-center justify-center transition-all shadow-sm hover:text-blue-400 border border-slate-800"
-            >
-              <ZoomIn size={18} />
-            </button>
-          </Tooltip>
-
-          <div className="w-[1px] h-6 bg-slate-800 mx-1" />
-
-          <Tooltip title="Đặt lại tâm nhìn mặc định">
-            <button 
-              onClick={resetView}
-              className="w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-400 hover:text-emerald-400 flex items-center justify-center transition-all shadow-sm border border-slate-800"
-            >
-              <Maximize2 size={18} />
-            </button>
-          </Tooltip>
-        </div>
-
-        <canvas 
-          ref={canvasRef} 
-          width={1000} 
-          height={800}
-          className="w-full h-full max-h-[800px] object-contain rounded-2xl pointer-events-none bg-slate-900 shadow-inner [image-rendering:pixelated]"
-        />
       </div>
     </div>
   );
 }
-
