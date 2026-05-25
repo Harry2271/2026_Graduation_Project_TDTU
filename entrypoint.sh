@@ -96,7 +96,11 @@ ros2 run tf2_ros static_transform_publisher \
     0 0 0 0 0 0 base_link laser &>/dev/null &
 ros2 run tf2_ros static_transform_publisher \
     0 0 0 0 0 0 base_footprint base_link &>/dev/null &
-# NOTE: odom -> base_footprint is now broadcast dynamically by brain_node
+# Static fallback for odom->base_footprint (0,0,0) — used when ESP32 is disconnected
+# and brain_node hasn't started publishing. brain_node's dynamic broadcaster will override
+# this once ESP32 connects and velocities become non-zero.
+ros2 run tf2_ros static_transform_publisher \
+    0 0 0 0 0 0 odom base_footprint &>/dev/null &
 
 # Brain Node
 export ESP32_PORT="$ESP32_PORT"
