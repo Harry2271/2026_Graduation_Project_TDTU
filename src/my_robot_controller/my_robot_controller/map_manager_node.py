@@ -52,6 +52,9 @@ SAVE_PATH = '/app/saved_map.json'
 
 class MapManager(Node):
     def __init__(self):
+        self._scan_count = 0
+        self._scan_skipped_tf = 0
+        self._last_skipped_log = 0.0
         super().__init__('map_manager')
 
         # --- Grids (flat list[row*width + col]) ---
@@ -94,6 +97,9 @@ class MapManager(Node):
         self.create_timer(0.1, self._poll_pose)
         # Map publishing: 1 Hz (every 1s) — reduced from 2Hz to save bandwidth on 800x800 grid
         self.create_timer(1.0, self._publish_maps)
+
+        # Debug: log TF skip stats every 10s
+        self.create_timer(10.0, self._log_tf_stats)
 
         self.get_logger().info(
             f'MapManager started — grid: {GRID_CELLS}x{GRID_CELLS} '
@@ -186,10 +192,24 @@ class MapManager(Node):
                 self.bbox_max_y = max(self.bbox_max_y, max_wy)
                 self.last_bbox_change_time = time.time()
 
+    def _log_tf_stats(self):
+        if self._scan_count > 0:
+            skip_pct = self._scan_skipped_tf / self._scan_count * 100
+            self.get_logger().info(
+                f'Scan stats: {self._scan_count} total, '
+                f'{self._scan_skipped_tf} skipped due to TF ({skip_pct:.0f}%)'
+            )
+
     def _has_moved(self, x: float, y: float) -> bool:
         dx = x - self.last_update_pose_x
         dy = y - self.last_update_pose_y
-        return math.sqrt(dx * dx + dy * dy) > TRAVEL_THRESHOLD
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist > TRAVEL_THRESHOLD:
+            return True
+        # Always process the first valid scan to initialize the grid
+        if self.last_update_pose_x == 0.0 and self.last_update_pose_y == 0.0 and dist > 0:
+            return True
+        return False
 
     # -------------------------------------------------------------------------
     # Scan callback
@@ -197,6 +217,8 @@ class MapManager(Node):
     def _on_scan(self, msg: LaserScan):
         if self.mode == 'IDLE':
             return
+
+        self._scan_count += 1
 
         # Get robot pose from TF
         try:
@@ -207,7 +229,15 @@ class MapManager(Node):
             ry = t.transform.translation.y
             q = t.transform.rotation
             theta = self._yaw_from_quat(q.x, q.y, q.z, q.w)
-        except Exception:
+        except Exception as e:
+            self._scan_skipped_tf += 1
+            if self._scan_skipped_tf == 1 or time.time() - self._last_skipped_log > 10:
+                self.get_logger().warn(
+                    f'TF lookup failed (skipping scan): {e} — '
+                    f'{self._scan_skipped_tf}/{self._scan_count} scans skipped. '
+                    'Is SLAM running and has the robot moved enough for localization?'
+                )
+                self._last_skipped_log = time.time()
             return
 
         if self.mode == 'MAPPING':

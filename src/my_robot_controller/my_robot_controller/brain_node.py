@@ -9,9 +9,11 @@ Communication with ESP32-S3 via Serial USB (/dev/ttyUSB1, 115200 baud).
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, Odometry
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String, Empty
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
 import math
 import serial
 import threading
@@ -72,6 +74,20 @@ class BrainNode(Node):
         # Publishers
         self.status_publisher = self.create_publisher(
             String, '/robot_status', 10)
+        self.odom_publisher = self.create_publisher(
+            Odometry, '/odom', 10)
+
+        # Odometry state (simulated from commanded velocities)
+        self.odom_x = 0.0
+        self.odom_y = 0.0
+        self.odom_theta = 0.0
+        self.odom_vx = 0.0
+        self.odom_vy = 0.0
+        self.odom_omega = 0.0
+        self._last_odom_time = self.get_clock().now()
+
+        # TF broadcaster: odom -> base_footprint
+        self.tf_broadcaster = TransformBroadcaster(self)
 
         # Lidar data
         self.last_scan: LaserScan = None
@@ -104,6 +120,9 @@ class BrainNode(Node):
 
         # Command dispatch timer (10 Hz)
         self.command_timer = self.create_timer(0.1, self._command_loop)
+
+        # Odometry publisher (10 Hz)
+        self.odom_timer = self.create_timer(0.1, self._publish_odom)
 
         # Publish heartbeat / status
         self.status_timer = self.create_timer(1.0, self._publish_status)
@@ -184,9 +203,15 @@ class BrainNode(Node):
     # Motor Commands (sent to ESP32)
     # -------------------------------------------------------------------------
     def stop(self):
+        self.odom_vx = 0.0
+        self.odom_vy = 0.0
+        self.odom_omega = 0.0
         self._send_command('STOP')
 
     def move(self, vx: float, vy: float, omega: float):
+        self.odom_vx = vx
+        self.odom_vy = vy
+        self.odom_omega = omega
         self._send_command(f'MOVE,{vx:.3f},{vy:.3f},{omega:.3f}')
 
     def move_forward(self):
@@ -485,6 +510,74 @@ class BrainNode(Node):
 
     def obstacle_front_clear(self) -> bool:
         return self.obstacle_in_front() > MIN_CLEARANCE * 1.5
+
+    # -------------------------------------------------------------------------
+    # Odometry Publishing (simulated from commanded velocities)
+    # -------------------------------------------------------------------------
+    def _publish_odom(self):
+        now = self.get_clock().now()
+        dt = (now - self._last_odom_time).nanoseconds * 1e-9
+        self._last_odom_time = now
+
+        # Integrate velocities to get pose (differential drive approximation)
+        # vx, vy are in robot frame; convert to world frame
+        cos_t = math.cos(self.odom_theta)
+        sin_t = math.sin(self.odom_theta)
+        vx_world = cos_t * self.odom_vx - sin_t * self.odom_vy
+        vy_world = sin_t * self.odom_vx + cos_t * self.odom_vy
+
+        self.odom_x += vx_world * dt
+        self.odom_y += vy_world * dt
+        self.odom_theta += self.odom_omega * dt
+
+        # Normalize theta to [-pi, pi]
+        self.odom_theta = math.atan2(math.sin(self.odom_theta), math.cos(self.odom_theta))
+
+        # Publish Odometry message
+        odom = Odometry()
+        odom.header.stamp = now.to_msg()
+        odom.header.frame_id = 'odom'
+        odom.child_frame_id = 'base_footprint'
+        odom.pose.pose.position.x = self.odom_x
+        odom.pose.pose.position.y = self.odom_y
+        odom.pose.pose.position.z = 0.0
+        qx, qy, qz, qw = self._euler_to_quat(0, 0, self.odom_theta)
+        odom.pose.pose.orientation.x = qx
+        odom.pose.pose.orientation.y = qy
+        odom.pose.pose.orientation.z = qz
+        odom.pose.pose.orientation.w = qw
+        odom.twist.twist.linear.x = self.odom_vx
+        odom.twist.twist.linear.y = self.odom_vy
+        odom.twist.twist.angular.z = self.odom_omega
+        self.odom_publisher.publish(odom)
+
+        # Broadcast odom -> base_footprint transform
+        t = TransformStamped()
+        t.header.stamp = now.to_msg()
+        t.header.frame_id = 'odom'
+        t.child_frame_id = 'base_footprint'
+        t.transform.translation.x = self.odom_x
+        t.transform.translation.y = self.odom_y
+        t.transform.translation.z = 0.0
+        t.transform.rotation.x = qx
+        t.transform.rotation.y = qy
+        t.transform.rotation.z = qz
+        t.transform.rotation.w = qw
+        self.tf_broadcaster.sendTransform(t)
+
+    @staticmethod
+    def _euler_to_quat(roll, pitch, yaw):
+        cy = math.cos(yaw * 0.5)
+        sy = math.sin(yaw * 0.5)
+        cp = math.cos(pitch * 0.5)
+        sp = math.sin(pitch * 0.5)
+        cr = math.cos(roll * 0.5)
+        sr = math.sin(roll * 0.5)
+        qw = cr * cp * cy + sr * sp * sy
+        qx = sr * cp * cy - cr * sp * sy
+        qy = cr * sp * cy + sr * cp * sy
+        qz = cr * cp * sy - sr * sp * cy
+        return qx, qy, qz, qw
 
     # -------------------------------------------------------------------------
     # Status Reporting

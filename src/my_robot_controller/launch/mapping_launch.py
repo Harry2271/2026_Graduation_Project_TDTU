@@ -83,13 +83,7 @@ def generate_launch_description():
                    '--yaw', '0', '--pitch', '0', '--roll', '0',
                    '--frame-id', 'base_footprint', '--child-frame-id', 'base_link']
     )
-    odom_to_base_footprint_tf = Node(
-        package='tf2_ros', executable='static_transform_publisher',
-        name='odom_to_base_footprint',
-        arguments=['--x', '0', '--y', '0', '--z', '0',
-                   '--yaw', '0', '--pitch', '0', '--roll', '0',
-                   '--frame-id', 'odom', '--child-frame-id', 'base_footprint']
-    )
+    # NOTE: odom -> base_footprint is now broadcast dynamically by brain_node
 
     # ---- Brain Node ----
     brain_node = Node(
@@ -144,7 +138,6 @@ def generate_launch_description():
         lidar_mode_param,
         base_link_to_laser_tf,
         base_footprint_to_base_link_tf,
-        odom_to_base_footprint_tf,
         sllidar_launch,
         slam_toolbox_launch,
         brain_node,

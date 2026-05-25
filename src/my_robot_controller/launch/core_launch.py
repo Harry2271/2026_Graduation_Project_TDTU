@@ -40,11 +40,8 @@ def generate_launch_description():
         name='base_footprint_to_base_link',
         arguments=['0', '0', '0', '0', '0', '0',
                    'base_footprint', 'base_link'])
-    odom_to_base_footprint_tf = Node(
-        package='tf2_ros', executable='static_transform_publisher',
-        name='odom_to_base_footprint',
-        arguments=['0', '0', '0', '0', '0', '0',
-                   'odom', 'base_footprint'])
+    # NOTE: odom -> base_footprint is now broadcast dynamically by brain_node
+    # (via TransformBroadcaster publishing real robot position from odometry)
 
     # Brain Node
     brain_node = Node(
@@ -80,7 +77,6 @@ def generate_launch_description():
         slam_toolbox_launch,
         base_link_to_laser_tf,
         base_footprint_to_base_link_tf,
-        odom_to_base_footprint_tf,
         brain_node,
         qr_detector_node,
         web_bridge_node,
