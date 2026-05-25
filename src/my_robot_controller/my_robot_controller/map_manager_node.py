@@ -31,9 +31,9 @@ from std_msgs.msg import String
 from tf2_ros import TransformListener, Buffer
 
 # Map parameters
-GRID_RESOLUTION = 0.10       # meters per cell (10cm — 4x faster than 5cm, still sharp for indoor)
-GRID_SIZE_METERS = 40.0    # total grid size (400 x 400 cells)
-GRID_CELLS = int(GRID_SIZE_METERS / GRID_RESOLUTION)  # 400
+GRID_RESOLUTION = 0.05       # meters per cell (5cm — matches frontend API, same as ROS SLAM)
+GRID_SIZE_METERS = 40.0     # total grid size (40m x 40m)
+GRID_CELLS = int(GRID_SIZE_METERS / GRID_RESOLUTION)  # 800
 GRID_ORIGIN = -GRID_SIZE_METERS / 2.0  # -20.0 (grid centered at world origin)
 
 MAX_LASER_RANGE = 8.0       # meters — skip readings beyond this
@@ -92,8 +92,8 @@ class MapManager(Node):
         # --- Timers ---
         # Pose tracking: 10 Hz (fast for real-time tracking)
         self.create_timer(0.1, self._poll_pose)
-        # Map publishing: 2 Hz (every 0.5s)
-        self.create_timer(0.5, self._publish_maps)
+        # Map publishing: 1 Hz (every 1s) — reduced from 2Hz to save bandwidth on 800x800 grid
+        self.create_timer(1.0, self._publish_maps)
 
         self.get_logger().info(
             f'MapManager started — grid: {GRID_CELLS}x{GRID_CELLS} '

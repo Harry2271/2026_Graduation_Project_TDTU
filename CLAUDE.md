@@ -105,7 +105,7 @@ Sent every time the lidar produces a scan (~12 Hz for A1M8).
 
 ### 2. `map` — Combined Occupancy Grid
 
-Sent by map_manager every ~0.5s. Contains `persistent_grid` + `temporary_grid` overlaid.
+Sent by map_manager every ~1s. Contains `persistent_grid` + `temporary_grid` overlaid.
 
 ```json
 {
@@ -267,6 +267,7 @@ ws.send(JSON.stringify({
   <style>
     body { margin: 0; background: #111; }
     canvas { display: block; }
+    #scanCanvas { position: fixed; top: 0; left: 0; pointer-events: none; }
     #status  { position: fixed; top: 8px;  left: 8px;  color: #aaa; font: 13px monospace; }
     #devices { position: fixed; top: 24px; left: 8px;  color: #555; font: 12px monospace; }
     #pose    { position: fixed; top: 40px; left: 8px;  color: #aaa; font: 13px monospace; }
@@ -274,20 +275,25 @@ ws.send(JSON.stringify({
 </head>
 <body>
   <canvas id="mapCanvas"></canvas>
+  <canvas id="scanCanvas"></canvas>
   <div id="status">Connecting...</div>
   <div id="devices"></div>
   <div id="pose"></div>
 
   <script>
     const canvas = document.getElementById('mapCanvas');
+    const scanCanvas = document.getElementById('scanCanvas');
     const ctx = canvas.getContext('2d');
+    const scanCtx = scanCanvas.getContext('2d');
     const statusEl  = document.getElementById('status');
     const devicesEl = document.getElementById('devices');
     const poseEl   = document.getElementById('pose');
 
     let mapData = null;
     let robotPose = null;
+    let scanPoints = [];
     let mode = 'live';
+    let lastScanTime = 0;
 
     const ws = new WebSocket('wss://map.nguyen-robot.io.vn');
 
@@ -297,8 +303,8 @@ ws.send(JSON.stringify({
       const msg = JSON.parse(event.data);
       switch (msg.type) {
         case 'map':    mapData = msg.data; renderMap(); break;
-        case 'scan':   break;
-        case 'pose':   robotPose = msg.data; renderMap(); break;
+        case 'scan':   scanPoints = msg.data.points; lastScanTime = Date.now(); renderScan(); break;
+        case 'pose':   robotPose = msg.data; renderScan(); break;
         case 'status': statusEl.textContent = msg.data; break;
         case 'mode':   mode = msg.data; break;
         case 'info':   updateDeviceStatus(msg.data); break;
@@ -323,10 +329,71 @@ ws.send(JSON.stringify({
       return { x: sx, y: sy };
     }
 
+    // Convert robot-centric scan point to world coordinates using robot pose
+    function scanToWorld(sx, sy) {
+      if (!robotPose) return null;
+      const cos = Math.cos(robotPose.theta);
+      const sin = Math.sin(robotPose.theta);
+      return {
+        x: robotPose.x + sx * cos - sy * sin,
+        y: robotPose.y + sx * sin + sy * cos,
+      };
+    }
+
+    // Fade old scan points so recent points appear brighter
+    function renderScan() {
+      const now = Date.now();
+      const fade = Math.max(0.05, 1 - (now - lastScanTime) / 2000); // fade over 2s
+
+      if (!mapData) return;
+
+      // Resize scan canvas to match map canvas
+      if (scanCanvas.width !== canvas.width || scanCanvas.height !== canvas.height) {
+        scanCanvas.width = canvas.width;
+        scanCanvas.height = canvas.height;
+      }
+      scanCtx.clearRect(0, 0, scanCanvas.width, scanCanvas.height);
+
+      // Fade previous frame
+      scanCtx.fillStyle = `rgba(0, 212, 255, ${fade * 0.15})`;
+      scanCtx.fillRect(0, 0, scanCanvas.width, scanCanvas.height);
+
+      // Draw scan points as bright cyan dots
+      scanCtx.fillStyle = `rgba(0, 212, 255, ${Math.min(1, fade + 0.3)})`;
+      for (const pt of scanPoints) {
+        const w = scanToWorld(pt.x, pt.y);
+        if (!w) continue;
+        const s = worldToScreen(w.x, w.y);
+        scanCtx.beginPath();
+        scanCtx.arc(s.x, s.y, 1, 0, Math.PI * 2);
+        scanCtx.fill();
+      }
+
+      // Draw robot heading arrow
+      if (robotPose) {
+        const rp = worldToScreen(robotPose.x, robotPose.y);
+        scanCtx.save();
+        scanCtx.translate(rp.x, rp.y);
+        scanCtx.rotate(-robotPose.theta);
+        scanCtx.fillStyle = '#00d4ff';
+        scanCtx.beginPath();
+        scanCtx.moveTo(12, 0);
+        scanCtx.lineTo(-8, 7);
+        scanCtx.lineTo(-8, -7);
+        scanCtx.closePath();
+        scanCtx.fill();
+        scanCtx.restore();
+        poseEl.textContent =
+          `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)} [${scanPoints.length} pts]`;
+      }
+    }
+
     function renderMap() {
       if (!mapData) return;
       canvas.width  = mapData.width;
       canvas.height = mapData.height;
+      scanCanvas.width = mapData.width;
+      scanCanvas.height = mapData.height;
       const img = ctx.createImageData(mapData.width, mapData.height);
 
       for (let i = 0; i < mapData.data.length; i++) {
@@ -337,23 +404,7 @@ ws.send(JSON.stringify({
         else                { img.data[j]=245;  img.data[j+1]=245;  img.data[j+2]=240;  img.data[j+3]=255; }
       }
       ctx.putImageData(img, 0, 0);
-
-      if (robotPose) {
-        const rp = worldToScreen(robotPose.x, robotPose.y);
-        ctx.save();
-        ctx.translate(rp.x, rp.y);
-        ctx.rotate(-robotPose.theta);
-        ctx.fillStyle = '#00d4ff';
-        ctx.beginPath();
-        ctx.moveTo(10, 0);
-        ctx.lineTo(-6, 6);
-        ctx.lineTo(-6, -6);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-        poseEl.textContent =
-          `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)}`;
-      }
+      renderScan();
     }
   </script>
 </body>
@@ -366,8 +417,8 @@ ws.send(JSON.stringify({
 
 | Source | Topic | Message Type | Frequency | WebSocket Field |
 |---|---|---|---|---|
-| map_manager | `/map_combined` | OccupancyGrid | ~2 Hz | `map.*` |
-| Lidar driver | `/scan` | LaserScan | ~12 Hz | `scan.points[]` |
+| map_manager | `/map_combined` | OccupancyGrid | ~1 Hz | `map.*` (800×800 cells @ 5cm) |
+| Lidar driver | `/scan` | LaserScan | ~12 Hz | `scan.points[]` (rendered as cyan dots) |
 | TF2 | `map→base_footprint` | TF | 10 Hz | `pose.{x,y,theta}` |
 | map_manager | `/mapping_status` | String | on change | `mode.*`, `status.data` |
 | web_bridge | — | — | 5s | `info.*` (device status) |
@@ -382,8 +433,10 @@ ws.send(JSON.stringify({
 |---|---|
 | WebSocket never connects | Wrong IP address, or Cloudflare tunnel pointing to wrong port |
 | `map` all gray | map_manager not running or `/map_combined` not published |
+| `map` stays blank while scanning | Normal — the map only updates when the robot physically moves > 15cm. Move the robot around to see the grid grow |
 | `pose` jumps around | TF not converged — robot needs to move slowly |
 | Map keeps growing in LIVE mode | Still in MAPPING mode — send `command: 'stop'` |
+| Scan points not visible | The HTML viewer now renders live lidar points on a separate canvas layer (cyan dots). Make sure your viewer includes the `scan` message renderer |
 | Temporary objects never clear | Normal — they clear after 5 consecutive scans without detection |
 
 To verify the robot is publishing data, SSH into the container and run:
