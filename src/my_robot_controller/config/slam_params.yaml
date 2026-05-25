@@ -17,7 +17,7 @@ slam_toolbox:
     # 3. Kích hoạt tối đa tính năng khớp tia quét (Scan Matching) khi thiếu odometry bánh xe
     use_scan_matching: true
     use_scan_barycenter: true
-    minimum_time_interval: 0.2
+    minimum_time_interval: 0.1
 
     # -------------------------------------------------------------------------
     # 🌟 CÁC THÔNG SỐ KHỬ NHIỄU (NOISE FILTERING & CRISP WALLS)

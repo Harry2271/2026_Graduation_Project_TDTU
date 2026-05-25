@@ -41,7 +41,7 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(launch_file),
             launch_arguments={
                 'serial_port': serial_port,
-                'scan_frequency': '5',
+                'scan_frequency': '10',
                 'scan_mode': 'Normal',
             }.items()),
     ])
