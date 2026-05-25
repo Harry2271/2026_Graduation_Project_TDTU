@@ -49,9 +49,10 @@ PORT = 9091
 
 
 class WebBridge(Node):
-    def __init__(self, msg_queue: queue.Queue):
+    def __init__(self, msg_queue: queue.Queue, cmd_queue: queue.Queue):
         super().__init__('web_bridge')
         self.msg_queue = msg_queue
+        self.cmd_queue = cmd_queue
 
         # Publisher for robot commands (web -> robot)
         self.cmd_pub = self.create_publisher(String, '/mapping/control', 10)
@@ -80,6 +81,9 @@ class WebBridge(Node):
         # Device info broadcast (every 5s)
         self.create_timer(5.0, self._broadcast_info)
 
+        # Command queue polling (100 Hz — drain commands quickly)
+        self.create_timer(0.01, self._poll_commands)
+
         self.get_logger().info(f'WebBridge started — serving on ws://{HOST}:{PORT}')
         self.get_logger().info('Subscribed to /scan, /map_combined, /tf, /robot_status, /mapping_status')
         self.get_logger().info('Topics become active when devices are connected')
@@ -105,6 +109,18 @@ class WebBridge(Node):
                 'coverage_pct': self.coverage_pct,
             }
         })
+
+    def _poll_commands(self):
+        """Drain command queue and publish to ROS."""
+        try:
+            while True:
+                command = self.cmd_queue.get_nowait()
+                ros_cmd = String()
+                ros_cmd.data = command
+                self.cmd_pub.publish(ros_cmd)
+                self.get_logger().info(f'Mapping command: {command}')
+        except queue.Empty:
+            pass
 
     def _on_scan(self, msg: LaserScan):
         self.lidar_seen = True
@@ -184,8 +200,9 @@ class WebBridge(Node):
 # ---------------------------------------------------------------------------
 
 class WebSocketServer:
-    def __init__(self, msg_queue: queue.Queue):
+    def __init__(self, msg_queue: queue.Queue, cmd_queue: queue.Queue):
         self.msg_queue = msg_queue
+        self.cmd_queue = cmd_queue
         self.clients: set = set()
         self.lock = threading.Lock()
         self.running = True
@@ -207,7 +224,7 @@ class WebSocketServer:
                 self.clients.discard(ws)
 
     def _handle_command(self, cmd: dict):
-        """Forward commands from web client to ROS topics."""
+        """Enqueue commands for WebBridge to publish on ROS topic."""
         t = cmd.get('type', '')
         if t == 'ping':
             return
@@ -215,10 +232,11 @@ class WebSocketServer:
             action = cmd.get('action', '')
             command = cmd.get('command', '')
             if action == 'mapping' and command:
-                ros_cmd = String()
-                ros_cmd.data = command
-                self.cmd_pub.publish(ros_cmd)
-                self.get_logger().info(f'Mapping command: {command}')
+                try:
+                    self.cmd_queue.put_nowait(command)
+                    print(f'[web_bridge] Queued mapping command: {command}')
+                except queue.Full:
+                    print('[web_bridge] Command queue full — dropped command')
 
     async def _broadcast_loop(self):
         while self.running:
@@ -265,11 +283,12 @@ class WebSocketServer:
 
 def main():
     msg_queue: queue.Queue = queue.Queue(maxsize=100)
+    cmd_queue: queue.Queue = queue.Queue(maxsize=20)
 
     # --- ROS 2 node in a daemon thread ---
     def ros_thread():
         rclpy.init()
-        node = WebBridge(msg_queue)
+        node = WebBridge(msg_queue, cmd_queue)
         executor = rclpy.executors.MultiThreadedExecutor()
         executor.add_node(node)
         try:
@@ -285,7 +304,7 @@ def main():
     time.sleep(1.0)
 
     # --- WebSocket server in main thread ---
-    ws_server = WebSocketServer(msg_queue)
+    ws_server = WebSocketServer(msg_queue, cmd_queue)
     print(f'[web_bridge] WebSocket server listening on ws://{HOST}:{PORT}')
     try:
         ws_server.run()
