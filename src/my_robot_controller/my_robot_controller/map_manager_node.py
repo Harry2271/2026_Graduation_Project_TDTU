@@ -117,6 +117,12 @@ class MapManager(Node):
         # Publish initial mode so subscribers (web_bridge) immediately see the state
         self._switch_mode(self.mode)
 
+        # Publish initial map immediately so the frontend gets coordinate system info
+        # before the robot has moved. This is a gray/unknown grid that establishes the
+        # 800x800 cell space centered at world origin.
+        if self.mode != 'IDLE':
+            self._publish_combined_map()
+
     # -------------------------------------------------------------------------
     # Raycasting — numpy-vectorized (processes all beams simultaneously)
     # -------------------------------------------------------------------------
@@ -249,6 +255,9 @@ class MapManager(Node):
                     'Is SLAM running and has the robot moved enough for localization?'
                 )
                 self._last_skipped_log = time.time()
+            # Still publish the current combined map so the frontend sees live updates
+            # even if pose is temporarily unavailable (e.g. during initialization).
+            self._publish_combined_map()
             return
 
         if self.mode == 'MAPPING':

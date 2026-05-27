@@ -39,10 +39,13 @@ import sys
 
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import TransformStamped, PoseWithCovarianceStamped
 from std_msgs.msg import String
+from tf2_ros import TransformListener, Buffer
+from rclpy.time import Time
 
 HOST = '0.0.0.0'
 PORT = 9091
@@ -73,6 +76,20 @@ class WebBridge(Node):
 
         # SLAM pose: scan-matched pose estimate in map frame (published by slam_toolbox)
         self.create_subscription(PoseWithCovarianceStamped, '/pose', self._on_slam_pose, 10)
+
+        # TF2 fallback: look up map->base_footprint directly when /pose topic is unavailable
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self._last_tf_pose_x = 0.0
+        self._last_tf_pose_y = 0.0
+        self._last_tf_pose_theta = 0.0
+        self._slam_pose_x = 0.0
+        self._slam_pose_y = 0.0
+        self._slam_pose_theta = 0.0
+        self._slam_pose_stamp_ns = 0  # nanoseconds of last slam_toolbox /pose
+
+        # Pose fallback from TF (10 Hz) — used when /pose topic is 0,0,0 or not published
+        self.create_timer(0.1, self._poll_tf_pose)
 
         # Device info broadcast (every 5s)
         self.create_timer(5.0, self._broadcast_info)
@@ -170,6 +187,10 @@ class WebBridge(Node):
         self.pose_seen = True
         q = msg.pose.pose.orientation
         theta = self._euler_from_quat(q.x, q.y, q.z, q.w)
+        self._slam_pose_x = msg.pose.pose.position.x
+        self._slam_pose_y = msg.pose.pose.position.y
+        self._slam_pose_theta = theta
+        self._slam_pose_stamp_ns = msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec
         self._emit({
             'type': 'pose',
             'data': {
@@ -178,6 +199,41 @@ class WebBridge(Node):
                 'theta': round(theta, 4),
             }
         })
+
+    def _poll_tf_pose(self):
+        """Fallback: look up map->base_footprint transform directly when /pose topic is 0,0,0."""
+        try:
+            t = self.tf_buffer.lookup_transform(
+                'map', 'base_footprint', Time(),
+                timeout=Duration(seconds=0.05))
+        except Exception:
+            return
+
+        tx = t.transform.translation.x
+        ty = t.transform.translation.y
+        q = t.transform.rotation
+        theta = self._euler_from_quat(q.x, q.y, q.z, q.w)
+
+        stamp_ns = t.header.stamp.sec * 1e9 + t.header.stamp.nanosec
+
+        # Use TF pose if /pose topic is stuck at origin (0,0,0) or not updating
+        slam_at_origin = (
+            abs(self._slam_pose_x) < 0.001 and
+            abs(self._slam_pose_y) < 0.001 and
+            self._slam_pose_stamp_ns > 0
+        )
+        tf_newer = stamp_ns > self._slam_pose_stamp_ns
+        use_tf = slam_at_origin or (tf_newer and self._slam_pose_stamp_ns == 0)
+
+        if use_tf or (self._slam_pose_stamp_ns == 0 and not self.pose_seen):
+            self._emit({
+                'type': 'pose',
+                'data': {
+                    'x': round(tx, 4),
+                    'y': round(ty, 4),
+                    'theta': round(theta, 4),
+                }
+            })
 
     @staticmethod
     def _euler_from_quat(x, y, z, w) -> float:
