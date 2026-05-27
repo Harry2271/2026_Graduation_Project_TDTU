@@ -105,7 +105,8 @@ export ESP32_PORT="$ESP32_PORT"
 export CAMERA_DEVICE="$CAMERA_DEVICE"
 "$QR_BIN" --ros-args -r __node:=qr_detector_node &
 
-# Web Bridge
+# Web Bridge — source workspace first so ROS env is available
+source /app/install/setup.bash
 "$WEB_BRIDGE_BIN" --ros-args -r __node:=web_bridge &
 
 # --- Start lidar hot-plug monitor in background ---
