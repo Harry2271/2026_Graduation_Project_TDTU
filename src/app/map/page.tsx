@@ -67,8 +67,8 @@ export default function MapPage() {
   const [isHeadingUp, setIsHeadingUp] = useState(true);
   const [isRobotLock, setIsRobotLock] = useState(true);
   const [zoom, setZoom] = useState(1);
-  // Debug: lidar axis orientation (0=+X, 1=+Y, 2=-X, 3=-Y)
-  const [lidarAxis, setLidarAxis] = useState(1);
+  // Lidar axis orientation: 0=+X forward (A1M8 convention), 1=+Y, 2=-X, 3=-Y
+  const [lidarAxis, setLidarAxis] = useState(0);
 
   // Refs (mutable state that doesn't trigger re-renders)
   const mapDataRef = useRef<MapData | null>(null);
@@ -83,7 +83,7 @@ export default function MapPage() {
   const connectWsRef = useRef<() => void>(() => {});
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
-  const lidarAxisRef = useRef<number>(1);
+  const lidarAxisRef = useRef<number>(0);
 
   // Generated occupancy grid (from accumulated LIDAR scans)
   const occGridRef = useRef<MapData | null>(null);
@@ -588,7 +588,8 @@ export default function MapPage() {
             case 'mode':
               setInfo(prev => ({ ...prev, mode: msg.data as string }));
               break;
-            case 'pong':
+            case 'ping':
+              // Backend sends ping every 5s — acknowledge it
               break;
           }
         } catch {
@@ -649,9 +650,15 @@ export default function MapPage() {
   const handleStartScan = () => {
     setIsStarting(true);
     sendCmd('start', 'bắt đầu quét bản đồ');
+    // Reset accumulated occupancy grid
+    if (occGridRef.current) {
+      occGridRef.current.data = new Array(occGridRef.current.width * occGridRef.current.height).fill(-1);
+    }
     occGridRef.current = null;
     occOffscreenRef.current = null;
+    prevOccGridRef.current = null;
     scanBoundsRef.current = null;
+    setOccGridVersion(v => v + 1);
     setTimeout(() => setIsStarting(false), 1500);
   };
 
