@@ -2,9 +2,8 @@
 """
 brain_node.py
 Robot Brain — Raspberry Pi 5
-Coordinates: Lidar scan data, QR code detection, ESP32-S3 motor control,
-             robotic arm, obstacle avoidance, warehouse navigation.
-Communication with ESP32-S3 via Serial USB (/dev/ttyUSB1, 115200 baud).
+Coordinates: Lidar scan data, QR code detection, obstacle avoidance,
+             warehouse navigation. (ESP32 motor control removed for testing.)
 """
 
 import rclpy
@@ -14,10 +13,8 @@ from std_msgs.msg import String
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 import math
-import serial
 import threading
 import time
-import os
 
 # ---------------------------------------------------------------------------
 # Robot State Machine
@@ -53,10 +50,6 @@ PICKUP_Y         = 1.5    # warehouse pickup zone Y
 CARGO_X          = -1.0   # cargo / drop zone X
 CARGO_Y          = -1.0   # cargo / drop zone Y
 
-# ESP32 serial config
-ESP_PORT         = os.environ.get('ESP32_PORT', '/dev/ttyUSB1')
-ESP_BAUD         = 115200
-SERIAL_TIMEOUT   = 1.0
 
 
 class BrainNode(Node):
@@ -104,23 +97,6 @@ class BrainNode(Node):
         self.pickup_count: int = 0
         self.max_pickups: int = 3
 
-        # ESP32 Serial
-        self.esp_serial: serial.Serial = None
-        self.serial_lock = threading.Lock()
-        self.esp_response: str = ''
-        self.esp_connected: bool = False
-        self._connect_esp32()
-
-        # Serial read thread
-        self.serial_thread = threading.Thread(
-            target=self._read_serial_loop, daemon=True)
-        self.serial_thread.start()
-
-        # Hot-plug monitor thread for ESP32
-        self.esp_monitor_thread = threading.Thread(
-            target=self._esp32_hotplug_monitor, daemon=True)
-        self.esp_monitor_thread.start()
-
         # Command dispatch timer (10 Hz)
         self.command_timer = self.create_timer(0.1, self._command_loop)
 
@@ -130,93 +106,22 @@ class BrainNode(Node):
         # Publish heartbeat / status
         self.status_timer = self.create_timer(1.0, self._publish_status)
 
-        self.get_logger().info(
-            f'ESP32 connected: {self.esp_serial is not None and self.esp_serial.is_open}'
-        )
-        self.get_logger().info('Brain Node started successfully')
+        self.get_logger().info('Brain Node started successfully (ESP32 removed for testing)')
         # Publish initial mapping status so web_bridge and frontend know the current mode
         self._publish_mapping_status()
 
     # -------------------------------------------------------------------------
-    # ESP32 Serial Communication
-    # -------------------------------------------------------------------------
-    def _connect_esp32(self):
-        try:
-            self.esp_serial = serial.Serial(
-                ESP_PORT, ESP_BAUD, timeout=SERIAL_TIMEOUT)
-            self.esp_serial.reset_input_buffer()
-            self.esp_connected = True
-            self.get_logger().info(f'ESP32 connected on {ESP_PORT}')
-        except serial.SerialException as e:
-            self.esp_serial = None
-            self.esp_connected = False
-            self.get_logger().warn(f'ESP32 not found at {ESP_PORT}: {e} — will retry')
-
-    def _esp32_hotplug_monitor(self):
-        """Continuously monitor ESP32 plug/unplug and reconnect automatically."""
-        while rclpy.ok():
-            if not self.esp_connected or self.esp_serial is None or not self.esp_serial.is_open:
-                if os.path.exists(ESP_PORT):
-                    self.get_logger().info(f'ESP32 detected at {ESP_PORT} — connecting...')
-                    self._connect_esp32()
-                    if self.esp_connected:
-                        self.get_logger().info(f'ESP32 reconnected successfully')
-                        # Restart serial read thread to pick up the new connection
-                        self.serial_thread = threading.Thread(
-                            target=self._read_serial_loop, daemon=True)
-                        self.serial_thread.start()
-            time.sleep(2)
-
-    def _read_serial_loop(self):
-        while rclpy.ok():
-            if self.esp_serial and self.esp_serial.is_open:
-                try:
-                    if self.esp_serial.in_waiting > 0:
-                        line = self.esp_serial.readline().decode(
-                            'utf-8', errors='ignore').strip()
-                        if line.startswith('STAT'):
-                            with self.serial_lock:
-                                self.esp_response = line
-                except Exception as e:
-                    self.get_logger().error(f'Serial read error: {e}')
-                    self.esp_connected = False
-                    try:
-                        self.esp_serial.close()
-                    except Exception:
-                        pass
-                    self.esp_serial = None
-                    break
-            time.sleep(0.01)
-
-    def _send_command(self, cmd: str):
-        """Send a command string to the ESP32."""
-        if self.esp_connected and self.esp_serial and self.esp_serial.is_open:
-            try:
-                with self.serial_lock:
-                    self.esp_serial.write(
-                        (cmd + '\n').encode('utf-8'))
-                    self.esp_serial.flush()
-                self.get_logger().debug(f'Sent to ESP32: {cmd}')
-            except Exception as e:
-                self.get_logger().error(f'ESP32 send error: {e}')
-                self.esp_connected = False
-        else:
-            self.get_logger().warn(f'ESP32 not connected — skipping: {cmd}')
-
-    # -------------------------------------------------------------------------
-    # Motor Commands (sent to ESP32)
+    # Motor Commands (simulated — no ESP32)
     # -------------------------------------------------------------------------
     def stop(self):
         self.odom_vx = 0.0
         self.odom_vy = 0.0
         self.odom_omega = 0.0
-        self._send_command('STOP')
 
     def move(self, vx: float, vy: float, omega: float):
         self.odom_vx = vx
         self.odom_vy = vy
         self.odom_omega = omega
-        self._send_command(f'MOVE,{vx:.3f},{vy:.3f},{omega:.3f}')
 
     def move_forward(self):
         self.move(LINEAR_SPEED, 0.0, 0.0)
@@ -237,19 +142,19 @@ class BrainNode(Node):
         self.move(0.0, 0.0, TURN_SPEED)
 
     def pick_up(self):
-        self._send_command('PICKUP')
+        pass
 
     def deposit(self):
-        self._send_command('DEPOSIT')
+        pass
 
     def arm_home(self):
-        self._send_command('HOME')
+        pass
 
     def arm_set(self, shoulder: int, gripper: int):
-        self._send_command(f'ARM,{shoulder},{gripper}')
+        pass
 
     def request_status(self):
-        self._send_command('STATUS')
+        pass
 
     # -------------------------------------------------------------------------
     # Subscriptions
@@ -638,9 +543,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        if hasattr(node, 'esp_serial') and node.esp_serial and node.esp_serial.is_open:
-            node.stop()
-            node.esp_serial.close()
+        node.stop()
         node.destroy_node()
         rclpy.try_shutdown()
 

@@ -3,41 +3,8 @@ set -e
 
 LIDAR_MODEL=${LIDAR_MODEL:-a1}
 LIDAR_PORT=${LIDAR_PORT:-/dev/ttyUSB0}
-ESP32_PORT=${ESP32_PORT:-/dev/ttyUSB1}
 CAMERA_DEVICE=${CAMERA_DEVICE:-0}
 MAPPING_MODE=${MAPPING_MODE:-live}
-
-# ESP32 UART adapter — detect it automatically by scanning all available serial ports
-# Excludes the lidar port (/dev/ttyUSB0)
-find_esp32_port() {
-    # Check explicit env var first
-    if [ -n "$ESP32_PORT" ] && [ -e "$ESP32_PORT" ]; then
-        echo "$ESP32_PORT"
-        return 0
-    fi
-    # Scan all ttyUSB and ttyACM ports, excluding lidar
-    for dev in /dev/ttyUSB* /dev/ttyACM*; do
-        [ "$dev" = "/dev/ttyUSB0" ] && continue
-        if [ -e "$dev" ]; then
-            echo "$dev"
-            return 0
-        fi
-    done
-    # Scan by hardware ID (Roboclaw, CH340, CP2102, FTDI)
-    for link in /dev/serial/by-id/*; do
-        if [ -e "$link" ]; then
-            target=$(readlink -f "$link" 2>/dev/null)
-            # Skip lidar
-            basename_target=$(basename "$target" 2>/dev/null)
-            [ "$basename_target" = "ttyUSB0" ] && continue
-            if [ -n "$target" ]; then
-                echo "$target"
-                return 0
-            fi
-        fi
-    done
-    return 1
-}
 
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
@@ -45,10 +12,10 @@ mkdir -p "$LOG_DIR"
 echo "--- Starting robot-core ---"
 echo "  Lidar model  : $LIDAR_MODEL"
 echo "  Lidar port   : $LIDAR_PORT"
-echo "  ESP32 port   : $ESP32_PORT"
 echo "  Camera device: /dev/video$CAMERA_DEVICE"
 echo "  Mapping mode : $MAPPING_MODE"
 echo "  Log dir      : $LOG_DIR"
+echo "  NOTE: ESP32 motor control removed for testing"
 
 # Source ROS 2 and our workspace
 source /opt/ros/jazzy/setup.bash
@@ -58,83 +25,39 @@ source /app/install/setup.bash
 python3 -c "import rclpy; print('rclpy OK')"
 python3 -c "import websockets; print('websockets OK')"
 
-# Paths to installed scripts
-BRAIN_BIN="/app/install/my_robot_controller/lib/my_robot_controller/brain"
-QR_BIN="/app/install/my_robot_controller/lib/my_robot_controller/qr_detector"
-WEB_BRIDGE_BIN="/app/install/my_robot_controller/lib/my_robot_controller/web_bridge"
-MAP_MANAGER_BIN="/app/install/my_robot_controller/lib/my_robot_controller/map_manager"
+# Paths to Python source scripts (entry-point scripts broken after rebuild, run directly)
+PYTHON="/usr/bin/python3"
+BRAIN_SCRIPT="/app/src/my_robot_controller/my_robot_controller/brain_node.py"
+QR_SCRIPT="/app/src/my_robot_controller/my_robot_controller/qr_detector.py"
+WEB_BRIDGE_SCRIPT="/app/src/my_robot_controller/my_robot_controller/web_bridge.py"
+MAP_MANAGER_SCRIPT="/app/src/my_robot_controller/my_robot_controller/map_manager_node.py"
 
-echo "--- Binary paths ---"
-ls -la "$BRAIN_BIN"    2>&1 | tee "$LOG_DIR/startup.log"
-ls -la "$QR_BIN"        2>&1 | tee -a "$LOG_DIR/startup.log"
-ls -la "$WEB_BRIDGE_BIN" 2>&1 | tee -a "$LOG_DIR/startup.log"
-ls -la "$MAP_MANAGER_BIN" 2>&1 | tee -a "$LOG_DIR/startup.log"
+echo "--- Script paths ---"
+ls -la "$BRAIN_SCRIPT"       2>&1 | tee "$LOG_DIR/startup.log"
+ls -la "$QR_SCRIPT"           2>&1 | tee -a "$LOG_DIR/startup.log"
+ls -la "$WEB_BRIDGE_SCRIPT"   2>&1 | tee -a "$LOG_DIR/startup.log"
+ls -la "$MAP_MANAGER_SCRIPT"  2>&1 | tee -a "$LOG_DIR/startup.log"
 
-# --- Wait for both ESP32 and Lidar to be detected ---
+# --- Wait for Lidar to be detected ---
 echo ""
 echo "========================================"
-echo "  WAITING FOR REQUIRED HARDWARE..."
+echo "  WAITING FOR LIDAR..."
 echo "========================================"
 
-REQUIRED_DEVICES=0
 LIDAR_READY=false
-ESP32_READY=false
-ESP32_DETECTED_PORT=""
 
-while [ "$REQUIRED_DEVICES" -lt 2 ]; do
-    REQUIRED_DEVICES=0
-
-    # Check Lidar first
+while [ "$LIDAR_READY" = false ]; do
     if [ -e "$LIDAR_PORT" ]; then
-        if [ "$LIDAR_READY" = false ]; then
-            chmod 666 "$LIDAR_PORT" 2>/dev/null
-            echo "[STARTUP] Lidar detected at $LIDAR_PORT"
-            LIDAR_READY=true
-        fi
-        REQUIRED_DEVICES=$((REQUIRED_DEVICES + 1))
+        chmod 666 "$LIDAR_PORT" 2>/dev/null
+        echo "[STARTUP] Lidar detected at $LIDAR_PORT"
+        LIDAR_READY=true
     else
-        if [ "$LIDAR_READY" = true ]; then
-            echo "[STARTUP] Lidar disconnected!"
-            LIDAR_READY=false
-        fi
-    fi
-
-    # Check ESP32 — try auto-detect
-    ESP32_CANDIDATE=$(find_esp32_port 2>/dev/null)
-    if [ -n "$ESP32_CANDIDATE" ]; then
-        chmod 666 "$ESP32_CANDIDATE" 2>/dev/null
-        if [ "$ESP32_READY" = false ]; then
-            ESP32_DETECTED_PORT="$ESP32_CANDIDATE"
-            ESP32_PORT="$ESP32_CANDIDATE"
-            echo "[STARTUP] ESP32 detected at $ESP32_PORT"
-            ESP32_READY=true
-        fi
-        REQUIRED_DEVICES=$((REQUIRED_DEVICES + 1))
-    else
-        if [ "$ESP32_READY" = true ]; then
-            echo "[STARTUP] ESP32 disconnected!"
-            ESP32_READY=false
-            ESP32_DETECTED_PORT=""
-        fi
-    fi
-
-    if [ "$REQUIRED_DEVICES" -lt 2 ]; then
-        echo "[STARTUP] Waiting for devices... Found $REQUIRED_DEVICES/2"
-        echo "[STARTUP] All available serial devices:"
-        for dev in /dev/ttyUSB* /dev/ttyACM*; do
-            if [ -e "$dev" ]; then
-                echo "  $dev"
-                udevadm info -q name -n "$dev" >/dev/null 2>&1 && udevadm info -a -n "$dev" 2>/dev/null | grep -E "ATTRS{idVendor}|ATTRS{product}" | head -2
-            fi
-        done
-        echo "[STARTUP] Hardware IDs:"
-        ls -la /dev/serial/by-id/ 2>/dev/null || echo "  (none found)"
-        echo ""
+        echo "[STARTUP] Waiting for lidar at $LIDAR_PORT..."
         sleep 3
     fi
 done
 
-echo "[STARTUP] All required devices detected! ($REQUIRED_DEVICES/2)"
+echo "[STARTUP] Lidar detected!"
 echo ""
 
 # --- Lidar driver startup (synchronous — wait for /scan to publish) ---
@@ -201,7 +124,7 @@ ros2 topic list 2>&1 | tee -a "$LOG_DIR/startup.log" || echo "[entrypoint] ros2 
 
 # Map Manager
 echo "[entrypoint] Starting map_manager (mode=$MAPPING_MODE)..." | tee -a "$LOG_DIR/map_manager.log"
-"$MAP_MANAGER_BIN" --ros-args -r __node:=map_manager \
+"$PYTHON" "$MAP_MANAGER_SCRIPT" --ros-args -r __node:=map_manager \
     2>&1 | tee -a "$LOG_DIR/map_manager.log" &
 
 # If MAPPING_MODE=mapping, send start command after a short delay
@@ -213,18 +136,14 @@ if [ "$MAPPING_MODE" = "mapping" ]; then
 fi
 
 # Brain Node
-if [ -n "$ESP32_DETECTED_PORT" ]; then
-    ESP32_PORT="$ESP32_DETECTED_PORT"
-fi
-echo "[entrypoint] Starting brain_node (ESP32=$ESP32_PORT)..." | tee -a "$LOG_DIR/brain.log"
-export ESP32_PORT="$ESP32_PORT"
-"$BRAIN_BIN" --ros-args -r __node:=brain_node \
+echo "[entrypoint] Starting brain_node (ESP32 removed)..." | tee -a "$LOG_DIR/brain.log"
+"$PYTHON" "$BRAIN_SCRIPT" --ros-args -r __node:=brain_node \
     2>&1 | tee -a "$LOG_DIR/brain.log" &
 
 # QR Detector
 echo "[entrypoint] Starting qr_detector..." | tee -a "$LOG_DIR/qr.log"
 export CAMERA_DEVICE="$CAMERA_DEVICE"
-"$QR_BIN" --ros-args -r __node:=qr_detector_node \
+"$PYTHON" "$QR_SCRIPT" --ros-args -r __node:=qr_detector_node \
     2>&1 | tee -a "$LOG_DIR/qr.log" &
 
 # Web Bridge — with crash restart wrapper
@@ -234,7 +153,7 @@ start_web_bridge() {
     local attempt=1
     while true; do
         echo "[web_bridge-wrapper] Starting web_bridge (attempt $attempt)..." >> "$LOG_DIR/web_bridge.log"
-        "$WEB_BRIDGE_BIN" --ros-args -r __node:=web_bridge \
+        "$PYTHON" "$WEB_BRIDGE_SCRIPT" --ros-args -r __node:=web_bridge \
             >> "$LOG_DIR/web_bridge.log" 2>&1
         local exit_code=$?
         echo "[web_bridge-wrapper] web_bridge exited with code $exit_code at $(date)" >> "$LOG_DIR/web_bridge.log"
