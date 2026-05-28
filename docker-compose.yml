@@ -1,5 +1,4 @@
 services:
-  # 1. Core robot system (Lidar + SLAM + Brain + QR Detector)
   robot-core:
     build:
       context: .
@@ -13,19 +12,14 @@ services:
       - /dev:/dev
       - /dev/video0:/dev/video0          # USB webcam for QR detection
       - robot-maps:/app                  # Persist saved maps across restarts
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0        # Slamtec SLLidar
-      - /dev/ttyUSB1:/dev/ttyUSB1        # ESP32 UART adapter (USB mode)
-      - /dev/ttyACM0:/dev/ttyACM0        # ESP32 UART adapter (CDC/ACM mode)
+      - /dev/serial/by-id:/dev/serial/by-id  # Symlinks for stable device IDs
     environment:
       - ROS_DOMAIN_ID=0
       - LIDAR_MODEL=a1                    # Use a1 for A1M8 lidar
-      - LIDAR_PORT=/dev/ttyUSB0
-      - ESP32_PORT=/dev/ttyUSB1
       - CAMERA_DEVICE=0
       - MAPPING_MODE=live                # 'mapping' or 'live' — set to 'mapping' to auto-scan room
     ports:
-      - "9091:9091"                       # WebBridge WebSocket JSON server
+      - "9091:9091"                     # WebBridge WebSocket JSON server
     restart: always
 
 volumes:

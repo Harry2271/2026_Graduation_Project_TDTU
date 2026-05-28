@@ -2,9 +2,47 @@
 set -e
 
 LIDAR_MODEL=${LIDAR_MODEL:-a1}
-LIDAR_PORT=${LIDAR_PORT:-/dev/ttyUSB0}
 CAMERA_DEVICE=${CAMERA_DEVICE:-0}
 MAPPING_MODE=${MAPPING_MODE:-live}
+
+# Auto-detect lidar port — Slamtec lidars identify themselves via USB hardware ID
+find_lidar_port() {
+    # Scan by hardware ID (Slamtec vendor/product IDs)
+    for link in /dev/serial/by-id/*; do
+        if [ -e "$link" ]; then
+            target=$(readlink -f "$link" 2>/dev/null)
+            # Slamtec S1/S2/A1/A2/A3 identification
+            if echo "$link" | grep -qi 'slamtec\|sllidar\|lidar'; then
+                echo "  [AUTO] Found Slamtec lidar: $link -> $target"
+                echo "$target"
+                return 0
+            fi
+        fi
+    done
+    # Fallback: check all serial ports for Slamtec USB device (VID:PID 0483:5740)
+    for dev in /dev/ttyUSB* /dev/ttyACM*; do
+        if [ -e "$dev" ]; then
+            vendor=$(udevadm info -q property -n "$dev" 2>/dev/null | grep 'ID_VENDOR_ID=' | cut -d= -f2)
+            model=$(udevadm info -q property -n "$dev" 2>/dev/null | grep 'ID_MODEL=' | cut -d= -f2)
+            if echo "$vendor $model" | grep -qi 'slamtec\|sllidar\|lidar\|0483.*5740'; then
+                echo "  [AUTO] Found Slamtec lidar: $dev (VID=$vendor)"
+                echo "$dev"
+                return 0
+            fi
+        fi
+    done
+    # Last resort: first available ttyUSB/ttyACM (assuming it's the lidar)
+    for dev in /dev/ttyUSB* /dev/ttyACM*; do
+        if [ -e "$dev" ]; then
+            echo "  [AUTO] Using first available serial port: $dev"
+            echo "$dev"
+            return 0
+        fi
+    done
+    return 1
+}
+
+LIDAR_PORT=$(find_lidar_port)
 
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
