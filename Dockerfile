@@ -2,44 +2,43 @@ FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Install all dependencies: colcon, SLAM, TF, serial, git, OpenCV, camera deps
+# Install only what's needed: lidar driver + numpy + websockets
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --fix-missing --no-install-recommends \
     python3-colcon-common-extensions \
-    ros-jazzy-slam-toolbox \
-    ros-jazzy-tf2-ros \
-    ros-jazzy-cv-bridge \
-    ros-jazzy-image-transport \
-    ros-jazzy-vision-msgs \
-    ros-jazzy-sensor-msgs \
-    python3-serial \
-    python3-opencv \
-    python3-numpy \
     python3-pip \
-    libopencv-dev \
-    libv4l-dev \
-    libgtk-3-dev \
+    ros-jazzy-tf2-ros \
+    ros-jazzy-sensor-msgs \
+    python3-numpy \
     git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip3 install --break-system-packages websockets
+
 WORKDIR /app
 
-# 2. Copy local source packages
-COPY src/ /app/src/
-
-# 3. Clone SLLidar ROS 2 driver
+# Clone SLLidar ROS 2 driver
 RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
-# 4. Build workspace (sequential to avoid RAM exhaustion on Pi 5)
-# colcon uses --install-layout=deb which breaks importlib.metadata on Ubuntu 24.04.
-# We override with --install-layout=opt after the build so entry points are findable.
+# Copy source
+COPY src/ /app/src/
+
+# Build colcon workspace
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    colcon build --executor sequential && \
-    pip3 install --break-system-packages --install-layout=opt --no-deps -e /app/src/my_robot_controller && \
-    pip3 install --break-system-packages websockets"
+    rm -rf /app/build /app/install && \
+    colcon build --merge-install --executor sequential"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> /root/.bashrc && \
+    echo 'source /app/install/setup.bash' >> /root/.bashrc
+
+RUN echo '#!/bin/bash' > /usr/local/bin/ros2 && \
+    echo 'source /opt/ros/jazzy/setup.bash' >> /usr/local/bin/ros2 && \
+    echo 'source /app/install/setup.bash' >> /usr/local/bin/ros2 && \
+    echo 'exec /opt/ros/jazzy/bin/ros2 "$@"' >> /usr/local/bin/ros2 && \
+    chmod +x /usr/local/bin/ros2
 
 ENTRYPOINT ["/entrypoint.sh"]

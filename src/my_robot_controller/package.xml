@@ -3,7 +3,7 @@
 <package format="3">
   <name>my_robot_controller</name>
   <version>0.0.0</version>
-  <description>Custom robot controller for mapping and ESP32 integration</description>
+  <description>Custom robot controller for mapping and navigation</description>
   <maintainer email="user@todo.todo">User</maintainer>
   <license>TODO: License declaration</license>
 
@@ -11,10 +11,6 @@
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
-  <depend>cv_bridge</depend>
-  <depend>image_transport</depend>
-  <depend>vision_msgs</depend>
-
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

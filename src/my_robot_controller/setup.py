@@ -14,20 +14,17 @@ setup(
         ('share/' + package_name, ['package.xml']),
         # Include all launch files
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
-        # Include config files
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools', 'websockets>=10.0'],
     zip_safe=True,
     maintainer='User',
     maintainer_email='user@todo.todo',
-    description='Custom robot controller for mapping and ESP32 integration',
+    description='Custom robot controller for mapping and navigation',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'brain = my_robot_controller.brain_node:main',
-            'qr_detector = my_robot_controller.qr_detector:main',
             'web_bridge = my_robot_controller.web_bridge:main',
             'map_manager = my_robot_controller.map_manager_node:main',
         ],

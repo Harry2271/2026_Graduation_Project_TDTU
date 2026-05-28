@@ -2,22 +2,20 @@ services:
   robot-core:
     build:
       context: .
-      dockerfile: Dockerfile.robotcore
+      dockerfile: Dockerfile
     container_name: robot_core
     privileged: true
     network_mode: host
     volumes:
       - /dev:/dev
-      - /dev/video0:/dev/video0          # USB webcam for QR detection
-      - robot-maps:/app                  # Persist saved maps across restarts
-      - /dev/serial/by-id:/dev/serial/by-id  # Symlinks for stable device IDs
+      - robot-maps:/app
+      - /dev/serial/by-id:/dev/serial/by-id
     environment:
       - ROS_DOMAIN_ID=0
-      - LIDAR_MODEL=a1                    # Use a1 for A1M8 lidar
-      - CAMERA_DEVICE=0
-      - MAPPING_MODE=live                # 'mapping' or 'live' — set to 'mapping' to auto-scan room
+      - LIDAR_MODEL=a1
+      - MAPPING_MODE=live
     ports:
-      - "9091:9091"                     # WebBridge WebSocket JSON server
+      - "9091:9091"
     restart: always
 
 volumes:

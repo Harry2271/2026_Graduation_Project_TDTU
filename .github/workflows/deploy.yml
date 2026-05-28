@@ -2,39 +2,21 @@ name: Deploy Robot Core
 
 on:
   push:
-    branches: ["master"]
+    branches: ["master", "main"]
 
 jobs:
   deploy-to-pi:
-    # Bắt trực tiếp con Pi 5 xử lý từ A-Z
     runs-on: [self-hosted, linux, arm64]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        # Thằng runner trên Pi sẽ tự clone code thẳng về máy nó, không cần qua trung gian
 
-      - name: 🔐 Khởi tạo file .env cho Robot (Nếu cần)
+      - name: Build & Deploy
         run: |
-          echo ">>> Đang tạo file .env cho ROS..."
-          cat <<EOF > .env
-          ROS_DOMAIN_ID=0
-          EOF
-          echo ">>> Khởi tạo .env thành công."
-
-      - name: 🛠️ Build & Deploy with Docker Compose
-        run: |
-          # Bật BuildKit để build Docker nhanh hơn và tận dụng cache tốt hơn
           export DOCKER_BUILDKIT=1
 
-          # Xóa image cũ để build sạch (tránh cache không cập nhật code mới)
-          docker rmi robot-controller-robot-core --force 2>/dev/null || true
-
-          # Build image từ Dockerfile.robotcore (quá trình colcon build diễn ra ở đây)
           docker compose build robot-core --progress=plain
-
-          # Khởi động lại container bằng image mới nhất
           docker compose up -d robot-core
 
-          # Dọn rác
           docker image prune -f
