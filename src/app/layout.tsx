@@ -1,15 +1,34 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Syne, DM_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import StoreProvider from './StoreProvider';
 import { AntdRegistry } from '@ant-design/nextjs-registry';
 import MainLayout from '@/components/MainLayout';
 
-const inter = Inter({ subsets: ['latin'] });
+const syne = Syne({
+  subsets: ['latin'],
+  variable: '--font-syne',
+  weight: ['400', '600', '700', '800'],
+  display: 'swap',
+});
+
+const dmSans = DM_Sans({
+  subsets: ['latin'],
+  variable: '--font-dm-sans',
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-jetbrains',
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
-  title: 'Robot Warehouse Control — Đồ án tốt nghiệp | Tôn Đức Thắng University',
-  description: 'Hệ thống điều khiển robot và quản lý kho hàng tự động — Đồ án tốt nghiệp Tôn Đức Thắng University',
+  title: 'NEXUS Control — Robot Warehouse | Đồ án Tốt nghiệp TDTU',
+  description: 'Hệ thống điều khiển robot và giám sát kho hàng tự động — NEXUS Control',
   icons: {
     icon: '/LOGO.png',
   },
@@ -17,8 +36,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="vi">
-      <body className={`${inter.className} antialiased`}>
+    <html lang="vi" className={`${syne.variable} ${dmSans.variable} ${jetbrainsMono.variable}`}>
+      <body className="antialiased">
         <AntdRegistry>
           <StoreProvider>
             <MainLayout>{children}</MainLayout>

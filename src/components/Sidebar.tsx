@@ -2,12 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Package, Map as MapIcon, Camera } from 'lucide-react';
+import { Package, Map as MapIcon, Camera, Layers, Activity } from 'lucide-react';
 
 const menuItems = [
-  { name: 'Kho hàng',           path: '/inventory', icon: Package  },
-  { name: 'Quản lý kiện hàng',  path: '/products',  icon: Package  },
-  { name: 'Bản đồ',             path: '/map',         icon: MapIcon  },
+  { name: 'Kho hàng',          path: '/inventory', icon: Package  },
+  { name: 'Quản lý kiện hàng', path: '/products',  icon: Layers   },
+  { name: 'Bản đồ',            path: '/map',       icon: MapIcon  },
   { name: 'Camera',             path: '/camera',     icon: Camera   },
 ];
 
@@ -15,51 +15,208 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-[240px] min-h-screen bg-white border-r border-gray-200 flex flex-col fixed left-0 top-0 bottom-0 z-10">
-      {/* Brand */}
-      <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center bg-white border border-gray-200">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/LOGO.png" alt="Logo TDTU" className="w-full h-full object-contain" />
-        </div>
-        <div>
-          <p className="font-bold text-[13px] text-gray-900 leading-tight">Đồ án tốt nghiệp</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Tôn Đức Thắng University</p>
-          <p className="text-[10px] text-gray-300 mt-0.5">Robot Warehouse Control</p>
+    <aside
+      className="w-[260px] h-full flex-shrink-0 flex flex-col z-20"
+      style={{
+        background: 'linear-gradient(180deg, #0c0f14 0%, #080b10 100%)',
+        borderRight: '1px solid rgba(255,255,255,0.06)',
+        boxShadow: '4px 0 32px rgba(0,0,0,0.4), inset -1px 0 0 rgba(255,255,255,0.03)',
+      }}
+    >
+      {/* ─── Brand header ─────────────────────────────────────── */}
+      <div
+        className="px-5 py-5"
+        style={{
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          background: 'linear-gradient(135deg, rgba(0,212,255,0.04) 0%, transparent 60%)',
+        }}
+      >
+        <div className="flex items-center gap-3">
+          {/* Logo */}
+          <div
+            className="w-11 h-11 rounded-xl flex-shrink-0 flex items-center justify-center overflow-hidden relative"
+            style={{
+              background: 'linear-gradient(135deg, #111827, #1a2035)',
+              border: '1px solid rgba(0,212,255,0.2)',
+              boxShadow: '0 0 16px rgba(0,212,255,0.12), inset 0 1px 0 rgba(255,255,255,0.06)',
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/LOGO.png" alt="Logo TDTU" className="w-full h-full object-contain" />
+            {/* Accent glow dot */}
+            <span
+              className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full"
+              style={{
+                background: 'var(--success)',
+                boxShadow: '0 0 8px var(--success-glow)',
+              }}
+            />
+          </div>
+
+          <div className="min-w-0">
+            <p
+              className="text-[13px] font-bold leading-tight truncate"
+              style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.01em' }}
+            >
+              NEXUS Control
+            </p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>
+              TDTU CAPSTONE 2025
+            </p>
+            {/* Status line */}
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: 'var(--success)', boxShadow: '0 0 6px var(--success-glow)' }}
+              />
+              <span className="text-[9px]" style={{ color: 'var(--success)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.08em' }}>
+                SYSTEM ONLINE
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Navigation */}
+      {/* ─── Navigation ────────────────────────────────────────── */}
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-2">
-          Điều hướng
+        <p
+          className="text-[9px] font-semibold px-3 mb-2"
+          style={{
+            color: 'var(--text-muted)',
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Điều hướng chính
         </p>
+
         {menuItems.map(({ name, path, icon: Icon }) => {
           const isActive = pathname === path || (pathname === '/' && path === '/inventory');
           return (
             <Link
               key={path}
               href={path}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className="group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 overflow-hidden"
+              style={
                 isActive
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-              }`}
+                  ? {
+                      background: 'linear-gradient(90deg, rgba(0,212,255,0.12) 0%, rgba(0,212,255,0.06) 100%)',
+                      border: '1px solid rgba(0,212,255,0.2)',
+                      color: 'var(--accent)',
+                      boxShadow: '0 0 16px rgba(0,212,255,0.08)',
+                    }
+                  : {
+                      background: 'transparent',
+                      border: '1px solid transparent',
+                      color: 'var(--text-secondary)',
+                    }
+              }
             >
-              <Icon
-                size={18}
-                className={isActive ? 'text-blue-600' : 'text-gray-400'}
-              />
+              {/* Active left indicator */}
+              {isActive && (
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r"
+                  style={{ background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)' }}
+                />
+              )}
+
+              {/* Icon */}
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-200"
+                style={
+                  isActive
+                    ? {
+                        background: 'rgba(0,212,255,0.15)',
+                        color: 'var(--accent)',
+                      }
+                    : {
+                        background: 'rgba(255,255,255,0.04)',
+                        color: 'var(--text-muted)',
+                      }
+                }
+              >
+                <Icon size={16} />
+              </div>
+
               {name}
+
+              {/* Hover arrow */}
+              {!isActive && (
+                <span
+                  className="ml-auto opacity-0 group-hover:opacity-60 transition-opacity text-[10px]"
+                  style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  →
+                </span>
+              )}
             </Link>
           );
         })}
+
+        {/* ─── System Stats ─────────────────────────────────── */}
+        <div
+          className="mt-6 px-3"
+          style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '1.25rem' }}
+        >
+          <p
+            className="text-[9px] font-semibold px-3 mb-3"
+            style={{
+              color: 'var(--text-muted)',
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            Trạng thái hệ thống
+          </p>
+
+          <div className="space-y-2">
+            <StatusRow label="API Server" value="Active" color="var(--success)" />
+            <StatusRow label="WebSocket" value="Connected" color="var(--success)" />
+            <StatusRow label="Robot Link" value="Online" color="var(--accent)" />
+            <StatusRow label="LIDAR" value="Streaming" color="var(--accent)" />
+          </div>
+        </div>
       </nav>
 
-      {/* Footer */}
-      <div className="px-6 py-4 border-t border-gray-100">
-        <p className="text-xs text-gray-400">Capstone Project — TDTU</p>
+      {/* ─── Footer ────────────────────────────────────────────── */}
+      <div
+        className="px-5 py-4"
+        style={{
+          borderTop: '1px solid rgba(255,255,255,0.05)',
+          background: 'linear-gradient(0deg, rgba(0,212,255,0.02) 0%, transparent 100%)',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Activity size={12} style={{ color: 'var(--success)' }} />
+          <span
+            className="text-[10px]"
+            style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}
+          >
+            Tôn Đức Thắng University &mdash; Đồ án Tốt nghiệp
+          </span>
+        </div>
       </div>
     </aside>
+  );
+}
+
+function StatusRow({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <span className="text-[11px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
+        {label}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <span
+          className="w-1.5 h-1.5 rounded-full"
+          style={{ background: color, boxShadow: `0 0 6px ${color}` }}
+        />
+        <span className="text-[10px] font-semibold" style={{ color, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
+          {value}
+        </span>
+      </div>
+    </div>
   );
 }

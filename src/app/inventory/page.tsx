@@ -1,8 +1,29 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Modal, Button, notification, Tag, Badge, Input, Collapse, Spin, Tooltip, Empty } from 'antd';
-import { ArrowRight, PackageOpen, Send, Search, Package, Layers, Info, CheckCircle, ArrowLeftRight } from 'lucide-react';
+import {
+  Modal,
+  Button,
+  notification,
+  Tag,
+  Badge,
+  Input,
+  Collapse,
+  Spin,
+  Tooltip,
+  Empty,
+} from 'antd';
+import {
+  PackageOpen,
+  Send,
+  Search,
+  Package,
+  Info,
+  CheckCircle,
+  ArrowLeftRight,
+  Hexagon,
+  Wifi,
+} from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setSource, setDest, resetInventory, SelectedCell } from '@/store/inventorySlice';
 import { useGetAllSlotsQuery, useGetPackagesQuery, useMovePackageMutation } from '@/store/services/inventoryApi';
@@ -14,10 +35,10 @@ const COLS = ['1', '2', '3', '4'];
 type ShelfId = 1 | 2 | 3 | 4;
 
 const SHELF_POSITIONS = [
-  { id: 1 as ShelfId, label: 'Kệ số 1', corner: 'Khu vực Tây Bắc - A' },
-  { id: 2 as ShelfId, label: 'Kệ số 2', corner: 'Khu vực Đông Bắc - B' },
-  { id: 3 as ShelfId, label: 'Kệ số 3', corner: 'Khu vực Tây Nam - C' },
-  { id: 4 as ShelfId, label: 'Kệ số 4', corner: 'Khu vực Đông Nam - D' },
+  { id: 1 as ShelfId, label: 'Kệ 01', zone: 'Tây Bắc' },
+  { id: 2 as ShelfId, label: 'Kệ 02', zone: 'Đông Bắc' },
+  { id: 3 as ShelfId, label: 'Kệ 03', zone: 'Tây Nam' },
+  { id: 4 as ShelfId, label: 'Kệ 04', zone: 'Đông Nam' },
 ];
 
 export default function InventoryPage() {
@@ -25,12 +46,10 @@ export default function InventoryPage() {
   const source = useAppSelector((state) => state.inventory.source);
   const dest = useAppSelector((state) => state.inventory.dest);
 
-  // API hooks
   const { data: slots = [], isLoading: isSlotsLoading } = useGetAllSlotsQuery();
   const { data: packages = [], isLoading: isPackagesLoading } = useGetPackagesQuery();
   const [movePackage, { isLoading: isMoving }] = useMovePackageMutation();
 
-  // Local state
   const [activeShelf, setActiveShelf] = useState<ShelfId | null>(null);
   const [pendingCell, setPendingCell] = useState<SelectedCell | null>(null);
   const [isConfirmDestOpen, setIsConfirmDestOpen] = useState(false);
@@ -39,7 +58,6 @@ export default function InventoryPage() {
 
   const selectedCount = (source ? 1 : 0) + (dest ? 1 : 0);
 
-  // _id → PackageItem
   const packageMap = useMemo(() => {
     const map: Record<string, PackageItem> = {};
     packages.forEach((pkg) => {
@@ -52,7 +70,6 @@ export default function InventoryPage() {
     return map;
   }, [packages, slots]);
 
-  // `${shelfId}-${cell}` → ShelfSlot
   const positionSlotMap = useMemo(() => {
     const map: Record<string, ShelfSlot> = {};
     slots.forEach((slot) => {
@@ -62,7 +79,6 @@ export default function InventoryPage() {
     return map;
   }, [slots]);
 
-  // Nhóm kiện hàng theo kệ
   const packagesByShelf = useMemo(() => {
     const groups: Record<number, PackageItem[]> = { 1: [], 2: [], 3: [], 4: [] };
     packages.forEach((pkg) => {
@@ -71,11 +87,7 @@ export default function InventoryPage() {
       const { shelfId, cell } = parseSlotCode(slot.code);
       if (!groups[shelfId]) return;
       const item: PackageItem = { ...pkg, shelfId, cell, importedAt: pkg.createdAt ?? new Date().toISOString() };
-      if (
-        !searchTerm ||
-        item.packageName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item._id.toLowerCase().includes(searchTerm.toLowerCase())
-      ) {
+      if (!searchTerm || item.packageName.toLowerCase().includes(searchTerm.toLowerCase()) || item._id.toLowerCase().includes(searchTerm.toLowerCase())) {
         groups[shelfId].push(item);
       }
     });
@@ -90,38 +102,22 @@ export default function InventoryPage() {
 
   const handleCellClick = (shelfId: ShelfId, cell: string) => {
     const status = getCellStatus(shelfId, cell);
-
-    if (status === 'source') {
-      handleRemoveSource();
-      return;
-    }
-    if (status === 'dest') {
-      dispatch(setDest(null));
-      return;
-    }
+    if (status === 'source') { handleRemoveSource(); return; }
+    if (status === 'dest') { dispatch(setDest(null)); return; }
 
     if (!source) {
       dispatch(setSource({ shelfId, cell }));
     } else if (!dest) {
-      // Block occupied destination slot at selection time
       const slotKey = `${shelfId}-${cell}`;
       const slot = positionSlotMap[slotKey];
       if (slot?.packageId) {
-        notification.warning({
-          title: 'Ô đích đã có kiện hàng',
-          description: 'Vui lòng chọn một ô trống để di chuyển.',
-          placement: 'topRight',
-        });
+        notification.warning({ title: 'Ô đích đã có kiện hàng', description: 'Vui lòng chọn một ô trống để di chuyển.', placement: 'topRight' });
         return;
       }
       setPendingCell({ shelfId, cell });
       setIsConfirmDestOpen(true);
     } else {
-      notification.warning({
-        title: 'Chỉ được chọn tối đa 2 ô',
-        description: 'Hãy huỷ ô đã chọn để chọn lại.',
-        placement: 'topRight',
-      });
+      notification.warning({ title: 'Chỉ được chọn tối đa 2 ô', description: 'Hãy hủy ô đã chọn để chọn lại.', placement: 'topRight' });
     }
   };
 
@@ -136,13 +132,8 @@ export default function InventoryPage() {
     setPendingCell(null);
   };
 
-  const handleRemoveDest = () => {
-    dispatch(setDest(null));
-  };
-
-  const handleRemoveSource = () => {
-    setIsRemoveSourceConfirmOpen(true);
-  };
+  const handleRemoveDest = () => { dispatch(setDest(null)); };
+  const handleRemoveSource = () => { setIsRemoveSourceConfirmOpen(true); };
 
   const handlePromoteDestToSource = () => {
     dispatch(setSource(dest));
@@ -157,40 +148,22 @@ export default function InventoryPage() {
 
   const handleSubmit = async () => {
     if (!source || !dest) {
-      notification.warning({
-        title: 'Chưa chọn đủ vị trí',
-        description: 'Vui lòng chọn đủ ô nguồn và ô đích trước khi gửi lệnh.',
-        placement: 'topRight',
-      });
+      notification.warning({ title: 'Chưa chọn đủ vị trí', description: 'Vui lòng chọn đủ ô nguồn và ô đích trước khi gửi lệnh.', placement: 'topRight' });
       return;
     }
-
     try {
       const sourceSlotCode = toSlotCode(source.shelfId, source.cell);
       const targetSlotCode = toSlotCode(dest.shelfId, dest.cell);
       await movePackage({ sourceSlotCode, targetSlotCode }).unwrap();
-      notification.success({
-        title: 'Thành công',
-        description: 'Gửi lệnh di chuyển thành công!',
-        placement: 'topRight',
-      });
+      notification.success({ title: 'Thành công', description: 'Gửi lệnh di chuyển thành công!', placement: 'topRight' });
       dispatch(resetInventory());
     } catch (err: unknown) {
-      const errMsg =
-        (err as { data?: { message?: string } })?.data?.message ||
-        (err as { error?: string })?.error ||
-        'Gửi lệnh thất bại!';
-      notification.error({
-        title: 'Thất bại',
-        description: errMsg,
-        placement: 'topRight',
-      });
+      const errMsg = (err as { data?: { message?: string } })?.data?.message || (err as { error?: string })?.error || 'Gửi lệnh thất bại!';
+      notification.error({ title: 'Thất bại', description: errMsg, placement: 'topRight' });
     }
   };
 
-  const selectFromList = (shelfId: number, cell: string) => {
-    handleCellClick(shelfId as ShelfId, cell);
-  };
+  const selectFromList = (shelfId: number, cell: string) => handleCellClick(shelfId as ShelfId, cell);
 
   const totalPackages = packages.length;
   const isLoading = isSlotsLoading || isPackagesLoading;
@@ -202,148 +175,283 @@ export default function InventoryPage() {
   };
 
   return (
-    <div className="flex h-screen bg-slate-100 overflow-hidden font-sans">
-      {/* Main Area: Sơ đồ kho hàng */}
+    <div className="flex flex-1 min-h-0 overflow-hidden" style={{ background: 'var(--bg-void)' }}>
+
+      {/* ─── Main Area ─────────────────────────────────────── */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+
         {/* Header */}
-        <div className="px-8 py-5 bg-white border-b border-slate-200 shadow-sm flex justify-between items-center z-10">
-          <div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
-              <Layers className="text-blue-600" size={28} /> Robot Warehouse Control
-            </h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Đồ án tốt nghiệp — Tôn Đức Thắng University &nbsp;|&nbsp; Giám sát kho hàng tự động
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Hệ thống Online
-            </span>
+        <div
+          className="px-8 py-5 relative overflow-hidden"
+          style={{
+            background: 'linear-gradient(180deg, rgba(0,212,255,0.03) 0%, transparent 100%)',
+            borderBottom: '1px solid var(--border-dim)',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+          }}
+        >
+          <div className="flex justify-between items-start relative z-10">
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <Hexagon size={22} style={{ color: 'var(--accent)' }} />
+                <h1
+                  className="text-display text-2xl"
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    color: 'var(--text-primary)',
+                    letterSpacing: '-0.02em',
+                  }}
+                >
+                  KHO HÀNG
+                </h1>
+                <span className="badge badge-cyan" style={{ fontSize: '9px', letterSpacing: '0.12em' }}>
+                  LIVE
+                </span>
+              </div>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
+                Đồ án Tốt nghiệp — Tôn Đức Thắng University &nbsp;|&nbsp; NEXUS Control System
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <span
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold"
+                style={{
+                  background: 'rgba(0,255,136,0.08)',
+                  border: '1px solid rgba(0,255,136,0.2)',
+                  color: 'var(--success)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: '0.06em',
+                }}
+              >
+                <span
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: 'var(--success)', boxShadow: '0 0 8px var(--success-glow)' }}
+                />
+                HỆ THỐNG ONLINE
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Status bar */}
-        <div className="px-8 py-3.5 bg-gradient-to-r from-blue-900 to-indigo-900 text-white shadow-md flex items-center gap-6 z-10">
-          <div className="flex items-center gap-3 text-sm font-medium">
-            <span className="text-blue-200 uppercase text-xs tracking-wider font-semibold">Điểm đi (Nguồn):</span>
+        {/* Status command bar */}
+        <div
+          className="px-8 py-3.5 flex items-center gap-4 relative z-10"
+          style={{
+            background: 'linear-gradient(90deg, #0c0f14, #111827)',
+            borderBottom: '1px solid var(--border-dim)',
+            boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
+          }}
+        >
+          {/* Source */}
+          <div className="flex items-center gap-2.5">
+            <span
+              className="text-[9px] font-bold px-2 py-1 rounded-md"
+              style={{
+                background: 'rgba(0,212,255,0.1)',
+                border: '1px solid rgba(0,212,255,0.2)',
+                color: 'var(--accent)',
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.1em',
+              }}
+            >
+              SRC
+            </span>
             {source ? (
               <Tag
-                color="#2563eb"
-                className="m-0 px-3 py-1 text-sm font-bold rounded-lg shadow-sm flex items-center gap-1 border-0"
                 closable
                 onClose={(e) => { e.preventDefault(); handleRemoveSource(); }}
+                style={{
+                  background: 'rgba(0,212,255,0.1)',
+                  border: '1px solid rgba(0,212,255,0.3)',
+                  color: 'var(--accent)',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '12px',
+                  boxShadow: '0 0 12px rgba(0,212,255,0.1)',
+                }}
               >
-                Kệ {source.shelfId} – Ô {source.cell}
+                Kệ {source.shelfId} · Ô {source.cell}
                 {getPackageForCell(source.shelfId, source.cell) && (
-                  <span className="font-normal opacity-90 ml-1">
-                    ({getPackageForCell(source.shelfId, source.cell)?.packageName})
-                  </span>
+                  <span className="opacity-70 ml-1">({getPackageForCell(source.shelfId, source.cell)?.packageName})</span>
                 )}
               </Tag>
             ) : (
-              <span className="text-slate-400 italic font-light">Chưa chọn (Bấm vào kệ để chọn)</span>
+              <span className="text-xs italic" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                — Chọn ô nguồn
+              </span>
             )}
           </div>
-          <ArrowRight size={18} className="text-blue-400 animate-pulse" />
-          <div className="flex items-center gap-3 text-sm font-medium">
-            <span className="text-blue-200 uppercase text-xs tracking-wider font-semibold">Điểm đến (Đích):</span>
+
+          <ArrowLeftRight size={16} style={{ color: 'var(--text-muted)' }} />
+
+          {/* Dest */}
+          <div className="flex items-center gap-2.5">
+            <span
+              className="text-[9px] font-bold px-2 py-1 rounded-md"
+              style={{
+                background: 'rgba(0,255,136,0.1)',
+                border: '1px solid rgba(0,255,136,0.2)',
+                color: 'var(--success)',
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.1em',
+              }}
+            >
+              DST
+            </span>
             {dest ? (
               <Tag
-                color="#10b981"
-                className="m-0 px-3 py-1 text-sm font-bold rounded-lg shadow-sm flex items-center gap-1 border-0"
                 closable
                 onClose={(e) => { e.preventDefault(); handleRemoveDest(); }}
+                style={{
+                  background: 'rgba(0,255,136,0.1)',
+                  border: '1px solid rgba(0,255,136,0.3)',
+                  color: 'var(--success)',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '12px',
+                  boxShadow: '0 0 12px rgba(0,255,136,0.1)',
+                }}
               >
-                Kệ {dest.shelfId} – Ô {dest.cell}
+                Kệ {dest.shelfId} · Ô {dest.cell}
                 {getPackageForCell(dest.shelfId, dest.cell) && (
-                  <span className="font-normal opacity-90 ml-1">
-                    ({getPackageForCell(dest.shelfId, dest.cell)?.packageName})
-                  </span>
+                  <span className="opacity-70 ml-1">({getPackageForCell(dest.shelfId, dest.cell)?.packageName})</span>
                 )}
               </Tag>
             ) : (
-              <span className="text-slate-400 italic font-light">Chưa chọn vị trí đích</span>
+              <span className="text-xs italic" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                — Chọn ô đích
+              </span>
             )}
+          </div>
+
+          <div className="ml-auto flex items-center gap-3">
+            <div
+              className="flex items-center gap-2 text-xs"
+              style={{
+                color: selectedCount === 2 ? 'var(--success)' : 'var(--text-muted)',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {selectedCount === 2 ? (
+                <><CheckCircle size={14} style={{ color: 'var(--success)' }} /> Sẵn sàng phát lệnh</>
+              ) : (
+                <><Info size={14} /> {selectedCount}/2 vị trí đã chọn</>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Shelf Grid 3D-like Area */}
-        <div className="flex-1 relative p-10 bg-slate-900 overflow-hidden flex items-center justify-center shadow-inner">
-          {/* Background grid pattern */}
-          <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-40" />
+        {/* Warehouse Grid Area */}
+        <div
+          className="flex-1 relative overflow-hidden flex items-center justify-center"
+          style={{
+            background: 'var(--bg-base)',
+            backgroundImage: `
+              radial-gradient(ellipse 80% 60% at 50% 50%, rgba(0,212,255,0.03) 0%, transparent 70%),
+              linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)
+            `,
+            backgroundSize: '100% 100%, 40px 40px, 40px 40px',
+          }}
+        >
+          {/* Shelf grid */}
+          <div className="absolute inset-12 flex flex-col justify-between max-w-5xl mx-auto h-[calc(100%-6rem)]">
 
-          {/* Sơ đồ 4 kệ */}
-          <div className="absolute inset-12 flex flex-col justify-between max-w-5xl mx-auto my-auto h-[calc(100%-6rem)]">
-            {/* Hàng kệ trên (1 & 2) */}
+            {/* Top row */}
             <div className="flex justify-between w-full z-10">
-              <ShelfCard
-                shelf={SHELF_POSITIONS[0]}
-                source={source}
-                dest={dest}
-                packageCount={packagesByShelf[1]?.length || 0}
-                onClick={() => setActiveShelf(1)}
-              />
-              <ShelfCard
-                shelf={SHELF_POSITIONS[1]}
-                source={source}
-                dest={dest}
-                packageCount={packagesByShelf[2]?.length || 0}
-                onClick={() => setActiveShelf(2)}
-              />
+              <ShelfCard shelf={SHELF_POSITIONS[0]} source={source} dest={dest} packageCount={packagesByShelf[1]?.length || 0} onClick={() => setActiveShelf(1)} />
+              <ShelfCard shelf={SHELF_POSITIONS[1]} source={source} dest={dest} packageCount={packagesByShelf[2]?.length || 0} onClick={() => setActiveShelf(2)} />
             </div>
 
-            {/* Center Robot / AGV Path graphic */}
+            {/* Center hub */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center p-8 rounded-3xl bg-slate-800/60 backdrop-blur-md border border-slate-700/50 shadow-2xl">
-                <div className="w-20 h-20 rounded-2xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-3 shadow-[0_0_30px_rgba(59,130,246,0.3)] animate-bounce">
-                  <PackageOpen size={44} className="text-blue-400" />
+              <div
+                className="text-center px-10 py-8 relative"
+                style={{
+                  background: 'rgba(17,24,39,0.7)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid var(--border-mid)',
+                  borderRadius: '24px',
+                  boxShadow: '0 0 60px rgba(0,0,0,0.5), 0 0 30px rgba(0,212,255,0.05), inset 0 1px 0 rgba(255,255,255,0.06)',
+                }}
+              >
+                {/* Corner accents */}
+                <span className="absolute top-3 left-3 w-5 h-5 border-l-2 border-t-2 rounded-tl" style={{ borderColor: 'rgba(0,212,255,0.3)' }} />
+                <span className="absolute top-3 right-3 w-5 h-5 border-r-2 border-t-2 rounded-tr" style={{ borderColor: 'rgba(0,212,255,0.3)' }} />
+                <span className="absolute bottom-3 left-3 w-5 h-5 border-l-2 border-b-2 rounded-bl" style={{ borderColor: 'rgba(0,212,255,0.3)' }} />
+                <span className="absolute bottom-3 right-3 w-5 h-5 border-r-2 border-b-2 rounded-br" style={{ borderColor: 'rgba(0,212,255,0.3)' }} />
+
+                <div
+                  className="w-20 h-20 rounded-2xl mx-auto mb-4 flex items-center justify-center"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(0,212,255,0.1), rgba(0,255,136,0.05))',
+                    border: '1px solid rgba(0,212,255,0.2)',
+                    boxShadow: '0 0 30px rgba(0,212,255,0.15), inset 0 1px 0 rgba(255,255,255,0.05)',
+                    animation: 'pulse-subtle 4s ease-in-out infinite',
+                  }}
+                >
+                  <PackageOpen size={40} style={{ color: 'var(--accent)' }} />
                 </div>
-                <p className="text-xs font-bold uppercase tracking-widest text-blue-300">Khu Vực Trung Chuyển AGV</p>
-                <p className="text-xs text-slate-400 mt-1 max-w-xs">Robot tự động tiếp cận kệ và di chuyển hàng hóa theo lệnh điều phối</p>
+                <p
+                  className="text-sm font-bold tracking-widest uppercase"
+                  style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.12em', fontSize: '11px' }}
+                >
+                  AGV Transfer Zone
+                </p>
+                <p className="text-xs mt-2" style={{ color: 'var(--text-muted)', maxWidth: '240px', lineHeight: 1.5 }}>
+                  Robot tự động tiếp cận kệ và di chuyển hàng hóa
+                </p>
+                {/* Pulse ring around hub */}
+                <span
+                  className="absolute inset-0 rounded-3xl pointer-events-none"
+                  style={{
+                    boxShadow: '0 0 0 0 rgba(0,212,255,0.2)',
+                    animation: 'pulse-ring-cyan 3s ease-out infinite',
+                  }}
+                />
               </div>
             </div>
 
-            {/* Hàng kệ dưới (3 & 4) */}
+            {/* Bottom row */}
             <div className="flex justify-between w-full z-10">
-              <ShelfCard
-                shelf={SHELF_POSITIONS[2]}
-                source={source}
-                dest={dest}
-                packageCount={packagesByShelf[3]?.length || 0}
-                onClick={() => setActiveShelf(3)}
-              />
-              <ShelfCard
-                shelf={SHELF_POSITIONS[3]}
-                source={source}
-                dest={dest}
-                packageCount={packagesByShelf[4]?.length || 0}
-                onClick={() => setActiveShelf(4)}
-              />
+              <ShelfCard shelf={SHELF_POSITIONS[2]} source={source} dest={dest} packageCount={packagesByShelf[3]?.length || 0} onClick={() => setActiveShelf(3)} />
+              <ShelfCard shelf={SHELF_POSITIONS[3]} source={source} dest={dest} packageCount={packagesByShelf[4]?.length || 0} onClick={() => setActiveShelf(4)} />
             </div>
           </div>
         </div>
 
-        {/* Footer action */}
-        <div className="px-8 py-4 bg-white border-t border-slate-200 flex items-center justify-between shadow-lg z-10">
-          <div className="flex items-center gap-2">
-            <Info size={18} className="text-blue-500" />
-            <span className="text-sm font-medium text-slate-600">
-              {selectedCount === 2 ? (
-                <span className="text-emerald-600 font-bold flex items-center gap-1.5">
-                  <CheckCircle size={16} /> Đã chọn đủ 2 vị trí. Hệ thống AGV sẵn sàng nhận lệnh.
-                </span>
-              ) : (
-                `Vui lòng chọn đủ 2 vị trí (Nguồn và Đích). Đã chọn: ${selectedCount}/2`
-              )}
-            </span>
+        {/* Footer action bar */}
+        <div
+          className="px-8 py-4 flex items-center justify-between"
+          style={{
+            background: 'var(--bg-surface)',
+            borderTop: '1px solid var(--border-dim)',
+            boxShadow: '0 -4px 24px rgba(0,0,0,0.3)',
+          }}
+        >
+          <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace", fontSize: '11px' }}>
+            <Wifi size={14} style={{ color: 'var(--accent)' }} />
+            <span style={{ color: 'var(--text-muted)' }}>Robot endpoint:</span>
+            <span>192.168.1.100</span>
+            <span style={{ color: 'var(--border-mid)' }}>|</span>
+            <span style={{ color: 'var(--text-muted)' }}>Mode:</span>
+            <span style={{ color: 'var(--accent)' }}>STANDBY</span>
           </div>
+
           <div className="flex gap-3">
             <Button
               size="large"
               onClick={() => dispatch(resetInventory())}
               disabled={selectedCount === 0 || isMoving}
-              className="rounded-xl font-medium"
+              style={{
+                borderRadius: '10px',
+                fontFamily: "'JetBrains Mono', monospace",
+                fontWeight: 600,
+                background: 'var(--bg-raised)',
+                border: '1px solid var(--border-mid)',
+                color: 'var(--text-secondary)',
+              }}
             >
               Huỷ chọn
             </Button>
@@ -354,43 +462,103 @@ export default function InventoryPage() {
               loading={isMoving}
               disabled={selectedCount < 2}
               onClick={handleSubmit}
-              className="bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 rounded-xl font-semibold px-6 flex items-center gap-2"
+              style={{
+                borderRadius: '10px',
+                fontFamily: "'JetBrains Mono', monospace",
+                fontWeight: 700,
+                fontSize: '14px',
+                background: selectedCount < 2
+                  ? 'rgba(0,212,255,0.2)'
+                  : 'linear-gradient(135deg, #00d4ff, #00b8e6)',
+                border: 'none',
+                color: selectedCount < 2 ? 'rgba(0,212,255,0.5)' : '#080b10',
+                boxShadow: selectedCount < 2
+                  ? 'none'
+                  : '0 4px 20px rgba(0,212,255,0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                paddingInline: '24px',
+                transition: 'all 0.2s ease',
+              }}
             >
-              Phát lệnh di chuyển AGV
+              PHÁT LỆNH AGV
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Panel bên phải: Danh sách kiện hàng trong kho */}
-      <div className="w-[420px] bg-white border-l border-slate-200 flex flex-col h-full shadow-xl z-20">
-        <div className="p-5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <Package className="text-blue-600" size={22} /> Danh Sách Kiện Hàng
-          </h2>
-          <Badge count={totalPackages} style={{ backgroundColor: '#2563eb', fontWeight: 'bold' }} />
-        </div>
+      {/* ─── Right panel: Package list ────────────────────── */}
+      <div
+        className="w-[400px] flex flex-col h-full"
+        style={{
+          background: 'var(--bg-surface)',
+          borderLeft: '1px solid var(--border-dim)',
+          boxShadow: '-8px 0 32px rgba(0,0,0,0.3)',
+        }}
+      >
+        {/* Panel header */}
+        <div
+          className="p-5"
+          style={{
+            borderBottom: '1px solid var(--border-dim)',
+            background: 'linear-gradient(180deg, rgba(0,212,255,0.03) 0%, transparent 100%)',
+          }}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Package size={18} style={{ color: 'var(--accent)' }} />
+              <h2
+                className="text-base font-bold"
+                style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.01em' }}
+              >
+                Danh Sách Kiện Hàng
+              </h2>
+            </div>
+            <Badge
+              count={totalPackages}
+              style={{
+                backgroundColor: totalPackages > 0 ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.05)',
+                color: totalPackages > 0 ? 'var(--accent)' : 'var(--text-muted)',
+                border: `1px solid ${totalPackages > 0 ? 'rgba(0,212,255,0.3)' : 'var(--border-dim)'}`,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontWeight: 700,
+                fontSize: '11px',
+              }}
+            />
+          </div>
 
-        <div className="p-4 border-b border-slate-100 bg-white">
           <Input
             size="large"
-            placeholder="Tìm theo tên hoặc mã đơn..."
-            prefix={<Search size={18} className="text-slate-400 mr-2" />}
+            placeholder="Tìm theo tên hoặc mã..."
+            prefix={<Search size={16} style={{ color: 'var(--text-muted)' }} />}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             allowClear
-            className="rounded-xl border-slate-300 hover:border-blue-500 focus:border-blue-500"
+            style={{
+              background: 'var(--bg-raised)',
+              border: '1px solid var(--border-mid)',
+              borderRadius: '10px',
+              fontSize: '13px',
+            }}
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
+        {/* Package list */}
+        <div className="flex-1 overflow-y-auto p-4" style={{ background: 'var(--bg-base)' }}>
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center h-64 gap-3">
+            <div className="flex flex-col items-center justify-center h-48 gap-3">
               <Spin size="large" />
-              <p className="text-sm text-slate-500 font-medium">Đang tải danh sách hàng hóa...</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                Đang tải dữ liệu...
+              </p>
             </div>
           ) : totalPackages === 0 ? (
-            <Empty description="Kho hàng đang trống" className="mt-12" />
+            <Empty description={
+              <span style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
+                Kho hàng đang trống
+              </span>
+            } className="mt-12" />
           ) : (
             <Collapse
               defaultActiveKey={['1', '2', '3', '4']}
@@ -400,66 +568,145 @@ export default function InventoryPage() {
                 return {
                   key: String(shelf.id),
                   label: (
-                    <div className="flex items-center justify-between py-1 font-bold text-slate-800 text-base">
-                      <span>{shelf.label}</span>
-                      <Tag color={shelfPackages.length > 0 ? "blue" : "default"} className="rounded-full px-2.5 py-0.5 m-0 font-bold">
-                        {shelfPackages.length} đơn
+                    <div className="flex items-center justify-between py-1 font-bold text-sm" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="text-[9px] px-2 py-0.5 rounded-md font-bold"
+                          style={{
+                            background: 'rgba(0,212,255,0.1)',
+                            border: '1px solid rgba(0,212,255,0.2)',
+                            color: 'var(--accent)',
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}
+                        >
+                          {shelf.id}
+                        </span>
+                        {shelf.label}
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>({shelf.zone})</span>
+                      </span>
+                      <Tag
+                        style={{
+                          background: shelfPackages.length > 0 ? 'rgba(0,212,255,0.1)' : 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${shelfPackages.length > 0 ? 'rgba(0,212,255,0.2)' : 'var(--border-dim)'}`,
+                          color: shelfPackages.length > 0 ? 'var(--accent)' : 'var(--text-muted)',
+                          borderRadius: '999px',
+                          fontWeight: 700,
+                          fontSize: '11px',
+                          fontFamily: "'JetBrains Mono', monospace",
+                        }}
+                      >
+                        {shelfPackages.length} kiện
                       </Tag>
                     </div>
                   ),
                   children: shelfPackages.length === 0 ? (
-                    <p className="text-sm text-slate-400 italic py-2 px-3 bg-white/60 rounded-lg">Không có đơn hàng nào trên kệ này.</p>
+                    <p
+                      className="text-xs italic text-center py-4"
+                      style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+                    >
+                      Không có kiện hàng nào
+                    </p>
                   ) : (
-                    <div className="flex flex-col gap-2.5">
+                    <div className="flex flex-col gap-2">
                       {shelfPackages.map((pkg) => {
                         const cellStatus = getCellStatus(pkg.shelfId, pkg.cell);
                         return (
                           <div
                             key={pkg._id}
-                            className={`p-3.5 rounded-xl border bg-white shadow-xs transition-all hover:shadow-md ${
+                            className="p-3.5 rounded-xl transition-all"
+                            style={
                               cellStatus === 'source'
-                                ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/50'
+                                ? {
+                                    background: 'rgba(0,212,255,0.08)',
+                                    border: '1px solid rgba(0,212,255,0.3)',
+                                    boxShadow: '0 0 16px rgba(0,212,255,0.1)',
+                                  }
                                 : cellStatus === 'dest'
-                                ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/50'
-                                : 'border-slate-200 hover:border-blue-300'
-                            }`}
+                                ? {
+                                    background: 'rgba(0,255,136,0.08)',
+                                    border: '1px solid rgba(0,255,136,0.3)',
+                                    boxShadow: '0 0 16px rgba(0,255,136,0.1)',
+                                  }
+                                : {
+                                    background: 'var(--bg-raised)',
+                                    border: '1px solid var(--border-dim)',
+                                  }
+                            }
                           >
                             <div className="flex items-start justify-between gap-2 mb-2">
-                              <div>
-                                <h4 className="font-bold text-slate-800 text-sm leading-snug">{pkg.packageName}</h4>
-                                <span className="text-xs font-mono text-slate-400 font-medium">{pkg._id.slice(-8).toUpperCase()}</span>
+                              <div className="min-w-0">
+                                <h4 className="font-bold text-sm leading-snug truncate" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                                  {pkg.packageName}
+                                </h4>
+                                <span
+                                  className="text-[10px] font-mono mt-0.5 inline-block"
+                                  style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+                                >
+                                  #{pkg._id.slice(-8).toUpperCase()}
+                                </span>
                               </div>
-                              <span className="inline-flex items-center justify-center px-2 py-1 bg-slate-100 text-slate-700 font-bold text-xs rounded-lg border border-slate-200">
+                              <span
+                                className="px-2 py-1 rounded-lg text-xs font-bold flex-shrink-0"
+                                style={{
+                                  background: 'rgba(0,212,255,0.08)',
+                                  border: '1px solid rgba(0,212,255,0.15)',
+                                  color: 'var(--accent)',
+                                  fontFamily: "'JetBrains Mono', monospace",
+                                }}
+                              >
                                 Ô {pkg.cell}
                               </span>
                             </div>
 
-                            <div className="text-xs text-slate-500 flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
-                              <span>Ngày nhập: <strong className="text-slate-700">{new Date(pkg.importedAt).toLocaleDateString('vi-VN')}</strong></span>
+                            <div
+                              className="text-[11px] flex items-center justify-between pt-2"
+                              style={{
+                                borderTop: '1px solid var(--border-dim)',
+                                color: 'var(--text-muted)',
+                                fontFamily: "'JetBrains Mono', monospace",
+                              }}
+                            >
+                              <span>Nhập: <strong style={{ color: 'var(--text-secondary)' }}>{new Date(pkg.importedAt).toLocaleDateString('vi-VN')}</strong></span>
                             </div>
 
-                            <div className="mt-3 flex gap-2">
+                            <div className="mt-2.5">
                               {cellStatus === 'none' ? (
                                 <Button
                                   size="small"
-                                  type="primary"
-                                  ghost
                                   onClick={() => selectFromList(pkg.shelfId, pkg.cell)}
-                                  className="w-full text-xs font-semibold rounded-lg hover:bg-blue-50"
+                                  style={{
+                                    width: '100%',
+                                    borderRadius: '8px',
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 600,
+                                    fontSize: '12px',
+                                    background: source ? 'rgba(0,255,136,0.08)' : 'rgba(0,212,255,0.08)',
+                                    border: source ? '1px solid rgba(0,255,136,0.2)' : '1px solid rgba(0,212,255,0.2)',
+                                    color: source ? 'var(--success)' : 'var(--accent)',
+                                  }}
                                 >
-                                  {source ? "Chọn làm ô Đích" : "Chọn làm ô Nguồn"}
+                                  {source ? '→ Chọn làm Đích' : '→ Chọn làm Nguồn'}
                                 </Button>
                               ) : (
-                                <Tag color={cellStatus === 'source' ? 'blue' : 'green'} className="w-full text-center m-0 py-1 rounded-lg font-bold">
-                                  {cellStatus === 'source' ? 'Đang chọn làm Nguồn' : 'Đang chọn làm Đích'}
-                                </Tag>
+                                <div
+                                  className="w-full text-center py-1.5 rounded-lg text-xs font-bold"
+                                  style={{
+                                    background: cellStatus === 'source' ? 'rgba(0,212,255,0.15)' : 'rgba(0,255,136,0.15)',
+                                    border: `1px solid ${cellStatus === 'source' ? 'rgba(0,212,255,0.3)' : 'rgba(0,255,136,0.3)'}`,
+                                    color: cellStatus === 'source' ? 'var(--accent)' : 'var(--success)',
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    letterSpacing: '0.06em',
+                                  }}
+                                >
+                                  {cellStatus === 'source' ? '◉ NGUỒN' : '◉ ĐÍCH'}
+                                </div>
                               )}
                             </div>
                           </div>
                         );
                       })}
                     </div>
-                  )
+                  ),
                 };
               })}
             />
@@ -467,28 +714,64 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Modal chọn ô trong kệ */}
+      {/* ─── Shelf detail modal ───────────────────────────── */}
       {activeShelf && (
         <Modal
           open={activeShelf !== null}
           onCancel={() => setActiveShelf(null)}
           footer={null}
-          title={
-            <div className="flex items-center gap-3 pb-2 border-b border-slate-100">
-              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-black text-lg">
+          title={null}
+          width={640}
+          centered
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px', padding: 0 }}
+          styles={{ body: { padding: '24px' } }}
+        >
+          {/* Modal header */}
+          <div
+            className="px-6 py-5 mb-5 relative overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, rgba(0,212,255,0.06) 0%, transparent 60%)',
+              borderBottom: '1px solid var(--border-dim)',
+              marginTop: -24,
+              marginLeft: -24,
+              marginRight: -24,
+              marginBottom: 20,
+            }}
+          >
+            <div className="flex items-center gap-4 relative z-10">
+              <div
+                className="w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(0,212,255,0.15), rgba(0,212,255,0.05))',
+                  border: '1px solid rgba(0,212,255,0.25)',
+                  color: 'var(--accent)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  boxShadow: '0 0 20px rgba(0,212,255,0.15)',
+                }}
+              >
                 {activeShelf}
               </div>
               <div>
-                <h3 className="font-black text-slate-800 text-lg">Kệ số {activeShelf}</h3>
-                <p className="text-xs font-normal text-slate-500">Bấm vào từng ô để chọn vị trí nguồn hoặc đích cho robot</p>
+                <h3
+                  className="text-xl font-black"
+                  style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
+                >
+                  {SHELF_POSITIONS.find(s => s.id === activeShelf)?.label}
+                </h3>
+                <p
+                  className="text-xs mt-0.5"
+                  style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}
+                >
+                  {SHELF_POSITIONS.find(s => s.id === activeShelf)?.zone} &mdash; 16 ô chứa (4×4)
+                </p>
               </div>
             </div>
-          }
-          width={640}
-          centered
-          className="custom-inventory-modal"
-        >
-          <div className="grid grid-cols-4 gap-3 py-4">
+            {/* Corner decoration */}
+            <span className="absolute top-0 right-0 w-20 h-20 opacity-20 pointer-events-none" style={{ background: 'radial-gradient(circle at 100% 0%, rgba(0,212,255,0.3), transparent 70%)' }} />
+          </div>
+
+          {/* Cell grid */}
+          <div className="grid grid-cols-4 gap-3">
             {ROWS.map((row) =>
               COLS.map((col) => {
                 const cell = `${row}${col}`;
@@ -496,116 +779,183 @@ export default function InventoryPage() {
                 const item = getPackageForCell(activeShelf, cell);
 
                 return (
-                  <Tooltip
-                    key={cell}
-                    title={item ? `${item.packageName} - ${item._id.slice(-8).toUpperCase()}` : `Ô ${cell} (Trống)`}
-                    placement="top"
-                  >
+                  <Tooltip key={cell} title={item ? `${item.packageName} — #${item._id.slice(-8).toUpperCase()}` : `Ô ${cell} (Trống)`} placement="top">
                     <button
                       onClick={() => handleCellClick(activeShelf, cell)}
-                      className={`h-28 rounded-2xl border-2 p-3 text-left transition-all relative flex flex-col justify-between overflow-hidden group ${
+                      className="h-28 rounded-2xl p-3 text-left transition-all relative flex flex-col justify-between overflow-hidden group"
+                      style={
                         status === 'source'
-                          ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-500/30 ring-4 ring-blue-500/20 scale-[1.02]'
+                          ? {
+                              background: 'linear-gradient(135deg, rgba(0,212,255,0.2), rgba(0,212,255,0.08))',
+                              border: '2px solid rgba(0,212,255,0.5)',
+                              boxShadow: '0 0 20px rgba(0,212,255,0.2)',
+                              color: 'var(--accent)',
+                            }
                           : status === 'dest'
-                          ? 'bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-500/30 ring-4 ring-emerald-500/20 scale-[1.02]'
+                          ? {
+                              background: 'linear-gradient(135deg, rgba(0,255,136,0.2), rgba(0,255,136,0.08))',
+                              border: '2px solid rgba(0,255,136,0.5)',
+                              boxShadow: '0 0 20px rgba(0,255,136,0.2)',
+                              color: 'var(--success)',
+                            }
                           : item
-                          ? 'bg-white border-blue-200 hover:border-blue-400 hover:shadow-md hover:bg-blue-50/40 text-slate-800'
-                          : 'bg-slate-50/80 border-slate-200 text-slate-400 hover:bg-white hover:border-slate-300 hover:text-slate-600'
-                      }`}
+                          ? {
+                              background: 'var(--bg-raised)',
+                              border: '1px solid var(--border-mid)',
+                              color: 'var(--text-primary)',
+                            }
+                          : {
+                              background: 'var(--bg-base)',
+                              border: '1px solid var(--border-dim)',
+                              color: 'var(--text-muted)',
+                            }
+                      }
                     >
-                      {/* Cell ID & Status Badge */}
-                      <div className="flex items-center justify-between w-full">
-                        <span className={`text-xs font-black px-2 py-0.5 rounded-md ${
-                          status === 'source' || status === 'dest'
-                            ? 'bg-white/20 text-white'
+                      {/* Cell badge */}
+                      <span
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-md self-start"
+                        style={{
+                          background: status !== 'none'
+                            ? 'rgba(255,255,255,0.15)'
                             : item
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}>
-                          {cell}
-                        </span>
-                        {item && (
-                          <Package size={16} className={status !== 'none' ? 'text-white' : 'text-blue-500'} />
-                        )}
-                      </div>
+                            ? 'rgba(0,212,255,0.1)'
+                            : 'rgba(255,255,255,0.04)',
+                          color: status === 'source' ? 'var(--accent)' : status === 'dest' ? 'var(--success)' : 'inherit',
+                          fontFamily: "'JetBrains Mono', monospace",
+                          letterSpacing: '0.06em',
+                        }}
+                      >
+                        {cell}
+                      </span>
 
-                      {/* Package Name or Empty state */}
-                      <div className="mt-2 w-full">
+                      {/* Content */}
+                      <div className="mt-1 w-full">
                         {item ? (
                           <div>
-                            <p className={`text-xs font-bold leading-tight line-clamp-2 ${
-                              status !== 'none' ? 'text-white' : 'text-slate-800 group-hover:text-blue-600'
-                            }`}>
+                            <p
+                              className="text-[11px] font-bold leading-tight line-clamp-2"
+                              style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                            >
                               {item.packageName}
                             </p>
-                            <p className={`text-[10px] mt-1 font-mono opacity-80 line-clamp-1 ${
-                              status !== 'none' ? 'text-white/80' : 'text-slate-400'
-                            }`}>
-                              {item._id.slice(-8).toUpperCase()}
+                            <p
+                              className="text-[9px] mt-1 opacity-60 font-mono"
+                              style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                            >
+                              #{item._id.slice(-6).toUpperCase()}
                             </p>
                           </div>
                         ) : (
-                          <p className={`text-xs font-medium italic ${status !== 'none' ? 'text-white/80' : 'text-slate-400'}`}>
-                            [Trống]
+                          <p
+                            className="text-[10px] italic opacity-50"
+                            style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                          >
+                            Trống
                           </p>
                         )}
                       </div>
+
+                      {/* Active status overlay */}
+                      {status !== 'none' && (
+                        <span
+                          className="absolute bottom-2 right-2 text-[8px] font-bold"
+                          style={{ fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em', opacity: 0.7 }}
+                        >
+                          {status === 'source' ? 'SRC' : 'DST'}
+                        </span>
+                      )}
                     </button>
                   </Tooltip>
                 );
               })
             )}
           </div>
-          <div className="mt-2 pt-4 border-t border-slate-100 flex gap-6 text-xs text-slate-600 font-semibold justify-center">
-            <span className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-md bg-blue-600 inline-block shadow-sm" /> Vị trí Nguồn
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-md bg-emerald-500 inline-block shadow-sm" /> Vị trí Đích
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-md bg-white border-2 border-blue-200 inline-block" /> Ô có hàng hóa
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-md bg-slate-100 border border-slate-200 inline-block" /> Ô trống
-            </span>
+
+          {/* Legend */}
+          <div
+            className="mt-4 pt-4 flex items-center justify-center gap-6"
+            style={{ borderTop: '1px solid var(--border-dim)' }}
+          >
+            {[
+              { color: 'var(--accent)', label: 'Nguồn', bg: 'rgba(0,212,255,0.1)', border: 'rgba(0,212,255,0.2)' },
+              { color: 'var(--success)', label: 'Đích', bg: 'rgba(0,255,136,0.1)', border: 'rgba(0,255,136,0.2)' },
+              { color: 'var(--text-secondary)', label: 'Có hàng', bg: 'var(--bg-raised)', border: 'var(--border-mid)' },
+              { color: 'var(--text-muted)', label: 'Trống', bg: 'var(--bg-base)', border: 'var(--border-dim)' },
+            ].map(({ label, color, bg, border }) => (
+              <div key={label} className="flex items-center gap-2 text-[11px]" style={{ color, fontFamily: "'JetBrains Mono', monospace" }}>
+                <span className="w-4 h-4 rounded-md" style={{ background: bg, border: `1px solid ${border}` }} />
+                {label}
+              </div>
+            ))}
           </div>
         </Modal>
       )}
 
-      {/* Modal xác nhận ô đích */}
+      {/* Confirm dest modal */}
       <Modal
         open={isConfirmDestOpen}
-        title={<span className="font-bold text-lg text-slate-800 flex items-center gap-2"><ArrowLeftRight className="text-blue-600" /> Xác nhận điều phối robot</span>}
         onOk={handleConfirmDest}
         onCancel={handleCancelConfirmDest}
         okText="Xác nhận"
         cancelText="Huỷ"
         centered
         zIndex={1100}
-        okButtonProps={{ className: 'bg-blue-600 font-semibold rounded-lg shadow-md' }}
-        cancelButtonProps={{ className: 'rounded-lg' }}
+        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px' }}
+        title={
+          <div className="flex items-center gap-2 font-bold text-base" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
+            <ArrowLeftRight size={18} style={{ color: 'var(--accent)' }} />
+            Xác nhận điều phối robot
+          </div>
+        }
+        okButtonProps={{
+          style: {
+            background: 'var(--accent)',
+            border: 'none',
+            color: '#080b10',
+            fontWeight: 700,
+            borderRadius: '10px',
+            fontFamily: "'JetBrains Mono', monospace",
+          },
+        }}
+        cancelButtonProps={{
+          style: {
+            background: 'var(--bg-raised)',
+            border: '1px solid var(--border-mid)',
+            color: 'var(--text-secondary)',
+            borderRadius: '10px',
+            fontFamily: "'JetBrains Mono', monospace",
+          },
+        }}
       >
         {source && pendingCell && (
-          <div className="py-4 text-slate-700 text-base leading-relaxed">
-            <p>Robot sẽ nhận lệnh di chuyển hàng hóa giữa 2 vị trí sau:</p>
-            <div className="mt-3 p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col gap-2">
+          <div className="py-2 text-sm" style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>
+            <p>Robot sẽ nhận lệnh di chuyển giữa 2 vị trí:</p>
+            <div
+              className="mt-3 p-4 rounded-xl space-y-2"
+              style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-dim)' }}
+            >
               <div className="flex items-center gap-3">
-                <span className="w-16 font-bold text-xs text-slate-500 uppercase tracking-wider">Từ (Nguồn):</span>
-                <strong className="text-blue-600 bg-blue-50 px-3 py-1 rounded-lg border border-blue-200">
-                  Kệ {source.shelfId} – Ô {source.cell}{' '}
-                  {getPackageForCell(source.shelfId, source.cell)
-                    ? `(${getPackageForCell(source.shelfId, source.cell)?.packageName})`
-                    : '(Trống)'}
+                <span
+                  className="text-[9px] font-bold px-2 py-1 rounded-md w-12 text-center"
+                  style={{ background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.2)', color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}
+                >
+                  SRC
+                </span>
+                <strong style={{ color: 'var(--accent)' }}>
+                  Kệ {source.shelfId} · Ô {source.cell}
+                  {getPackageForCell(source.shelfId, source.cell) ? ` (${getPackageForCell(source.shelfId, source.cell)?.packageName})` : ' (Trống)'}
                 </strong>
               </div>
               <div className="flex items-center gap-3">
-                <span className="w-16 font-bold text-xs text-slate-500 uppercase tracking-wider">Đến (Đích):</span>
-                <strong className="text-emerald-600 bg-emerald-50 px-3 py-1 rounded-lg border border-emerald-200">
-                  Kệ {pendingCell.shelfId} – Ô {pendingCell.cell}{' '}
-                  {getPackageForCell(pendingCell.shelfId, pendingCell.cell)
-                    ? `(${getPackageForCell(pendingCell.shelfId, pendingCell.cell)?.packageName})`
-                    : '(Trống)'}
+                <span
+                  className="text-[9px] font-bold px-2 py-1 rounded-md w-12 text-center"
+                  style={{ background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)', color: 'var(--success)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}
+                >
+                  DST
+                </span>
+                <strong style={{ color: 'var(--success)' }}>
+                  Kệ {pendingCell.shelfId} · Ô {pendingCell.cell}
+                  {getPackageForCell(pendingCell.shelfId, pendingCell.cell) ? ` (${getPackageForCell(pendingCell.shelfId, pendingCell.cell)?.packageName})` : ' (Trống)'}
                 </strong>
               </div>
             </div>
@@ -613,40 +963,80 @@ export default function InventoryPage() {
         )}
       </Modal>
 
-      {/* Modal xác nhận khi xóa ô nguồn */}
+      {/* Remove source confirmation modal */}
       <Modal
         open={isRemoveSourceConfirmOpen}
-        title={<span className="font-bold text-lg text-slate-800">Cập nhật vị trí nguồn</span>}
+        title={
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', fontWeight: 700 }}>
+            Cập nhật vị trí nguồn
+          </span>
+        }
         centered
         zIndex={1100}
         onCancel={() => setIsRemoveSourceConfirmOpen(false)}
+        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px' }}
         footer={
-          <div className="flex justify-end gap-2.5 mt-4">
-            <Button className="rounded-lg font-medium" onClick={() => setIsRemoveSourceConfirmOpen(false)}>Đóng</Button>
-            <Button danger className="rounded-lg font-semibold" onClick={handleRemoveSourceOnly}>Chỉ xoá ô nguồn</Button>
+          <div className="flex justify-end gap-2.5">
+            <Button
+              onClick={() => setIsRemoveSourceConfirmOpen(false)}
+              style={{ borderRadius: '10px', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, background: 'var(--bg-raised)', border: '1px solid var(--border-mid)', color: 'var(--text-secondary)' }}
+            >
+              Đóng
+            </Button>
+            <Button
+              danger
+              onClick={handleRemoveSourceOnly}
+              style={{ borderRadius: '10px', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}
+            >
+              Xoá ô nguồn
+            </Button>
             {dest && (
-              <Button type="primary" className="bg-blue-600 font-semibold rounded-lg shadow-md" onClick={handlePromoteDestToSource}>
-                Chuyển ô đích thành ô nguồn
+              <Button
+                type="primary"
+                onClick={handlePromoteDestToSource}
+                style={{
+                  background: 'var(--accent)',
+                  border: 'none',
+                  color: '#080b10',
+                  borderRadius: '10px',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 700,
+                }}
+              >
+                Chuyển đích → nguồn
               </Button>
             )}
           </div>
         }
       >
         {dest ? (
-          <div className="py-2 text-slate-700">
-            <p className="mb-3">Bạn đang muốn xoá vị trí nguồn <strong className="text-blue-600">Kệ {source?.shelfId} – Ô {source?.cell}</strong>.</p>
-            <p>Bạn có muốn chuyển vị trí đích hiện tại (<strong className="text-emerald-600">Kệ {dest.shelfId} – Ô {dest.cell}</strong>) thành vị trí nguồn mới không?</p>
-          </div>
+          <p style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>
+            Xoá nguồn <strong style={{ color: 'var(--accent)' }}>Kệ {source?.shelfId} · Ô {source?.cell}</strong>?{' '}
+            Chuyển đích <strong style={{ color: 'var(--success)' }}>Kệ {dest.shelfId} · Ô {dest.cell}</strong> thành nguồn mới?
+          </p>
         ) : (
-          <p className="py-3 text-slate-700">
-            Bạn có chắc chắn muốn xoá vị trí nguồn <strong className="text-blue-600">Kệ {source?.shelfId} – Ô {source?.cell}</strong> không?
+          <p style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>
+            Xác nhận xoá nguồn <strong style={{ color: 'var(--accent)' }}>Kệ {source?.shelfId} · Ô {source?.cell}</strong>?
           </p>
         )}
       </Modal>
+
+      {/* Global keyframe animations */}
+      <style>{`
+        @keyframes pulse-subtle {
+          0%, 100% { box-shadow: 0 0 30px rgba(0,212,255,0.15), inset 0 1px 0 rgba(255,255,255,0.05); }
+          50% { box-shadow: 0 0 50px rgba(0,212,255,0.25), inset 0 1px 0 rgba(255,255,255,0.08); }
+        }
+        @keyframes pulse-ring-cyan {
+          0% { box-shadow: 0 0 0 0 rgba(0,212,255,0.2); opacity: 1; }
+          100% { box-shadow: 0 0 0 20px rgba(0,212,255,0); opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }
 
+/* ─── Shelf card component ─────────────────────────────────────────── */
 function ShelfCard({
   shelf,
   source,
@@ -654,7 +1044,7 @@ function ShelfCard({
   packageCount,
   onClick,
 }: {
-  shelf: { id: ShelfId; label: string; corner: string };
+  shelf: { id: ShelfId; label: string; zone: string };
   source: SelectedCell | null;
   dest: SelectedCell | null;
   packageCount: number;
@@ -662,53 +1052,131 @@ function ShelfCard({
 }) {
   const hasSource = source?.shelfId === shelf.id;
   const hasDest = dest?.shelfId === shelf.id;
-  const hasAny = hasSource || hasDest;
+  const isActive = hasSource || hasDest;
+  const activeColor = hasSource ? 'var(--accent)' : hasDest ? 'var(--success)' : 'var(--accent)';
 
   return (
     <button
       onClick={onClick}
-      className={`w-72 p-6 rounded-2xl flex flex-col justify-between transition-all group relative text-left border border-slate-700/80 backdrop-blur-md shadow-2xl overflow-hidden ${
-        hasSource
-          ? 'bg-gradient-to-br from-blue-900/90 to-slate-900 border-blue-500/80 ring-4 ring-blue-500/20 shadow-blue-500/20'
-          : hasDest
-          ? 'bg-gradient-to-br from-emerald-900/90 to-slate-900 border-emerald-500/80 ring-4 ring-emerald-500/20 shadow-emerald-500/20'
-          : 'bg-slate-800/80 hover:bg-slate-800 hover:border-blue-500/60 hover:shadow-[0_0_30px_rgba(59,130,246,0.15)]'
-      }`}
+      className="w-72 p-5 rounded-2xl flex flex-col justify-between transition-all group relative overflow-hidden cursor-pointer"
+      style={
+        isActive
+          ? {
+              background: `linear-gradient(135deg, ${hasSource ? 'rgba(0,212,255,0.08)' : 'rgba(0,255,136,0.08)'}, var(--bg-raised))`,
+              border: `1px solid ${hasSource ? 'rgba(0,212,255,0.25)' : 'rgba(0,255,136,0.25)'}`,
+              boxShadow: `0 0 30px ${hasSource ? 'rgba(0,212,255,0.1)' : 'rgba(0,255,136,0.1)'}, 0 8px 32px rgba(0,0,0,0.4)`,
+            }
+          : {
+              background: 'linear-gradient(135deg, rgba(17,24,39,0.9), rgba(12,15,20,0.95))',
+              border: '1px solid var(--border-dim)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+            }
+      }
     >
-      {/* Top line badge */}
-      <div className="flex items-center justify-between w-full">
-        <span className="text-xs font-mono font-bold tracking-widest text-slate-400 uppercase">
-          {shelf.corner.split(' - ')[0]}
-        </span>
-        <Badge
-          count={packageCount > 0 ? `${packageCount} kiện` : 'Trống'}
+      {/* Top line */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[9px] font-bold px-2 py-1 rounded-md"
+            style={{
+              background: isActive ? `${activeColor}15` : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${isActive ? `${activeColor}30` : 'var(--border-dim)'}`,
+              color: isActive ? activeColor : 'var(--text-muted)',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.1em',
+            }}
+          >
+            {shelf.id.toString().padStart(2, '0')}
+          </span>
+          <span
+            className="text-xs"
+            style={{
+              color: isActive ? activeColor : 'var(--text-muted)',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.08em',
+              fontSize: '10px',
+            }}
+          >
+            {shelf.zone}
+          </span>
+        </div>
+
+        <div
+          className="px-2.5 py-1 rounded-full text-[10px] font-bold"
           style={{
-            backgroundColor: packageCount > 0 ? '#3b82f6' : '#64748b',
-            color: '#fff',
-            fontWeight: 'bold',
-            fontSize: '11px',
-            boxShadow: 'none'
+            background: packageCount > 0 ? `${activeColor}15` : 'rgba(255,255,255,0.04)',
+            border: `1px solid ${packageCount > 0 ? `${activeColor}30` : 'var(--border-dim)'}`,
+            color: packageCount > 0 ? activeColor : 'var(--text-muted)',
+            fontFamily: "'JetBrains Mono', monospace",
           }}
-        />
+        >
+          {packageCount > 0 ? `${packageCount} kiện` : 'Trống'}
+        </div>
       </div>
 
-      {/* Main title */}
-      <div className="my-6">
-        <h3 className="text-2xl font-black text-white tracking-wide group-hover:text-blue-400 transition-colors flex items-center gap-2">
+      {/* Title */}
+      <div className="mb-4">
+        <h3
+          className="text-xl font-black group-hover:scale-[1.02] transition-transform"
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            color: isActive ? activeColor : 'var(--text-primary)',
+            letterSpacing: '-0.02em',
+            transition: 'color 0.2s ease',
+          }}
+        >
           {shelf.label}
         </h3>
-        <p className="text-xs text-slate-400 mt-1 font-medium">Bấm để quản lý 16 ô chứa hàng</p>
+        <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+          Nhấn để quản lý 16 ô chứa
+        </p>
       </div>
 
-      {/* Status indicator */}
-      <div className="flex gap-2 pt-3 border-t border-slate-700/60 w-full">
-        {hasSource && <Tag color="#2563eb" className="m-0 font-bold px-2.5 py-0.5 rounded-md text-xs border-0">Nguồn: Ô {source?.cell}</Tag>}
-        {hasDest && <Tag color="#10b981" className="m-0 font-bold px-2.5 py-0.5 rounded-md text-xs border-0">Đích: Ô {dest?.cell}</Tag>}
-        {!hasAny && <span className="text-xs font-medium text-slate-500 italic">Chưa chọn vị trí AGV</span>}
+      {/* Status tags */}
+      <div className="flex gap-2 pt-3" style={{ borderTop: '1px solid var(--border-dim)' }}>
+        {hasSource && (
+          <span
+            className="text-[10px] font-bold px-2 py-1 rounded-md"
+            style={{
+              background: 'rgba(0,212,255,0.15)',
+              border: '1px solid rgba(0,212,255,0.3)',
+              color: 'var(--accent)',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.06em',
+            }}
+          >
+            SRC: Ô {source?.cell}
+          </span>
+        )}
+        {hasDest && (
+          <span
+            className="text-[10px] font-bold px-2 py-1 rounded-md"
+            style={{
+              background: 'rgba(0,255,136,0.15)',
+              border: '1px solid rgba(0,255,136,0.3)',
+              color: 'var(--success)',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.06em',
+            }}
+          >
+            DST: Ô {dest?.cell}
+          </span>
+        )}
+        {!isActive && (
+          <span className="text-[10px] italic" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", alignSelf: 'center' }}>
+            Chưa chọn vị trí AGV
+          </span>
+        )}
       </div>
 
-      {/* Accent glow corner */}
-      <div className="absolute -bottom-10 -right-10 w-28 h-28 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all pointer-events-none" />
+      {/* Corner glow */}
+      <span
+        className="absolute -bottom-8 -right-8 w-24 h-24 rounded-full pointer-events-none transition-all duration-300"
+        style={{
+          background: `radial-gradient(circle, ${activeColor}08 0%, transparent 70%)`,
+          boxShadow: isActive ? `0 0 40px ${activeColor}15` : 'none',
+        }}
+      />
     </button>
   );
 }
