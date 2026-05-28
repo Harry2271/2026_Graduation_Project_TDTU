@@ -227,10 +227,29 @@ export CAMERA_DEVICE="$CAMERA_DEVICE"
 "$QR_BIN" --ros-args -r __node:=qr_detector_node \
     2>&1 | tee -a "$LOG_DIR/qr.log" &
 
-# Web Bridge
+# Web Bridge — with crash restart wrapper
 echo "[entrypoint] Starting web_bridge..." | tee -a "$LOG_DIR/web_bridge.log"
-"$WEB_BRIDGE_BIN" --ros-args -r __node:=web_bridge \
-    2>&1 | tee -a "$LOG_DIR/web_bridge.log" &
+
+start_web_bridge() {
+    local attempt=1
+    while true; do
+        echo "[web_bridge-wrapper] Starting web_bridge (attempt $attempt)..." >> "$LOG_DIR/web_bridge.log"
+        "$WEB_BRIDGE_BIN" --ros-args -r __node:=web_bridge \
+            >> "$LOG_DIR/web_bridge.log" 2>&1
+        local exit_code=$?
+        echo "[web_bridge-wrapper] web_bridge exited with code $exit_code at $(date)" >> "$LOG_DIR/web_bridge.log"
+        if [ $exit_code -eq 0 ]; then
+            echo "[web_bridge-wrapper] web_bridge exited cleanly — not restarting" >> "$LOG_DIR/web_bridge.log"
+            break
+        fi
+        echo "[web_bridge-wrapper] Restarting in 3 seconds..." >> "$LOG_DIR/web_bridge.log"
+        sleep 3
+        attempt=$((attempt + 1))
+    done
+}
+
+start_web_bridge &
+WEB_BRIDGE_PID=$!
 
 # --- Lidar hot-plug monitor (for reconnection after startup) ---
 start_lidar_monitor() {
