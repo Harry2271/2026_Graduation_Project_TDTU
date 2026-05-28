@@ -18,16 +18,18 @@ RUN pip3 install --break-system-packages websockets
 
 WORKDIR /app
 
-# Clone SLLidar ROS 2 driver
+# Tạo thư mục src trước
+RUN mkdir -p /app/src
+
+# Clone Lidar driver vào thư mục riêng trong src
 RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
-# Copy source
-COPY src/ /app/src/
+# Copy code của ông vào
+COPY src/ /app/src/my_robot_controller/  # Nên để code của mình vào một package riêng
 
-# Build colcon workspace
+# Build (Không cần rm -rf /app/build ở đây vì mỗi lần build layer này là nó mới rồi)
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    rm -rf /app/build /app/install && \
-    colcon build --merge-install --executor sequential"
+    colcon build --merge-install --executor sequential""
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
