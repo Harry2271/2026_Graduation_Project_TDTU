@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Ruler, Compass, Target, WifiOff, Crosshair } from 'lucide-react';
 import { Button, App, Tooltip } from 'antd';
 
-const WS_URL = 'wss://map.nguyen-robot.io.vn';
+const WS_URL =
+  process.env.NEXT_PUBLIC_WS_URL || 'wss://map.nguyen-robot.io.vn';
 
 interface ScanData { points: { x: number; y: number }[]; count: number; }
 
