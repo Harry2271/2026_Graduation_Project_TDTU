@@ -49,4 +49,15 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Auto-source ROS 2 environment in every bash shell (for docker exec debugging)
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> /root/.bashrc && \
+    echo 'source /app/install/setup.bash' >> /root/.bashrc
+
+# Convenience wrapper: "docker exec robot_core ros2 topic list" works directly
+RUN echo '#!/bin/bash' > /usr/local/bin/ros2 && \
+    echo 'source /opt/ros/jazzy/setup.bash' >> /usr/local/bin/ros2 && \
+    echo 'source /app/install/setup.bash' >> /usr/local/bin/ros2 && \
+    echo 'exec /opt/ros/jazzy/bin/ros2 "$@"' >> /usr/local/bin/ros2 && \
+    chmod +x /usr/local/bin/ros2
+
 ENTRYPOINT ["/entrypoint.sh"]
