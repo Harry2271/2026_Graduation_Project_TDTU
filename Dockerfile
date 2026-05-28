@@ -24,12 +24,12 @@ RUN mkdir -p /app/src
 # Clone Lidar driver vào thư mục riêng trong src
 RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
-# Copy code của ông vào
-COPY src/ /app/src/my_robot_controller/  # Nên để code của mình vào một package riêng
+# Nên để code của mình vào một package riêng
+COPY src/ /app/src/my_robot_controller/
 
 # Build (Không cần rm -rf /app/build ở đây vì mỗi lần build layer này là nó mới rồi)
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
-    colcon build --merge-install --executor sequential""
+    colcon build --merge-install --executor sequential"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
