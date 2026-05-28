@@ -4,16 +4,16 @@ import { useState, useMemo } from 'react';
 import {
   Modal,
   Button,
-App,
+  App,
   Tag,
   Badge,
   Input,
-  Collapse,
   Spin,
   Tooltip,
   Empty,
-  ConfigProvider, 
-  theme
+  ConfigProvider,
+  theme,
+  List,
 } from 'antd';
 import {
   PackageOpen,
@@ -25,6 +25,8 @@ import {
   ArrowLeftRight,
   Hexagon,
   Wifi,
+  ChevronRight,
+  MapPin,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setSource, setDest, resetInventory, SelectedCell } from '@/store/inventorySlice';
@@ -58,6 +60,7 @@ export default function InventoryPage() {
   const [isConfirmDestOpen, setIsConfirmDestOpen] = useState(false);
   const [isRemoveSourceConfirmOpen, setIsRemoveSourceConfirmOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isPackageListOpen, setIsPackageListOpen] = useState(true);
 
   const selectedCount = (source ? 1 : 0) + (dest ? 1 : 0);
 
@@ -177,11 +180,48 @@ export default function InventoryPage() {
     return packageMap[slot.packageId] ?? null;
   };
 
+  const filteredPackages = useMemo(() => {
+    if (!searchTerm) return packages.map((pkg) => {
+      const slot = slots.find((s) => s.packageId === pkg._id);
+      if (!slot) return null;
+      const { shelfId, cell } = parseSlotCode(slot.code);
+      return { ...pkg, shelfId, cell, importedAt: pkg.createdAt ?? new Date().toISOString() } as PackageItem;
+    }).filter(Boolean) as PackageItem[];
+    return packages
+      .map((pkg) => {
+        const slot = slots.find((s) => s.packageId === pkg._id);
+        if (!slot) return null;
+        const { shelfId, cell } = parseSlotCode(slot.code);
+        return { ...pkg, shelfId, cell, importedAt: pkg.createdAt ?? new Date().toISOString() } as PackageItem;
+      })
+      .filter(Boolean)
+      .filter((pkg) =>
+        pkg!.packageName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        pkg!._id.toLowerCase().includes(searchTerm.toLowerCase())
+      ) as PackageItem[];
+  }, [packages, slots, searchTerm]);
+
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden" style={{ background: 'var(--bg-void)' }}>
 
       {/* ─── Main Area ─────────────────────────────────────── */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+        {isLoading && (
+          <div
+            className="absolute inset-0 z-50 flex items-center justify-center"
+            style={{ background: 'rgba(8,11,16,0.7)', backdropFilter: 'blur(4px)' }}
+          >
+            <div className="flex flex-col items-center gap-3">
+              <Spin size="large" />
+              <span
+                className="text-xs"
+                style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}
+              >
+                Đang tải dữ liệu kho...
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Header */}
         <div
@@ -209,6 +249,20 @@ export default function InventoryPage() {
                 <span className="badge badge-cyan" style={{ fontSize: '9px', letterSpacing: '0.12em' }}>
                   LIVE
                 </span>
+                <Badge
+                  count={totalPackages}
+                  style={{
+                    backgroundColor: 'rgba(0,212,255,0.15)',
+                    color: 'var(--accent)',
+                    border: '1px solid rgba(0,212,255,0.25)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    boxShadow: 'none',
+                  }}
+                  showZero
+                  overflowCount={999}
+                />
               </div>
               <p className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
                 Đồ án Tốt nghiệp — Tôn Đức Thắng University &nbsp;|&nbsp; NEXUS Control System
@@ -500,6 +554,188 @@ export default function InventoryPage() {
         </div>
       </div>
 
+      {/* ─── Package list sidebar ──────────────────────────── */}
+      <div
+        className="flex flex-col h-full overflow-hidden"
+        style={{
+          width: isPackageListOpen ? '320px' : '48px',
+          background: 'var(--bg-surface)',
+          borderLeft: '1px solid var(--border-dim)',
+          transition: 'width 0.3s ease',
+          flexShrink: 0,
+        }}
+      >
+        {/* Panel header */}
+        <div
+          className="flex items-center justify-between px-4 py-3"
+          style={{ borderBottom: '1px solid var(--border-dim)', minHeight: '52px' }}
+        >
+          {isPackageListOpen ? (
+            <>
+              <div className="flex items-center gap-2">
+                <Package size={15} style={{ color: 'var(--accent)' }} />
+                <span
+                  className="text-xs font-bold"
+                  style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}
+                >
+                  DANH SÁCH KIỆN
+                </span>
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded-md"
+                  style={{
+                    background: 'rgba(0,212,255,0.1)',
+                    border: '1px solid rgba(0,212,255,0.2)',
+                    color: 'var(--accent)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {filteredPackages.length}
+                </span>
+              </div>
+              <button
+                onClick={() => setIsPackageListOpen(false)}
+                className="flex items-center justify-center w-7 h-7 rounded-lg transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid var(--border-dim)',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setIsPackageListOpen(true)}
+              className="w-full flex items-center justify-center"
+              style={{ cursor: 'pointer' }}
+            >
+              <Package size={18} style={{ color: 'var(--accent)' }} />
+            </button>
+          )}
+        </div>
+
+        {/* Search */}
+        {isPackageListOpen && (
+          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-dim)' }}>
+            <Input
+              prefix={<Search size={13} style={{ color: 'var(--text-muted)' }} />}
+              placeholder="Tìm kiện hàng..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              allowClear
+              style={{
+                background: 'var(--bg-base)',
+                border: '1px solid var(--border-dim)',
+                borderRadius: '10px',
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '12px',
+                color: 'var(--text-primary)',
+              }}
+            />
+          </div>
+        )}
+
+        {/* Package list */}
+        {isPackageListOpen && (
+          <div className="flex-1 overflow-y-auto">
+            {filteredPackages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40">
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={
+                    <span style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontSize: '11px' }}>
+                      {searchTerm ? 'Không tìm thấy' : 'Chưa có kiện hàng'}
+                    </span>
+                  }
+                />
+              </div>
+            ) : (
+              <List
+                dataSource={filteredPackages}
+                renderItem={(pkg) => {
+                  const isSourceSelected = source?.shelfId === pkg.shelfId && source?.cell === pkg.cell;
+                  const isDestSelected = dest?.shelfId === pkg.shelfId && dest?.cell === pkg.cell;
+                  const isSelected = isSourceSelected || isDestSelected;
+                  const selectionType = isSourceSelected ? 'source' : isDestSelected ? 'dest' : null;
+
+                  return (
+                    <List.Item
+                      key={pkg._id}
+                      onClick={() => selectFromList(pkg.shelfId, pkg.cell)}
+                      className="cursor-pointer px-4 py-3 transition-all"
+                      style={{
+                        background: isSelected
+                          ? selectionType === 'source'
+                            ? 'rgba(0,212,255,0.08)'
+                            : 'rgba(0,255,136,0.08)'
+                          : 'transparent',
+                        borderBottom: '1px solid var(--border-dim)',
+                        borderLeft: isSelected
+                          ? selectionType === 'source'
+                            ? '2px solid var(--accent)'
+                            : '2px solid var(--success)'
+                          : '2px solid transparent',
+                      }}
+                    >
+                      <div className="flex items-start gap-3 w-full">
+                        <div
+                          className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"
+                          style={{
+                            background: 'rgba(0,212,255,0.08)',
+                            border: '1px solid rgba(0,212,255,0.15)',
+                          }}
+                        >
+                          <Package size={16} style={{ color: 'var(--accent)' }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p
+                            className="text-[12px] font-bold leading-tight truncate"
+                            style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}
+                          >
+                            {pkg.packageName}
+                          </p>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <MapPin size={10} style={{ color: 'var(--text-muted)' }} />
+                            <span
+                              className="text-[10px]"
+                              style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+                            >
+                              Kệ {pkg.shelfId} · Ô {pkg.cell}
+                            </span>
+                            {isSelected && (
+                              <span
+                                className="text-[9px] font-bold px-1.5 py-0.5 rounded-md ml-auto"
+                                style={{
+                                  background: selectionType === 'source' ? 'rgba(0,212,255,0.15)' : 'rgba(0,255,136,0.15)',
+                                  border: `1px solid ${selectionType === 'source' ? 'rgba(0,212,255,0.25)' : 'rgba(0,255,136,0.25)'}`,
+                                  color: selectionType === 'source' ? 'var(--accent)' : 'var(--success)',
+                                  fontFamily: "'JetBrains Mono', monospace",
+                                  letterSpacing: '0.06em',
+                                }}
+                              >
+                                {selectionType === 'source' ? 'SRC' : 'DST'}
+                              </span>
+                            )}
+                          </div>
+                          <p
+                            className="text-[9px] mt-0.5 truncate"
+                            style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", opacity: 0.6 }}
+                          >
+                            #{pkg._id.slice(-8).toUpperCase()}
+                          </p>
+                        </div>
+                      </div>
+                    </List.Item>
+                  );
+                }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ─── Shelf detail modal ───────────────────────────── */}
       {activeShelf && (
         <Modal
@@ -709,11 +945,11 @@ export default function InventoryPage() {
         zIndex={1100}
         className="dark-modal"
         styles={{
-          content: {
+          body: {
             background: 'var(--bg-surface)',
             border: '1px solid var(--border-mid)',
             borderRadius: '16px',
-            padding: '24px', // Điều chỉnh lại padding cho cân đối
+            padding: '24px',
           },
           header: {
             background: 'var(--bg-surface)',
