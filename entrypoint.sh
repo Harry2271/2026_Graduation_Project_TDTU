@@ -7,6 +7,38 @@ ESP32_PORT=${ESP32_PORT:-/dev/ttyUSB1}
 CAMERA_DEVICE=${CAMERA_DEVICE:-0}
 MAPPING_MODE=${MAPPING_MODE:-live}
 
+# ESP32 UART adapter — detect it automatically by scanning all available serial ports
+# Excludes the lidar port (/dev/ttyUSB0)
+find_esp32_port() {
+    # Check explicit env var first
+    if [ -n "$ESP32_PORT" ] && [ -e "$ESP32_PORT" ]; then
+        echo "$ESP32_PORT"
+        return 0
+    fi
+    # Scan all ttyUSB and ttyACM ports, excluding lidar
+    for dev in /dev/ttyUSB* /dev/ttyACM*; do
+        [ "$dev" = "/dev/ttyUSB0" ] && continue
+        if [ -e "$dev" ]; then
+            echo "$dev"
+            return 0
+        fi
+    done
+    # Scan by hardware ID (Roboclaw, CH340, CP2102, FTDI)
+    for link in /dev/serial/by-id/*; do
+        if [ -e "$link" ]; then
+            target=$(readlink -f "$link" 2>/dev/null)
+            # Skip lidar
+            basename_target=$(basename "$target" 2>/dev/null)
+            [ "$basename_target" = "ttyUSB0" ] && continue
+            if [ -n "$target" ]; then
+                echo "$target"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
 
@@ -47,27 +79,12 @@ echo "========================================"
 REQUIRED_DEVICES=0
 LIDAR_READY=false
 ESP32_READY=false
+ESP32_DETECTED_PORT=""
 
 while [ "$REQUIRED_DEVICES" -lt 2 ]; do
     REQUIRED_DEVICES=0
 
-    # Check ESP32
-    if [ -e "$ESP32_PORT" ]; then
-        if [ "$ESP32_READY" = false ]; then
-            chmod 666 "$ESP32_PORT" 2>/dev/null
-            echo "[STARTUP] ESP32 detected at $ESP32_PORT"
-            ESP32_READY=true
-        fi
-        REQUIRED_DEVICES=$((REQUIRED_DEVICES + 1))
-    else
-        if [ "$ESP32_READY" = true ]; then
-            echo "[STARTUP] ESP32 disconnected!"
-            ESP32_READY=false
-            REQUIRED_DEVICES=$((REQUIRED_DEVICES - 1))
-        fi
-    fi
-
-    # Check Lidar
+    # Check Lidar first
     if [ -e "$LIDAR_PORT" ]; then
         if [ "$LIDAR_READY" = false ]; then
             chmod 666 "$LIDAR_PORT" 2>/dev/null
@@ -79,12 +96,40 @@ while [ "$REQUIRED_DEVICES" -lt 2 ]; do
         if [ "$LIDAR_READY" = true ]; then
             echo "[STARTUP] Lidar disconnected!"
             LIDAR_READY=false
-            REQUIRED_DEVICES=$((REQUIRED_DEVICES - 1))
+        fi
+    fi
+
+    # Check ESP32 — try auto-detect
+    ESP32_CANDIDATE=$(find_esp32_port 2>/dev/null)
+    if [ -n "$ESP32_CANDIDATE" ]; then
+        chmod 666 "$ESP32_CANDIDATE" 2>/dev/null
+        if [ "$ESP32_READY" = false ]; then
+            ESP32_DETECTED_PORT="$ESP32_CANDIDATE"
+            ESP32_PORT="$ESP32_CANDIDATE"
+            echo "[STARTUP] ESP32 detected at $ESP32_PORT"
+            ESP32_READY=true
+        fi
+        REQUIRED_DEVICES=$((REQUIRED_DEVICES + 1))
+    else
+        if [ "$ESP32_READY" = true ]; then
+            echo "[STARTUP] ESP32 disconnected!"
+            ESP32_READY=false
+            ESP32_DETECTED_PORT=""
         fi
     fi
 
     if [ "$REQUIRED_DEVICES" -lt 2 ]; then
-        echo "[STARTUP] Waiting for devices... (ESP32: $ESP32_PORT, Lidar: $LIDAR_PORT)  Found $REQUIRED_DEVICES/2"
+        echo "[STARTUP] Waiting for devices... Found $REQUIRED_DEVICES/2"
+        echo "[STARTUP] All available serial devices:"
+        for dev in /dev/ttyUSB* /dev/ttyACM*; do
+            if [ -e "$dev" ]; then
+                echo "  $dev"
+                udevadm info -q name -n "$dev" >/dev/null 2>&1 && udevadm info -a -n "$dev" 2>/dev/null | grep -E "ATTRS{idVendor}|ATTRS{product}" | head -2
+            fi
+        done
+        echo "[STARTUP] Hardware IDs:"
+        ls -la /dev/serial/by-id/ 2>/dev/null || echo "  (none found)"
+        echo ""
         sleep 3
     fi
 done
@@ -168,7 +213,10 @@ if [ "$MAPPING_MODE" = "mapping" ]; then
 fi
 
 # Brain Node
-echo "[entrypoint] Starting brain_node..." | tee -a "$LOG_DIR/brain.log"
+if [ -n "$ESP32_DETECTED_PORT" ]; then
+    ESP32_PORT="$ESP32_DETECTED_PORT"
+fi
+echo "[entrypoint] Starting brain_node (ESP32=$ESP32_PORT)..." | tee -a "$LOG_DIR/brain.log"
 export ESP32_PORT="$ESP32_PORT"
 "$BRAIN_BIN" --ros-args -r __node:=brain_node \
     2>&1 | tee -a "$LOG_DIR/brain.log" &

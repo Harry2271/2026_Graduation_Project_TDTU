@@ -15,7 +15,8 @@ services:
       - robot-maps:/app                  # Persist saved maps across restarts
     devices:
       - /dev/ttyUSB0:/dev/ttyUSB0        # Slamtec SLLidar
-      - /dev/ttyUSB1:/dev/ttyUSB1        # ESP32-S3 motor controller
+      - /dev/ttyUSB1:/dev/ttyUSB1        # ESP32 UART adapter
+      - /dev/ttyUSB2:/dev/ttyUSB2        # ESP32 UART adapter (alt port)
     environment:
       - ROS_DOMAIN_ID=0
       - LIDAR_MODEL=a1                    # Use a1 for A1M8 lidar
