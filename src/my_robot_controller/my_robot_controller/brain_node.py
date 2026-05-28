@@ -69,10 +69,15 @@ class BrainNode(Node):
             LaserScan, '/scan', self.scan_callback, 10)
         self.qr_subscriber = self.create_subscription(
             String, '/qr_result', self.qr_callback, 10)
+        # Forward mapping commands from frontend -> map_manager
+        self.mapping_control_sub = self.create_subscription(
+            String, '/mapping/control', self._on_mapping_control, 10)
 
         # Publishers
         self.status_publisher = self.create_publisher(
             String, '/robot_status', 10)
+        self.mapping_status_publisher = self.create_publisher(
+            String, '/mapping_status', 10)
         self.odom_publisher = self.create_publisher(
             Odometry, '/odom', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -92,6 +97,7 @@ class BrainNode(Node):
 
         # State machine
         self.robot_state = STATE_IDLE
+        self.mapping_mode = 'LIVE'   # 'MAPPING' or 'LIVE' — published to web_bridge
         self.qr_data: str = None
         self.goods_retrieved: bool = False
         self.goods_deposited: bool = False
@@ -128,6 +134,8 @@ class BrainNode(Node):
             f'ESP32 connected: {self.esp_serial is not None and self.esp_serial.is_open}'
         )
         self.get_logger().info('Brain Node started successfully')
+        # Publish initial mapping status so web_bridge and frontend know the current mode
+        self._publish_mapping_status()
 
     # -------------------------------------------------------------------------
     # ESP32 Serial Communication
@@ -576,6 +584,34 @@ class BrainNode(Node):
         qy = cr * sp * cy + sr * cp * sy
         qz = cr * cp * sy - sr * sp * cy
         return qx, qy, qz, qw
+
+    # -------------------------------------------------------------------------
+    # Mapping Control — receives commands from web_bridge (forwarded from frontend)
+    # -------------------------------------------------------------------------
+    def _on_mapping_control(self, msg: String):
+        cmd = msg.data.strip().lower()
+        self.get_logger().info(f'Mapping control received: {cmd}')
+        if cmd == 'start':
+            if self.mapping_mode != 'MAPPING':
+                self.mapping_mode = 'MAPPING'
+                self._publish_mapping_status()
+        elif cmd == 'stop':
+            if self.mapping_mode != 'LIVE':
+                self.mapping_mode = 'LIVE'
+                self._publish_mapping_status()
+        elif cmd == 'reset':
+            # map_manager handles reset internally; just acknowledge
+            self.get_logger().info('Mapping reset acknowledged by brain_node')
+
+    def _publish_mapping_status(self):
+        """Publish current mapping mode to /mapping_status for web_bridge."""
+        msg = String()
+        if self.mapping_mode == 'LIVE':
+            msg.data = 'LIVE: localizing'
+        else:
+            msg.data = 'MAPPING: scanning...'
+        self.mapping_status_publisher.publish(msg)
+        self.get_logger().info(f'Mapping status published: {msg.data}')
 
     # -------------------------------------------------------------------------
     # Status Reporting
