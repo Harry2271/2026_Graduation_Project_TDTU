@@ -18,7 +18,7 @@ echo "  Camera device: /dev/video$CAMERA_DEVICE"
 echo "  Mapping mode : $MAPPING_MODE"
 echo "  Log dir      : $LOG_DIR"
 
-# Source ROS 2 and our workspace — this sets PYTHONPATH and ROS environment
+# Source ROS 2 and our workspace
 source /opt/ros/jazzy/setup.bash
 source /app/install/setup.bash
 
@@ -26,7 +26,7 @@ source /app/install/setup.bash
 python3 -c "import rclpy; print('rclpy OK')"
 python3 -c "import websockets; print('websockets OK')"
 
-# Paths to installed scripts (created by colcon build)
+# Paths to installed scripts
 BRAIN_BIN="/app/install/my_robot_controller/lib/my_robot_controller/brain"
 QR_BIN="/app/install/my_robot_controller/lib/my_robot_controller/qr_detector"
 WEB_BRIDGE_BIN="/app/install/my_robot_controller/lib/my_robot_controller/web_bridge"
@@ -38,7 +38,153 @@ ls -la "$QR_BIN"        2>&1 | tee -a "$LOG_DIR/startup.log"
 ls -la "$WEB_BRIDGE_BIN" 2>&1 | tee -a "$LOG_DIR/startup.log"
 ls -la "$MAP_MANAGER_BIN" 2>&1 | tee -a "$LOG_DIR/startup.log"
 
-# --- Hot-plug monitoring for Lidar ---
+# --- Wait for both ESP32 and Lidar to be detected ---
+echo ""
+echo "========================================"
+echo "  WAITING FOR REQUIRED HARDWARE..."
+echo "========================================"
+
+REQUIRED_DEVICES=0
+LIDAR_READY=false
+ESP32_READY=false
+
+while [ "$REQUIRED_DEVICES" -lt 2 ]; do
+    REQUIRED_DEVICES=0
+
+    # Check ESP32
+    if [ -e "$ESP32_PORT" ]; then
+        if [ "$ESP32_READY" = false ]; then
+            chmod 666 "$ESP32_PORT" 2>/dev/null
+            echo "[STARTUP] ESP32 detected at $ESP32_PORT"
+            ESP32_READY=true
+        fi
+        REQUIRED_DEVICES=$((REQUIRED_DEVICES + 1))
+    else
+        if [ "$ESP32_READY" = true ]; then
+            echo "[STARTUP] ESP32 disconnected!"
+            ESP32_READY=false
+            REQUIRED_DEVICES=$((REQUIRED_DEVICES - 1))
+        fi
+    fi
+
+    # Check Lidar
+    if [ -e "$LIDAR_PORT" ]; then
+        if [ "$LIDAR_READY" = false ]; then
+            chmod 666 "$LIDAR_PORT" 2>/dev/null
+            echo "[STARTUP] Lidar detected at $LIDAR_PORT"
+            LIDAR_READY=true
+        fi
+        REQUIRED_DEVICES=$((REQUIRED_DEVICES + 1))
+    else
+        if [ "$LIDAR_READY" = true ]; then
+            echo "[STARTUP] Lidar disconnected!"
+            LIDAR_READY=false
+            REQUIRED_DEVICES=$((REQUIRED_DEVICES - 1))
+        fi
+    fi
+
+    if [ "$REQUIRED_DEVICES" -lt 2 ]; then
+        echo "[STARTUP] Waiting for devices... (ESP32: $ESP32_PORT, Lidar: $LIDAR_PORT)  Found $REQUIRED_DEVICES/2"
+        sleep 3
+    fi
+done
+
+echo "[STARTUP] All required devices detected! ($REQUIRED_DEVICES/2)"
+echo ""
+
+# --- Lidar driver startup (synchronous — wait for /scan to publish) ---
+echo "[STARTUP] Starting lidar driver..."
+ros2 launch my_robot_controller lidar_only_launch.py \
+    lidar_model:="$LIDAR_MODEL" \
+    serial_port:="$LIDAR_PORT" \
+    2>&1 | tee "$LOG_DIR/lidar.log" &
+LIDAR_PID=$!
+
+# Wait for /scan topic to appear and publish at least once
+echo "[STARTUP] Waiting for /scan topic to become active..."
+SCAN_READY=false
+for i in $(seq 1 30); do
+    if ros2 topic list 2>/dev/null | grep -q "^/scan$"; then
+        # Verify it's actually publishing
+        RATE=$(ros2 topic hz /scan 2>/dev/null | grep 'average rate' | awk '{print $3}')
+        if [ -n "$RATE" ] && [ "$RATE" != "N/A" ]; then
+            echo "[STARTUP] /scan is publishing at ${RATE} Hz"
+            SCAN_READY=true
+            break
+        fi
+    fi
+    echo "[STARTUP] Waiting for /scan... (${i}/30)"
+    sleep 1
+done
+
+if [ "$SCAN_READY" = false ]; then
+    echo "[STARTUP] ERROR: Lidar driver failed to publish /scan after 30s!"
+    echo "[STARTUP] Lidar log:"
+    tail -20 "$LOG_DIR/lidar.log"
+    exit 1
+fi
+
+echo "[STARTUP] Lidar driver ready."
+echo ""
+
+# --- Start all other nodes ---
+echo "--- Launching SLAM + Map Manager + Brain + QR + WebBridge ---"
+
+# SLAM Toolbox
+echo "[entrypoint] Starting slam_only_launch.py..." | tee -a "$LOG_DIR/slam.log"
+ros2 launch my_robot_controller slam_only_launch.py \
+    2>&1 | tee -a "$LOG_DIR/slam.log" &
+SLAM_PID=$!
+
+# Wait for slam_toolbox to initialize
+sleep 3
+
+# Static TFs
+ros2 run tf2_ros static_transform_publisher \
+    --x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0 \
+    --frame-id base_link --child-frame-id laser \
+    2>&1 | tee -a "$LOG_DIR/tf.log" &
+ros2 run tf2_ros static_transform_publisher \
+    --x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0 \
+    --frame-id base_footprint --child-frame-id base_link \
+    2>&1 | tee -a "$LOG_DIR/tf.log" &
+
+# Verify topics
+echo "[entrypoint] Checking ROS topics..." | tee -a "$LOG_DIR/startup.log"
+sleep 2
+ros2 topic list 2>&1 | tee -a "$LOG_DIR/startup.log" || echo "[entrypoint] ros2 topic list failed" | tee -a "$LOG_DIR/startup.log"
+
+# Map Manager
+echo "[entrypoint] Starting map_manager (mode=$MAPPING_MODE)..." | tee -a "$LOG_DIR/map_manager.log"
+"$MAP_MANAGER_BIN" --ros-args -r __node:=map_manager \
+    2>&1 | tee -a "$LOG_DIR/map_manager.log" &
+
+# If MAPPING_MODE=mapping, send start command after a short delay
+if [ "$MAPPING_MODE" = "mapping" ]; then
+    echo "[entrypoint] Auto-starting MAPPING mode..." | tee -a "$LOG_DIR/startup.log"
+    sleep 3
+    ros2 topic pub --once /mapping/control std_msgs/String "data: 'start'" \
+        2>&1 | tee -a "$LOG_DIR/startup.log" || echo "[entrypoint] Failed to send start command" | tee -a "$LOG_DIR/startup.log"
+fi
+
+# Brain Node
+echo "[entrypoint] Starting brain_node..." | tee -a "$LOG_DIR/brain.log"
+export ESP32_PORT="$ESP32_PORT"
+"$BRAIN_BIN" --ros-args -r __node:=brain_node \
+    2>&1 | tee -a "$LOG_DIR/brain.log" &
+
+# QR Detector
+echo "[entrypoint] Starting qr_detector..." | tee -a "$LOG_DIR/qr.log"
+export CAMERA_DEVICE="$CAMERA_DEVICE"
+"$QR_BIN" --ros-args -r __node:=qr_detector_node \
+    2>&1 | tee -a "$LOG_DIR/qr.log" &
+
+# Web Bridge
+echo "[entrypoint] Starting web_bridge..." | tee -a "$LOG_DIR/web_bridge.log"
+"$WEB_BRIDGE_BIN" --ros-args -r __node:=web_bridge \
+    2>&1 | tee -a "$LOG_DIR/web_bridge.log" &
+
+# --- Lidar hot-plug monitor (for reconnection after startup) ---
 start_lidar_monitor() {
     while true; do
         if [ -e "$LIDAR_PORT" ]; then
@@ -71,75 +217,6 @@ start_lidar_monitor() {
     done
 }
 
-# --- Set permissions on ESP32 if present ---
-if [ -e "$ESP32_PORT" ]; then
-    chmod 666 "$ESP32_PORT"
-    echo "[esp32-monitor] ESP32 detected at $ESP32_PORT"
-else
-    echo "[esp32-monitor] ESP32 not detected at $ESP32_PORT — will retry on startup"
-fi
-
-# --- Start non-device-dependent nodes ---
-echo "--- Launching SLAM + Map Manager + Brain + QR + WebBridge (lidar starts when detected) ---"
-
-# SLAM Toolbox (for TF: map->odom->base_footprint)
-echo "[entrypoint] Starting slam_only_launch.py..." | tee -a "$LOG_DIR/slam.log"
-ros2 launch my_robot_controller slam_only_launch.py \
-    2>&1 | tee -a "$LOG_DIR/slam.log" &
-SLAM_PID=$!
-
-# Wait for slam_toolbox to initialize
-sleep 3
-
-# Static TFs for lidar and base frames (use --frame-id style for clarity)
-ros2 run tf2_ros static_transform_publisher \
-    --x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0 \
-    --frame-id base_link --child-frame-id laser \
-    2>&1 | tee -a "$LOG_DIR/tf.log" &
-ros2 run tf2_ros static_transform_publisher \
-    --x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0 \
-    --frame-id base_footprint --child-frame-id base_link \
-    2>&1 | tee -a "$LOG_DIR/tf.log" &
-
-# Verify topics are available
-echo "[entrypoint] Checking ROS topics after 2s..." | tee -a "$LOG_DIR/startup.log"
-sleep 2
-ros2 topic list 2>&1 | tee -a "$LOG_DIR/startup.log" || echo "[entrypoint] ros2 topic list failed" | tee -a "$LOG_DIR/startup.log"
-
-# Map Manager (custom two-map system, reads /scan + TF from slam)
-echo "[entrypoint] Starting map_manager (mode=$MAPPING_MODE)..." | tee -a "$LOG_DIR/map_manager.log"
-"$MAP_MANAGER_BIN" --ros-args -r __node:=map_manager \
-    2>&1 | tee -a "$LOG_DIR/map_manager.log" &
-
-# If MAPPING_MODE=mapping, send start command to map_manager after a short delay
-if [ "$MAPPING_MODE" = "mapping" ]; then
-    echo "[entrypoint] Auto-starting MAPPING mode..." | tee -a "$LOG_DIR/startup.log"
-    sleep 3
-    ros2 topic pub --once /mapping/control std_msgs/String "data: 'start'" \
-        2>&1 | tee -a "$LOG_DIR/startup.log" || echo "[entrypoint] Failed to send start command" | tee -a "$LOG_DIR/startup.log"
-fi
-
-# Brain Node
-echo "[entrypoint] Starting brain_node..." | tee -a "$LOG_DIR/brain.log"
-export ESP32_PORT="$ESP32_PORT"
-"$BRAIN_BIN" --ros-args -r __node:=brain_node \
-    2>&1 | tee -a "$LOG_DIR/brain.log" &
-
-# QR Detector
-echo "[entrypoint] Starting qr_detector..." | tee -a "$LOG_DIR/qr.log"
-export CAMERA_DEVICE="$CAMERA_DEVICE"
-"$QR_BIN" --ros-args -r __node:=qr_detector_node \
-    2>&1 | tee -a "$LOG_DIR/qr.log" &
-
-# Web Bridge — source workspace first so ROS env is available
-echo "[entrypoint] Starting web_bridge..." | tee -a "$LOG_DIR/web_bridge.log"
-source /app/install/setup.bash
-"$WEB_BRIDGE_BIN" --ros-args -r __node:=web_bridge \
-    2>&1 | tee -a "$LOG_DIR/web_bridge.log" &
-
-# --- Start lidar hot-plug monitor in background ---
-start_lidar_monitor &
-
 # --- Periodic topic health check every 30s ---
 (
     while true; do
@@ -152,6 +229,9 @@ start_lidar_monitor &
         done
     done
 ) &
+
+# Start lidar hot-plug monitor in background (for reconnection)
+start_lidar_monitor &
 
 # --- Wait for all background jobs ---
 wait
