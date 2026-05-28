@@ -80,7 +80,13 @@ echo "--- Launching SLAM + Map Manager + Brain + QR + WebBridge (lidar starts wh
 # SLAM Toolbox (for TF: map->odom->base_footprint)
 ros2 launch my_robot_controller slam_only_launch.py &
 
-# Map Manager (custom two-map system, reads /scan directly)
+# Static TFs for lidar and base frames
+ros2 run tf2_ros static_transform_publisher \
+    0 0 0 0 0 0 base_link laser &>/dev/null &
+ros2 run tf2_ros static_transform_publisher \
+    0 0 0 0 0 0 base_footprint base_link &>/dev/null &
+
+# Map Manager (custom two-map system, reads /scan + TF from slam)
 export MAPPING_MODE="${MAPPING_MODE:-live}"  # 'mapping' or 'live'
 "$MAP_MANAGER_BIN" --ros-args -r __node:=map_manager &
 
@@ -90,12 +96,6 @@ if [ "$MAPPING_MODE" = "mapping" ]; then
     sleep 3
     ros2 topic pub --once /mapping/control std_msgs/String "data: 'start'" &>/dev/null
 fi
-
-# Static TFs for lidar and base frames
-ros2 run tf2_ros static_transform_publisher \
-    0 0 0 0 0 0 base_link laser &>/dev/null &
-ros2 run tf2_ros static_transform_publisher \
-    0 0 0 0 0 0 base_footprint base_link &>/dev/null &
 
 # Brain Node
 export ESP32_PORT="$ESP32_PORT"
