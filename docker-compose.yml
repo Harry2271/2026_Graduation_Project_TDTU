@@ -6,8 +6,6 @@ services:
     container_name: robot_core
     privileged: true
     network_mode: host
-    ipc: host
-    pid: host
     volumes:
       - /dev:/dev
       - /dev/video0:/dev/video0          # USB webcam for QR detection
