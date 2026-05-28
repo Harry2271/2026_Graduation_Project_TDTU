@@ -685,7 +685,7 @@ export default function InventoryPage() {
   theme={{
     algorithm: theme.darkAlgorithm, // Kích hoạt dark mode mặc định của AntD
     token: {
-      colorBgElevation: '#111928', // Đây chính là màu nền của Modal content
+      colorBgElevated: '#111928', // Đây chính là màu nền của Modal content
       colorBgMask: 'rgba(0, 0, 0, 0.6)',
       borderRadiusLG: 16,
     },
@@ -793,7 +793,7 @@ export default function InventoryPage() {
   theme={{
     algorithm: theme.darkAlgorithm, // Kích hoạt dark mode mặc định của AntD
     token: {
-      colorBgElevation: '#111928', // Đây chính là màu nền của Modal content
+      colorBgElevated: '#111928', // Đây chính là màu nền của Modal content
       colorBgMask: 'rgba(0, 0, 0, 0.6)',
       borderRadiusLG: 16,
     },
