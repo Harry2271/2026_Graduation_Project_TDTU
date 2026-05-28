@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Ruler, Compass, Target, WifiOff, Crosshair } from 'lucide-react';
-import { Button, App, Tooltip, Modal } from 'antd';
+import { Button, App, Tooltip } from 'antd';
 
 const WS_URL = 'wss://map.nguyen-robot.io.vn';
 
@@ -28,7 +28,7 @@ function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number)
 }
 
 export default function MapPage() {
-  const { notification } = App.useApp();
+  const { notification, modal } = App.useApp();
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [pose, setPose] = useState<PoseData | null>(null);
@@ -439,10 +439,25 @@ export default function MapPage() {
     setTimeout(() => setIsClearingLidar(false), 1500);
   };
   const confirmReset = () => {
-    Modal.confirm({
+    // Thay Modal.confirm (static) bằng modal.confirm (hook instance)
+    modal.confirm({
       title: 'Xác nhận xóa bản đồ',
-      content: 'Thao tác này sẽ xóa toàn bộ dữ liệu bản đồ. Tiếp tục?',
-      okText: 'Xác nhận Xóa', cancelText: 'Hủy', okButtonProps: { danger: true },
+      content: 'Thao tác này sẽ xóa toàn bộ dữ liệu bản đồ và không thể hoàn tác. Tiếp tục?',
+      okText: 'Xác nhận Xóa',
+      cancelText: 'Hủy',
+      centered: true,
+      okButtonProps: { 
+        danger: true,
+        style: { borderRadius: '8px', fontFamily: 'var(--font-jetbrains)' } 
+      },
+      cancelButtonProps: { 
+        style: { borderRadius: '8px', fontFamily: 'var(--font-jetbrains)' } 
+      },
+      // Thêm styles để ép nó theo Dark Mode nếu ConfigProvider chưa ăn hết
+      styles: {
+        body: { background: 'var(--bg-surface)', color: 'var(--text-primary)' },
+        mask: { backdropFilter: 'blur(4px)' }
+      },
       onOk: handleResetMap,
     });
   };
