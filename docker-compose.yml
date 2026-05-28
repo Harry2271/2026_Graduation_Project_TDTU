@@ -13,7 +13,6 @@ services:
     environment:
       - ROS_DOMAIN_ID=0
       - LIDAR_MODEL=a1
-      - MAPPING_MODE=live
     ports:
       - "9091:9091"
     restart: always

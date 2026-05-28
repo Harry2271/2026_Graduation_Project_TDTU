@@ -2,7 +2,6 @@
 set -e
 
 LIDAR_MODEL=${LIDAR_MODEL:-a1}
-MAPPING_MODE=${MAPPING_MODE:-live}
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
 
@@ -64,14 +63,6 @@ ros2 run tf2_ros static_transform_publisher \
     >> "$LOG_DIR/tf.log" 2>&1 &
 
 sleep 1
-
-# Send initial mode command
-INITIAL_CMD="stop"
-if [ "$MAPPING_MODE" = "mapping" ]; then
-    INITIAL_CMD="start"
-fi
-echo "[MODE] Sending initial command: $INITIAL_CMD"
-ros2 topic pub --once /mapping/control std_msgs/String "data: '$INITIAL_CMD'" 2>/dev/null || true
 
 # Start nodes
 echo "[NODE] map_manager"
