@@ -172,10 +172,12 @@ class WebBridge(Node):
                 points.append({'x': round(x, 4), 'y': round(y, 4)})
             angle += msg.angle_increment
 
+        print(f'[web_bridge] _on_scan called: {len(points)} points, queue_size={self.msg_queue.qsize()}')
         self._emit({'type': 'scan', 'data': {'points': points, 'count': len(points)}})
-        self.get_logger().debug(f'Scan received: {len(points)} points, queue size={self.msg_queue.qsize()}')
+        print(f'[web_bridge] Scan emitted: {len(points)} points, queue_size={self.msg_queue.qsize()}')
 
     def _on_map(self, msg: OccupancyGrid):
+        print(f'[web_bridge] _on_map called: {msg.info.width}x{msg.info.height}, non_zero={sum(1 for v in msg.data if v != 0)}')
         self.map_seen = True
         self._emit({
             'type': 'map',
@@ -259,6 +261,7 @@ class WebBridge(Node):
         use_tf = slam_at_origin or (tf_newer and self._slam_pose_stamp_ns == 0)
 
         if use_tf or (self._slam_pose_stamp_ns == 0 and not self.pose_seen):
+            print(f'[web_bridge] _poll_tf_pose emitting pose from TF: x={tx:.3f} y={ty:.3f} theta={theta:.3f}')
             self.pose_seen = True
             self._emit({
                 'type': 'pose',
