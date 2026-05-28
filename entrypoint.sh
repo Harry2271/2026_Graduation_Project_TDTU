@@ -13,7 +13,7 @@ find_lidar_port() {
             target=$(readlink -f "$link" 2>/dev/null)
             # Slamtec S1/S2/A1/A2/A3 identification
             if echo "$link" | grep -qi 'slamtec\|sllidar\|lidar'; then
-                echo "  [AUTO] Found Slamtec lidar: $link -> $target"
+                echo "DEBUG: Found Slamtec lidar: $link -> $target" >&2
                 echo "$target"
                 return 0
             fi
@@ -25,7 +25,7 @@ find_lidar_port() {
             vendor=$(udevadm info -q property -n "$dev" 2>/dev/null | grep 'ID_VENDOR_ID=' | cut -d= -f2)
             model=$(udevadm info -q property -n "$dev" 2>/dev/null | grep 'ID_MODEL=' | cut -d= -f2)
             if echo "$vendor $model" | grep -qi 'slamtec\|sllidar\|lidar\|0483.*5740'; then
-                echo "  [AUTO] Found Slamtec lidar: $dev (VID=$vendor)"
+                echo "DEBUG: Found Slamtec lidar: $dev (VID=$vendor)" >&2
                 echo "$dev"
                 return 0
             fi
@@ -34,7 +34,7 @@ find_lidar_port() {
     # Last resort: first available ttyUSB/ttyACM (assuming it's the lidar)
     for dev in /dev/ttyUSB* /dev/ttyACM*; do
         if [ -e "$dev" ]; then
-            echo "  [AUTO] Using first available serial port: $dev"
+            echo "DEBUG: Using first available serial port: $dev" >&2
             echo "$dev"
             return 0
         fi
@@ -42,7 +42,7 @@ find_lidar_port() {
     return 1
 }
 
-LIDAR_PORT=$(find_lidar_port)
+LIDAR_PORT=$(find_lidar_port | tr -d '\r\n \t')
 
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
