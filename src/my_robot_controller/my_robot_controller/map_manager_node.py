@@ -240,7 +240,7 @@ class MapManager(Node):
         # Get robot pose from TF
         try:
             t: TransformStamped = self.tf_buffer.lookup_transform(
-                'map', 'base_footprint', rclpy.time.Time(),
+                'map', 'base_footprint', self.get_clock().now(),
                 timeout=Duration(seconds=0.05))
             rx = t.transform.translation.x
             ry = t.transform.translation.y
@@ -374,7 +374,7 @@ class MapManager(Node):
     def _poll_pose(self):
         try:
             t: TransformStamped = self.tf_buffer.lookup_transform(
-                'map', 'base_footprint', rclpy.time.Time(),
+                'map', 'base_footprint', self.get_clock().now(),
                 timeout=Duration(seconds=0.05))
             self.last_pose_x = t.transform.translation.x
             self.last_pose_y = t.transform.translation.y

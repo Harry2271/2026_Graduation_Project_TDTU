@@ -6,7 +6,19 @@
       "Read(//d/taiLieuHoc/robot-for-nguyen/**)",
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(dir \"D:\\\\taiLieuHoc\\\\robot-for-nguyen\\\\robot-controller\")",
+      "Bash(gh api *)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/SteveMacenski/slam_toolbox/jazzy/slam_toolbox/launch/online_async_launch.py\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/SteveMacenski/slam_toolbox/main/slam_toolbox/launch/online_async_launch.py\")",
+      "Bash(curl -sL \"https://api.github.com/repos/SteveMacenski/slam_toolbox/branches\")",
+      "Bash(python3 -c \"import sys,json; [print\\(b['name']\\) for b in json.load\\(sys.stdin\\)]\")",
+      "Bash(curl -sL \"https://api.github.com/repos/SteveMacenski/slam_toolbox/contents/slam_toolbox/launch?ref=jazzy\")",
+      "Bash(python3 -c \"import sys,json; [print\\(f['name']\\) for f in json.load\\(sys.stdin\\)]\")",
+      "Bash(curl -sL \"https://api.github.com/repos/SteveMacenski/slam_toolbox/contents/?ref=jazzy\")",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(f['name']\\) for f in data]\")",
+      "Bash(curl -sL \"https://api.github.com/repos/SteveMacenski/slam_toolbox/contents/launch?ref=jazzy\")",
+      "Bash(curl *)"
     ]
   }
 }

@@ -42,7 +42,6 @@ from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import TransformStamped, PoseWithCovarianceStamped
 from std_msgs.msg import String
 from tf2_ros import TransformListener, Buffer
-from rclpy.time import Time
 
 HOST = '0.0.0.0'
 PORT = 9091
@@ -121,10 +120,7 @@ class WebBridge(Node):
         """Add a message to the broadcast queue. Blocks if full (up to 2s) so no messages are dropped."""
         msg_type = msg['type']
         try:
-            # Use blocking put so high-frequency scan/pose/map messages never get dropped.
-            # The broadcast loop drains at ~100 msg/s, so a 100-item queue handles 1s of bursts.
-            # If queue is full, block for up to 2s — enough for the broadcast loop to drain it.
-            ok = self.msg_queue.put(msg, block=True, timeout=2.0)
+            self.msg_queue.put(msg, block=True, timeout=2.0)
             self._msg_counts[msg_type] = self._msg_counts.get(msg_type, 0) + 1
         except queue.Full:
             self.get_logger().warn(f'Message queue full — dropped: {msg_type}')
@@ -177,6 +173,7 @@ class WebBridge(Node):
             angle += msg.angle_increment
 
         self._emit({'type': 'scan', 'data': {'points': points, 'count': len(points)}})
+        self.get_logger().debug(f'Scan received: {len(points)} points, queue size={self.msg_queue.qsize()}')
 
     def _on_map(self, msg: OccupancyGrid):
         self.map_seen = True
@@ -240,7 +237,7 @@ class WebBridge(Node):
         """Fallback: look up map->base_footprint transform directly when /pose topic is 0,0,0."""
         try:
             t = self.tf_buffer.lookup_transform(
-                'map', 'base_footprint', Time(),
+                'map', 'base_footprint', self.get_clock().now(),
                 timeout=Duration(seconds=0.05))
         except Exception:
             return
@@ -294,6 +291,7 @@ class WebSocketServer:
     async def _ws_handler(self, ws, path=None):
         client_addr = getattr(ws, 'remote_address', path)
         print(f'[web_bridge] Client connected: {client_addr} (total: {len(self.clients) + 1})')
+        print(f'[web_bridge] Client will receive: queue has {self.msg_queue.qsize()} messages buffered')
         with self.lock:
             self.clients.add(ws)
         try:
@@ -465,6 +463,24 @@ def main():
     print('[web_bridge] Waiting 2s for ROS 2 to initialize...')
     time.sleep(2.0)
     print('[web_bridge] ROS 2 initialization wait done')
+
+    # Verify which ROS topics are available (helps debug why no messages arrive)
+    import subprocess
+    print('[web_bridge] Checking available ROS topics...')
+    try:
+        result = subprocess.run(
+            ['ros2', 'topic', 'list'],
+            capture_output=True, text=True, timeout=5
+        )
+        topics = result.stdout.strip().split('\n') if result.stdout else []
+        print(f'[web_bridge] Available topics: {topics}')
+        key_topics = ['/scan', '/map_combined', '/pose', '/mapping_status', '/robot_status']
+        for t in key_topics:
+            found = any(t in line for line in topics)
+            status = 'FOUND' if found else 'MISSING'
+            print(f'[web_bridge]   {t}: {status}')
+    except Exception as e:
+        print(f'[web_bridge] Could not list topics: {e}')
 
     # --- WebSocket server in main thread ---
     ws_server = WebSocketServer(msg_queue, cmd_queue)
