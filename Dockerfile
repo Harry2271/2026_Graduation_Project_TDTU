@@ -9,6 +9,7 @@ RUN apt-get update && apt-get upgrade -y && \
     python3-pip \
     ros-jazzy-tf2-ros \
     ros-jazzy-sensor-msgs \
+    ros-jazzy-nav-msgs \
     python3-numpy \
     git \
     && apt-get clean \
@@ -18,16 +19,16 @@ RUN pip3 install --break-system-packages websockets
 
 WORKDIR /app
 
-# Tạo thư mục src trước
+# Create src directory
 RUN mkdir -p /app/src
 
-# Clone Lidar driver vào thư mục riêng trong src
+# Clone lidar driver
 RUN git clone https://github.com/Slamtec/sllidar_ros2.git /app/src/sllidar_ros2
 
-# Nên để code của mình vào một package riêng
+# Copy source code
 COPY src/ /app/src/my_robot_controller/
 
-# Build (Không cần rm -rf /app/build ở đây vì mỗi lần build layer này là nó mới rồi)
+# Build
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
     colcon build --merge-install --executor sequential"
 

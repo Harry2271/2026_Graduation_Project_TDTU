@@ -7,15 +7,14 @@ mkdir -p "$LOG_DIR"
 
 echo "=== Robot Core Starting ==="
 echo "  Lidar model : $LIDAR_MODEL"
-echo "  Mode        : $MAPPING_MODE"
 
 source /opt/ros/jazzy/setup.bash
 source /app/install/setup.bash 2>/dev/null || true
 
 PYTHON="/usr/bin/python3"
-BRAIN="/app/src/my_robot_controller/my_robot_controller/brain_node.py"
-WEB_BRIDGE="/app/src/my_robot_controller/my_robot_controller/web_bridge.py"
-MAP_MANAGER="/app/src/my_robot_controller/my_robot_controller/map_manager_node.py"
+BRAIN="/app/src/my_robot_controller/brain_node.py"
+WEB_BRIDGE="/app/src/my_robot_controller/web_bridge.py"
+MAP_MANAGER="/app/src/my_robot_controller/map_manager_node.py"
 
 # Auto-detect lidar port
 find_lidar_port() {
