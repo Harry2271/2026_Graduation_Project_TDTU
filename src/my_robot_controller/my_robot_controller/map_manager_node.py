@@ -88,9 +88,17 @@ class MapManager(Node):
         elif env_mode == 'live':
             self.mode = 'LIVE'
             self._load_persistent_map()
+            # If no saved map exists, use live robot-centric grid as the map
+            if not os.path.exists(SAVE_PATH):
+                self.get_logger().info(
+                    f'No saved map found at {SAVE_PATH} — '
+                    'using live robot-centric occupancy grid as the map'
+                )
+                self._live_mode_uses_temp_grid = True
         else:
             self.mode = 'IDLE'
         self.mapping_start_time = 0.0
+        self._live_mode_uses_temp_grid = False
 
         # --- Publishers ---
         self.map_combined_pub = self.create_publisher(OccupancyGrid, '/map_combined', 1)
@@ -292,12 +300,15 @@ class MapManager(Node):
         # Reset temporary grid to UNKNOWN
         self.temporary_grid = [CELL_UNKNOWN] * (GRID_CELLS * GRID_CELLS)
 
-        # Numpy vectorized raycasting within TEMP_RADIUS
+        # Use full lidar range when no saved map exists (8m); otherwise 2m temp radius
+        live_max_range = MAX_LASER_RANGE if self._live_mode_uses_temp_grid else TEMP_RADIUS
+
+        # Numpy vectorized raycasting
         angles = np.arange(len(msg.ranges)) * msg.angle_increment + msg.angle_min
         ranges = np.array(msg.ranges, dtype=np.float32)
         self.range_min = msg.range_min
         self._cast_rays_vectorized(rx, ry, theta, angles, ranges, 'temporary',
-                                    max_range=TEMP_RADIUS)
+                                    max_range=live_max_range)
 
         # --- Track hit counts for clearing ---
         for i, v in enumerate(self.temporary_grid):
@@ -356,6 +367,8 @@ class MapManager(Node):
         self.last_bbox_change_time = 0.0
         self.last_update_pose_x = 0.0
         self.last_update_pose_y = 0.0
+        # Re-check saved map after reset
+        self._live_mode_uses_temp_grid = not os.path.exists(SAVE_PATH)
 
     def _switch_mode(self, new_mode: str):
         self.mode = new_mode
@@ -407,6 +420,13 @@ class MapManager(Node):
         return msg
 
     def _publish_combined_map(self):
+        # If no saved map exists, use the live temporary grid directly as the map
+        # (it grows as the robot explores and shows obstacles in 8m radius around robot)
+        if self._live_mode_uses_temp_grid:
+            msg = self._build_grid_msg(self.temporary_grid, 'map')
+            self.map_combined_pub.publish(msg)
+            return
+
         # Overlay: persistent + temporary
         # Temporary OCCUPIED (100) overrides persistent
         # Temporary FREE (-1) clears persistent OCCUPIED
@@ -455,6 +475,7 @@ class MapManager(Node):
             with open(SAVE_PATH, 'r') as f:
                 data = json.load(f)
             self.persistent_grid = data['grid']
+            self._live_mode_uses_temp_grid = False
             bbox = data.get('bbox', {})
             self.bbox_min_x = bbox.get('min_x', float('inf'))
             self.bbox_max_x = bbox.get('max_x', float('-inf'))

@@ -234,7 +234,7 @@ class WebBridge(Node):
         })
 
     def _poll_tf_pose(self):
-        """Fallback: look up map->base_footprint transform directly when /pose topic is 0,0,0."""
+        """Fallback: look up map->base_footprint transform directly when /pose topic is unavailable."""
         try:
             t = self.tf_buffer.lookup_transform(
                 'map', 'base_footprint', self.get_clock().now(),
@@ -259,6 +259,7 @@ class WebBridge(Node):
         use_tf = slam_at_origin or (tf_newer and self._slam_pose_stamp_ns == 0)
 
         if use_tf or (self._slam_pose_stamp_ns == 0 and not self.pose_seen):
+            self.pose_seen = True
             self._emit({
                 'type': 'pose',
                 'data': {
