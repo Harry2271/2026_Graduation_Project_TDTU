@@ -28,18 +28,5 @@ services:
       - "9091:9091"                       # WebBridge WebSocket JSON server
     restart: always
 
-  # 2. ROSBridge WebSocket server (port 9090 for web frontend)
-  rosbridge-server:
-    build:
-      context: .
-      dockerfile: Dockerfile.rosbridge
-    container_name: rosbridge_server
-    network_mode: host
-    ipc: host
-    pid: host
-    environment:
-      - ROS_DOMAIN_ID=0
-    restart: always
-
 volumes:
   robot-maps:
