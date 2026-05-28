@@ -3,7 +3,8 @@
 import math
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import LaserScan, Odometry
+from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
