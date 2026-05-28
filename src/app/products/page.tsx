@@ -8,7 +8,7 @@ import {
   Input,
   Modal,
   Form,
-  notification,
+App,
   Empty,
   Popconfirm,
   Badge,
@@ -39,6 +39,7 @@ import { parseSlotCode, toSlotCode } from '@/types/inventory';
 const { Content } = Layout;
 
 export default function ProductsPage() {
+  const { notification } = App.useApp();
   const router = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);

@@ -9,9 +9,11 @@ import {
   Form,
   Input,
   Modal,
-  notification,
+App,
   Skeleton,
   Tooltip,
+  ConfigProvider,
+  theme
 } from "antd";
 import {
   ArrowLeftOutlined,
@@ -61,6 +63,7 @@ export default function ProductDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { notification } = App.useApp();
   const { id } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -168,7 +171,45 @@ export default function ProductDetailPage({
   };
 
   return (
-    <Layout style={{ minHeight: "100vh", background: "#f0f2f5" }}>
+    <ConfigProvider
+  theme={{
+    algorithm: theme.darkAlgorithm,
+    token: {
+      // Màu nền chính cho các khối (Card, Input, v.v.)
+      colorBgContainer: 'var(--bg-raised)',
+      // Màu nền cho các thành phần nổi (Modal, Popconfirm, Tooltip)
+      colorBgElevated: 'var(--bg-surface)',
+      // Màu nền tổng thể của Layout
+      colorBgLayout: 'var(--bg-surface)',
+      // Màu chữ chính và tiêu đề (Fix vụ title bị tối)
+      colorText: 'var(--text-primary)',
+      colorTextHeading: 'var(--text-primary)',
+      colorTextDescription: 'var(--text-secondary)',
+      // Màu border đồng bộ
+      colorBorder: 'var(--border-mid)',
+      // Font chữ JetBrains Mono
+      fontFamily: 'var(--font-jetbrains)',
+      // Màu nhấn (Primary) - lấy theo biến accent của ông
+      colorPrimary: 'var(--accent)',
+    },
+    components: {
+      Modal: {
+        headerBg: 'var(--bg-surface)',
+        contentBg: 'var(--bg-surface)',
+        footerBg: 'var(--bg-surface)',
+      },
+      Card: {
+        // Đảm bảo Card luôn dùng nền raised
+        colorBgContainer: 'var(--bg-raised)',
+      },
+      Notification: {
+        colorBgElevated: 'var(--bg-surface)',
+        colorTextHeading: 'var(--text-primary)',
+      }
+    },
+  }}
+    >
+      <Layout style={{ minHeight: "100vh", background: "#f0f2f5" }}>
       <Content
         style={{
           display: "flex",
@@ -510,5 +551,6 @@ export default function ProductDetailPage({
         </div>
       </Modal>
     </Layout>
+    </ConfigProvider>
   );
 }

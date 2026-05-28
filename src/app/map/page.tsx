@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Ruler, Compass, Target, WifiOff, Crosshair } from 'lucide-react';
-import { Button, notification, Tooltip, Modal } from 'antd';
+import { Button, App, Tooltip, Modal } from 'antd';
 
 const WS_URL = 'wss://map.nguyen-robot.io.vn';
 
@@ -28,6 +28,7 @@ function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number)
 }
 
 export default function MapPage() {
+  const { notification } = App.useApp();
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [pose, setPose] = useState<PoseData | null>(null);
