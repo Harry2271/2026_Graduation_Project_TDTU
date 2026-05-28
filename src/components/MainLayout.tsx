@@ -10,7 +10,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     >
       <Sidebar />
       <main
-        className="flex-1 h-screen overflow-auto relative"
+        className="flex flex-col flex-1 h-full overflow-hidden relative"
         style={{ background: 'var(--bg-void)' }}
       >
         {/* Subtle radial gradient at top */}

@@ -355,17 +355,32 @@ export default function InventoryPage() {
             backgroundSize: '100% 100%, 40px 40px, 40px 40px',
           }}
         >
-          {/* Shelf grid */}
-          <div className="absolute inset-12 flex flex-col justify-between max-w-5xl mx-auto h-[calc(100%-6rem)]">
-
-            {/* Top row */}
-            <div className="flex justify-between w-full z-10">
+          {/* Shelf grid using CSS grid — avoids the flex+absolute height-collapse issue */}
+          <div
+            className="relative w-full max-w-5xl mx-auto h-full px-6"
+            style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gridTemplateRows: '1fr auto 1fr', alignItems: 'center' }}
+          >
+            {/* Top-left shelf */}
+            <div style={{ gridColumn: '1', gridRow: '1', justifySelf: 'start' }}>
               <ShelfCard shelf={SHELF_POSITIONS[0]} source={source} dest={dest} packageCount={packagesByShelf[1]?.length || 0} onClick={() => setActiveShelf(1)} />
+            </div>
+            {/* Top-right shelf */}
+            <div style={{ gridColumn: '3', gridRow: '1', justifySelf: 'end' }}>
               <ShelfCard shelf={SHELF_POSITIONS[1]} source={source} dest={dest} packageCount={packagesByShelf[2]?.length || 0} onClick={() => setActiveShelf(2)} />
             </div>
+            {/* Bottom-left shelf */}
+            <div style={{ gridColumn: '1', gridRow: '3', justifySelf: 'start' }}>
+              <ShelfCard shelf={SHELF_POSITIONS[2]} source={source} dest={dest} packageCount={packagesByShelf[3]?.length || 0} onClick={() => setActiveShelf(3)} />
+            </div>
+            {/* Bottom-right shelf */}
+            <div style={{ gridColumn: '3', gridRow: '3', justifySelf: 'end' }}>
+              <ShelfCard shelf={SHELF_POSITIONS[3]} source={source} dest={dest} packageCount={packagesByShelf[4]?.length || 0} onClick={() => setActiveShelf(4)} />
+            </div>
 
-            {/* Center hub */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            {/* Center hub — overlaid in the middle column/row */}
+            <div
+              style={{ gridColumn: '2', gridRow: '2', justifySelf: 'center', alignSelf: 'center', pointerEvents: 'none' }}
+            >
               <div
                 className="text-center px-10 py-8 relative"
                 style={{
@@ -411,12 +426,6 @@ export default function InventoryPage() {
                   }}
                 />
               </div>
-            </div>
-
-            {/* Bottom row */}
-            <div className="flex justify-between w-full z-10">
-              <ShelfCard shelf={SHELF_POSITIONS[2]} source={source} dest={dest} packageCount={packagesByShelf[3]?.length || 0} onClick={() => setActiveShelf(3)} />
-              <ShelfCard shelf={SHELF_POSITIONS[3]} source={source} dest={dest} packageCount={packagesByShelf[4]?.length || 0} onClick={() => setActiveShelf(4)} />
             </div>
           </div>
         </div>
@@ -488,232 +497,6 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* ─── Right panel: Package list ────────────────────── */}
-      <div
-        className="w-[400px] flex flex-col h-full"
-        style={{
-          background: 'var(--bg-surface)',
-          borderLeft: '1px solid var(--border-dim)',
-          boxShadow: '-8px 0 32px rgba(0,0,0,0.3)',
-        }}
-      >
-        {/* Panel header */}
-        <div
-          className="p-5"
-          style={{
-            borderBottom: '1px solid var(--border-dim)',
-            background: 'linear-gradient(180deg, rgba(0,212,255,0.03) 0%, transparent 100%)',
-          }}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Package size={18} style={{ color: 'var(--accent)' }} />
-              <h2
-                className="text-base font-bold"
-                style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.01em' }}
-              >
-                Danh Sách Kiện Hàng
-              </h2>
-            </div>
-            <Badge
-              count={totalPackages}
-              style={{
-                backgroundColor: totalPackages > 0 ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.05)',
-                color: totalPackages > 0 ? 'var(--accent)' : 'var(--text-muted)',
-                border: `1px solid ${totalPackages > 0 ? 'rgba(0,212,255,0.3)' : 'var(--border-dim)'}`,
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 700,
-                fontSize: '11px',
-              }}
-            />
-          </div>
-
-          <Input
-            size="large"
-            placeholder="Tìm theo tên hoặc mã..."
-            prefix={<Search size={16} style={{ color: 'var(--text-muted)' }} />}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            allowClear
-            style={{
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--border-mid)',
-              borderRadius: '10px',
-              fontSize: '13px',
-            }}
-          />
-        </div>
-
-        {/* Package list */}
-        <div className="flex-1 overflow-y-auto p-4" style={{ background: 'var(--bg-base)' }}>
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center h-48 gap-3">
-              <Spin size="large" />
-              <p className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                Đang tải dữ liệu...
-              </p>
-            </div>
-          ) : totalPackages === 0 ? (
-            <Empty description={
-              <span style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
-                Kho hàng đang trống
-              </span>
-            } className="mt-12" />
-          ) : (
-            <Collapse
-              defaultActiveKey={['1', '2', '3', '4']}
-              ghost
-              items={SHELF_POSITIONS.map((shelf) => {
-                const shelfPackages = packagesByShelf[shelf.id] || [];
-                return {
-                  key: String(shelf.id),
-                  label: (
-                    <div className="flex items-center justify-between py-1 font-bold text-sm" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="text-[9px] px-2 py-0.5 rounded-md font-bold"
-                          style={{
-                            background: 'rgba(0,212,255,0.1)',
-                            border: '1px solid rgba(0,212,255,0.2)',
-                            color: 'var(--accent)',
-                            fontFamily: "'JetBrains Mono', monospace",
-                          }}
-                        >
-                          {shelf.id}
-                        </span>
-                        {shelf.label}
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>({shelf.zone})</span>
-                      </span>
-                      <Tag
-                        style={{
-                          background: shelfPackages.length > 0 ? 'rgba(0,212,255,0.1)' : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${shelfPackages.length > 0 ? 'rgba(0,212,255,0.2)' : 'var(--border-dim)'}`,
-                          color: shelfPackages.length > 0 ? 'var(--accent)' : 'var(--text-muted)',
-                          borderRadius: '999px',
-                          fontWeight: 700,
-                          fontSize: '11px',
-                          fontFamily: "'JetBrains Mono', monospace",
-                        }}
-                      >
-                        {shelfPackages.length} kiện
-                      </Tag>
-                    </div>
-                  ),
-                  children: shelfPackages.length === 0 ? (
-                    <p
-                      className="text-xs italic text-center py-4"
-                      style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
-                    >
-                      Không có kiện hàng nào
-                    </p>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {shelfPackages.map((pkg) => {
-                        const cellStatus = getCellStatus(pkg.shelfId, pkg.cell);
-                        return (
-                          <div
-                            key={pkg._id}
-                            className="p-3.5 rounded-xl transition-all"
-                            style={
-                              cellStatus === 'source'
-                                ? {
-                                    background: 'rgba(0,212,255,0.08)',
-                                    border: '1px solid rgba(0,212,255,0.3)',
-                                    boxShadow: '0 0 16px rgba(0,212,255,0.1)',
-                                  }
-                                : cellStatus === 'dest'
-                                ? {
-                                    background: 'rgba(0,255,136,0.08)',
-                                    border: '1px solid rgba(0,255,136,0.3)',
-                                    boxShadow: '0 0 16px rgba(0,255,136,0.1)',
-                                  }
-                                : {
-                                    background: 'var(--bg-raised)',
-                                    border: '1px solid var(--border-dim)',
-                                  }
-                            }
-                          >
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <div className="min-w-0">
-                                <h4 className="font-bold text-sm leading-snug truncate" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
-                                  {pkg.packageName}
-                                </h4>
-                                <span
-                                  className="text-[10px] font-mono mt-0.5 inline-block"
-                                  style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}
-                                >
-                                  #{pkg._id.slice(-8).toUpperCase()}
-                                </span>
-                              </div>
-                              <span
-                                className="px-2 py-1 rounded-lg text-xs font-bold flex-shrink-0"
-                                style={{
-                                  background: 'rgba(0,212,255,0.08)',
-                                  border: '1px solid rgba(0,212,255,0.15)',
-                                  color: 'var(--accent)',
-                                  fontFamily: "'JetBrains Mono', monospace",
-                                }}
-                              >
-                                Ô {pkg.cell}
-                              </span>
-                            </div>
-
-                            <div
-                              className="text-[11px] flex items-center justify-between pt-2"
-                              style={{
-                                borderTop: '1px solid var(--border-dim)',
-                                color: 'var(--text-muted)',
-                                fontFamily: "'JetBrains Mono', monospace",
-                              }}
-                            >
-                              <span>Nhập: <strong style={{ color: 'var(--text-secondary)' }}>{new Date(pkg.importedAt).toLocaleDateString('vi-VN')}</strong></span>
-                            </div>
-
-                            <div className="mt-2.5">
-                              {cellStatus === 'none' ? (
-                                <Button
-                                  size="small"
-                                  onClick={() => selectFromList(pkg.shelfId, pkg.cell)}
-                                  style={{
-                                    width: '100%',
-                                    borderRadius: '8px',
-                                    fontFamily: "'JetBrains Mono', monospace",
-                                    fontWeight: 600,
-                                    fontSize: '12px',
-                                    background: source ? 'rgba(0,255,136,0.08)' : 'rgba(0,212,255,0.08)',
-                                    border: source ? '1px solid rgba(0,255,136,0.2)' : '1px solid rgba(0,212,255,0.2)',
-                                    color: source ? 'var(--success)' : 'var(--accent)',
-                                  }}
-                                >
-                                  {source ? '→ Chọn làm Đích' : '→ Chọn làm Nguồn'}
-                                </Button>
-                              ) : (
-                                <div
-                                  className="w-full text-center py-1.5 rounded-lg text-xs font-bold"
-                                  style={{
-                                    background: cellStatus === 'source' ? 'rgba(0,212,255,0.15)' : 'rgba(0,255,136,0.15)',
-                                    border: `1px solid ${cellStatus === 'source' ? 'rgba(0,212,255,0.3)' : 'rgba(0,255,136,0.3)'}`,
-                                    color: cellStatus === 'source' ? 'var(--accent)' : 'var(--success)',
-                                    fontFamily: "'JetBrains Mono', monospace",
-                                    letterSpacing: '0.06em',
-                                  }}
-                                >
-                                  {cellStatus === 'source' ? '◉ NGUỒN' : '◉ ĐÍCH'}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ),
-                };
-              })}
-            />
-          )}
-        </div>
-      </div>
-
       {/* ─── Shelf detail modal ───────────────────────────── */}
       {activeShelf && (
         <Modal
@@ -723,19 +506,22 @@ export default function InventoryPage() {
           title={null}
           width={640}
           centered
-          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px', padding: 0 }}
-          styles={{ body: { padding: '24px' } }}
+          className="dark-modal"
+          style={{
+            background: 'var(--bg-surface)',
+          }}
+          styles={{
+            mask: { background: 'rgba(8, 11, 16, 0.85)', backdropFilter: 'blur(4px)', },
+            body: { padding: '0px', background: 'var(--bg-surface)' },
+            header: { display: 'none' },
+          }}
         >
           {/* Modal header */}
           <div
-            className="px-6 py-5 mb-5 relative overflow-hidden"
+            className="px-6 py-5 relative overflow-hidden"
             style={{
               background: 'linear-gradient(135deg, rgba(0,212,255,0.06) 0%, transparent 60%)',
               borderBottom: '1px solid var(--border-dim)',
-              marginTop: -24,
-              marginLeft: -24,
-              marginRight: -24,
-              marginBottom: 20,
             }}
           >
             <div className="flex items-center gap-4 relative z-10">
@@ -747,7 +533,7 @@ export default function InventoryPage() {
                   color: 'var(--accent)',
                   fontFamily: "'JetBrains Mono', monospace",
                   boxShadow: '0 0 20px rgba(0,212,255,0.15)',
-                }}
+                }}  
               >
                 {activeShelf}
               </div>
@@ -900,6 +686,7 @@ export default function InventoryPage() {
         cancelText="Huỷ"
         centered
         zIndex={1100}
+        className="dark-modal"
         style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px' }}
         title={
           <div className="flex items-center gap-2 font-bold text-base" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
@@ -974,6 +761,7 @@ export default function InventoryPage() {
         centered
         zIndex={1100}
         onCancel={() => setIsRemoveSourceConfirmOpen(false)}
+        className="dark-modal"
         style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px' }}
         footer={
           <div className="flex justify-end gap-2.5">

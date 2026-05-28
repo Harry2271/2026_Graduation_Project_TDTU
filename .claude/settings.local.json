@@ -12,7 +12,11 @@
       "Bash(yarn dev *)",
       "Bash(curl -s http://localhost:3000)",
       "Bash(curl *)",
-      "Bash(taskkill //F //IM node.exe)"
+      "Bash(taskkill //F //IM node.exe)",
+      "mcp__Puppeteer__puppeteer_navigate",
+      "mcp__Puppeteer__puppeteer_screenshot",
+      "mcp__Puppeteer__puppeteer_click",
+      "mcp__Puppeteer__puppeteer_evaluate"
     ]
   },
   "enableAllProjectMcpServers": true,

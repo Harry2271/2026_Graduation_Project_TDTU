@@ -185,7 +185,7 @@ export const { setSource, setDest, resetInventory } = inventorySlice.actions;
 
 - **Bilingual UI**: All user-facing text is in Vietnamese. Keep it consistent.
 - **Mock data** for packages lives in-memory in `src/store/apiSlice.ts`. It resets on server restart.
-- **WebSocket**: `map/page.tsx` connects to `wss://map.nguyen-robot.io.vn` (rosbridge for ROS 2). Handle connection state gracefully.
+- **WebSocket**: `map/page.tsx` connects to `wss://map.nguyen-robot.io.vn` (robot-core's web_bridge.py on port 9091). Handle connection state gracefully.
 - **Real-time (Socket.IO)**: `src/lib/socket.ts` manages the Socket.IO connection to `NEXT_PUBLIC_API_BASE_URL`. Socket events are wired into `inventoryApi` via RTK Query's `onCacheEntryAdded` lifecycle hook — no extra state needed. Events update the RTK Query cache directly, so all subscribed components auto-re-render.
   | Event | Effect on cache |
   |---|---|
