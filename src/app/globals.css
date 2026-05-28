@@ -544,3 +544,19 @@ body {
   background-color: #ffffff; /* Màu nền của nội dung bên trong */
   box-shadow: inset 0 0 0 20px #111928 !important; /* Tạo lớp màu đè lên vùng padding */
 }
+/* Target vào đúng class dark-modal để không ảnh hưởng modal khác */
+.dark-modal .ant-modal-content,
+.dark-modal .ant-modal-header,
+.dark-modal .ant-modal-footer {
+  background-color: var(--bg-surface) !important;
+}
+
+.dark-modal .ant-modal-content {
+  border: 1px solid var(--border-mid);
+  border-radius: 16px;
+}
+
+/* Xử lý cái tiêu đề cho khớp màu */
+.dark-modal .ant-modal-header .ant-modal-title {
+  background-color: var(--bg-surface) !important;
+}

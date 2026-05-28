@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import {
   Modal,
   Button,
-  notification,
+App,
   Tag,
   Badge,
   Input,
@@ -12,6 +12,8 @@ import {
   Spin,
   Tooltip,
   Empty,
+  ConfigProvider, 
+  theme
 } from 'antd';
 import {
   PackageOpen,
@@ -42,6 +44,7 @@ const SHELF_POSITIONS = [
 ];
 
 export default function InventoryPage() {
+  const { notification } = App.useApp();
   const dispatch = useAppDispatch();
   const source = useAppSelector((state) => state.inventory.source);
   const dest = useAppSelector((state) => state.inventory.dest);
@@ -678,7 +681,25 @@ export default function InventoryPage() {
       )}
 
       {/* Confirm dest modal */}
-      <Modal
+      <ConfigProvider
+  theme={{
+    algorithm: theme.darkAlgorithm, // Kích hoạt dark mode mặc định của AntD
+    token: {
+      colorBgElevation: '#111928', // Đây chính là màu nền của Modal content
+      colorBgMask: 'rgba(0, 0, 0, 0.6)',
+      borderRadiusLG: 16,
+    },
+    components: {
+      Modal: {
+        headerBg: '#111928',
+        footerBg: '#111928',
+        contentBg: '#111928',
+        titleColor: 'var(--text-primary)',
+      },
+    },
+  }}
+>
+  <Modal
         open={isConfirmDestOpen}
         onOk={handleConfirmDest}
         onCancel={handleCancelConfirmDest}
@@ -687,7 +708,23 @@ export default function InventoryPage() {
         centered
         zIndex={1100}
         className="dark-modal"
-        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px' }}
+        styles={{
+          content: {
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-mid)',
+            borderRadius: '16px',
+            padding: '24px', // Điều chỉnh lại padding cho cân đối
+          },
+          header: {
+            background: 'var(--bg-surface)',
+            marginBottom: '16px',
+          },
+          footer: {
+            background: 'var(--bg-surface)',
+            marginTop: '16px',
+            borderTop: 'none', // Xoá cái đường gạch ngang ở footer nếu ông muốn
+          },
+        }}
         title={
           <div className="flex items-center gap-2 font-bold text-base" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
             <ArrowLeftRight size={18} style={{ color: 'var(--accent)' }} />
@@ -749,9 +786,28 @@ export default function InventoryPage() {
           </div>
         )}
       </Modal>
+  </ConfigProvider>
 
       {/* Remove source confirmation modal */}
-      <Modal
+      <ConfigProvider
+  theme={{
+    algorithm: theme.darkAlgorithm, // Kích hoạt dark mode mặc định của AntD
+    token: {
+      colorBgElevation: '#111928', // Đây chính là màu nền của Modal content
+      colorBgMask: 'rgba(0, 0, 0, 0.6)',
+      borderRadiusLG: 16,
+    },
+    components: {
+      Modal: {
+        headerBg: '#111928',
+        footerBg: '#111928',
+        contentBg: '#111928',
+        titleColor: 'var(--text-primary)',
+      },
+    },
+  }}
+>
+  <Modal
         open={isRemoveSourceConfirmOpen}
         title={
           <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', fontWeight: 700 }}>
@@ -808,6 +864,7 @@ export default function InventoryPage() {
           </p>
         )}
       </Modal>
+  </ConfigProvider>
 
       {/* Global keyframe animations */}
       <style>{`

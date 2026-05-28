@@ -4,6 +4,7 @@ import './globals.css';
 import StoreProvider from './StoreProvider';
 import { AntdRegistry } from '@ant-design/nextjs-registry';
 import MainLayout from '@/components/MainLayout';
+import {ConfigProvider, theme, App} from 'antd'
 
 const syne = Syne({
   subsets: ['latin'],
@@ -40,7 +41,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="antialiased">
         <AntdRegistry>
           <StoreProvider>
-            <MainLayout>{children}</MainLayout>
+            <ConfigProvider
+              theme={{
+                components: {
+                  Notification: {
+                    colorTextHeading: 'var(--text-primary)',
+                    colorText: 'var(--text-secondary)',
+                    colorBgElevated: 'var(--bg-surface)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  },
+                },
+              }}
+            >
+              <App> 
+                <MainLayout>{children}</MainLayout>
+              </App>
+            </ConfigProvider>
           </StoreProvider>
         </AntdRegistry>
       </body>
