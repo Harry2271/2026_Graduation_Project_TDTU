@@ -636,6 +636,7 @@ export default function MapPage() {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [isClearingLidar, setIsClearingLidar] = useState(false);
 
   const sendCmd = useCallback((command: string, label: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -677,6 +678,17 @@ export default function MapPage() {
     occOffscreenRef.current = null;
     scanBoundsRef.current = null;
     setTimeout(() => setIsResetting(false), 1500);
+  };
+
+  const handleClearLidarGrid = () => {
+    setIsClearingLidar(true);
+    // Clear only the accumulated LIDAR occupancy grid — keep the full map intact
+    occGridRef.current = null;
+    occOffscreenRef.current = null;
+    prevOccGridRef.current = null;
+    scanBoundsRef.current = null;
+    setOccGridVersion(v => v + 1);
+    setTimeout(() => setIsClearingLidar(false), 1500);
   };
 
   const confirmReset = () => {
@@ -772,6 +784,18 @@ export default function MapPage() {
                 className="flex items-center gap-2 rounded-2xl font-bold shadow-md"
               >
                 Xóa Bản Đồ
+              </Button>
+            </Tooltip>
+
+            <Tooltip title="Xóa chỉ lưới LIDAR tích lũy, giữ nguyên bản đồ nền">
+              <Button
+                size="large"
+                icon={<RotateCcw size={18} className={isClearingLidar ? 'animate-spin' : ''} />}
+                loading={isClearingLidar}
+                onClick={handleClearLidarGrid}
+                className="flex items-center gap-2 rounded-2xl font-bold shadow-md border-blue-400 text-blue-600 hover:text-blue-700 hover:border-blue-500"
+              >
+                Xóa Lưới LIDAR
               </Button>
             </Tooltip>
           </div>
