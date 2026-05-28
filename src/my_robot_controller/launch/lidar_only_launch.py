@@ -31,17 +31,25 @@ def generate_launch_description():
         "' + '_launch.py'"
     ])
 
+    scan_frequency_arg = DeclareLaunchArgument(
+        'scan_frequency', default_value='10',
+        description='Lidar scan frequency in Hz')
+    scan_frequency = LaunchConfiguration('scan_frequency')
+
     return LaunchDescription([
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
         serial_port_arg,
         lidar_model_arg,
-        # Pass scan params as launch arguments (not SetParameter — those don't
-        # override the driver node's internal params)
+        scan_frequency_arg,
+        # Pass serial_baudrate as launch argument — the Slamtec driver reads it from
+        # there, not from SetParameter (SetParameter targets the parent launch node,
+        # not the driver node created inside the included launch file).
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(launch_file),
             launch_arguments={
                 'serial_port': serial_port,
-                'scan_frequency': '10',
-                'scan_mode': 'Normal',
+                'serial_baudrate': '256000',   # A1M8 requires 256000 baud
+                'scan_frequency': scan_frequency,
+                'scan_mode': 'Sensitivity',
             }.items()),
     ])

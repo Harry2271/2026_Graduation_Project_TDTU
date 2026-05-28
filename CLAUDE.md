@@ -314,33 +314,28 @@ ws.send(JSON.stringify({
     };
 
     // Render pose and arrow on every animation frame — independent of scan arrival.
-    // This prevents the pose from freezing when scans momentarily stop.
+    // Also calls renderScan every frame so lidar points appear continuously,
+    // not just when a new scan message arrives.
     function renderPose() {
       const now = Date.now();
 
       if (!robotPose) {
         poseEl.textContent = deviceInfo.pose === false ? 'Locating...' : '';
-        return;
-      }
-
-      // Show "Locating..." when robot is at origin and pose not yet established.
-      // When the robot has actually moved (x²+y² > 0.01), show real coords.
-      const distSq = robotPose.x * robotPose.x + robotPose.y * robotPose.y;
-      if (distSq < 0.01 && !deviceInfo.pose) {
-        poseEl.textContent = 'Locating...';
       } else {
-        poseEl.textContent =
-          `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)}` +
-          (scanPoints.length > 0 ? ` [${scanPoints.length} pts]` : '');
+        // Show "Locating..." when robot is at origin and pose not yet established.
+        // When the robot has actually moved (x²+y² > 0.01), show real coords.
+        const distSq = robotPose.x * robotPose.x + robotPose.y * robotPose.y;
+        if (distSq < 0.01 && !deviceInfo.pose) {
+          poseEl.textContent = 'Locating...';
+        } else {
+          poseEl.textContent =
+            `x=${robotPose.x.toFixed(2)} y=${robotPose.y.toFixed(2)} θ=${robotPose.theta.toFixed(2)}` +
+            (scanPoints.length > 0 ? ` [${scanPoints.length} pts]` : '');
+        }
       }
 
-      // Draw robot heading arrow (only when map is loaded)
-      if (mapData && robotPose) {
-        const rp = worldToScreen(robotPose.x, robotPose.y);
-        // Arrow drawn on scanCanvas — actual draw deferred to renderScan
-        // Store for use by renderScan
-        renderScan.poseScreenPos = rp;
-      }
+      // Draw scan + robot arrow every frame (60 fps) so lidar dots are always visible
+      renderScan();
 
       requestAnimationFrame(renderPose);
     }
@@ -374,23 +369,28 @@ ws.send(JSON.stringify({
       };
     }
 
-    // Fade old scan points so recent points appear brighter
+    // Fade old scan points so recent points appear brighter.
+    // Called every animation frame (60 fps) so lidar dots are always visible,
+    // not just when a new scan message arrives (~12 Hz).
     function renderScan() {
       const now = Date.now();
       const fade = Math.max(0.05, 1 - (now - lastScanTime) / 2000); // fade over 2s
 
-      if (!mapData) return;
-
-      // Resize scan canvas to match map canvas
-      if (scanCanvas.width !== canvas.width || scanCanvas.height !== canvas.height) {
-        scanCanvas.width = canvas.width;
-        scanCanvas.height = canvas.height;
+      // Always sync scan canvas size to map canvas (works even before first map arrives)
+      const targetW = canvas.width  || 800;
+      const targetH = canvas.height || 800;
+      if (scanCanvas.width !== targetW || scanCanvas.height !== targetH) {
+        scanCanvas.width  = targetW;
+        scanCanvas.height = targetH;
       }
-      scanCtx.clearRect(0, 0, scanCanvas.width, scanCanvas.height);
 
-      // Fade previous frame
+      // Clear and fade
+      scanCtx.clearRect(0, 0, scanCanvas.width, scanCanvas.height);
       scanCtx.fillStyle = `rgba(0, 212, 255, ${fade * 0.15})`;
       scanCtx.fillRect(0, 0, scanCanvas.width, scanCanvas.height);
+
+      // Guard point rendering: need both map (for world->screen transform) and pose
+      if (!mapData || !robotPose) return;
 
       // Draw scan points as bright cyan dots
       scanCtx.fillStyle = `rgba(0, 212, 255, ${Math.min(1, fade + 0.3)})`;
@@ -404,20 +404,18 @@ ws.send(JSON.stringify({
       }
 
       // Draw robot heading arrow
-      if (robotPose) {
-        const rp = worldToScreen(robotPose.x, robotPose.y);
-        scanCtx.save();
-        scanCtx.translate(rp.x, rp.y);
-        scanCtx.rotate(-robotPose.theta);
-        scanCtx.fillStyle = '#00d4ff';
-        scanCtx.beginPath();
-        scanCtx.moveTo(12, 0);
-        scanCtx.lineTo(-8, 7);
-        scanCtx.lineTo(-8, -7);
-        scanCtx.closePath();
-        scanCtx.fill();
-        scanCtx.restore();
-      }
+      const rp = worldToScreen(robotPose.x, robotPose.y);
+      scanCtx.save();
+      scanCtx.translate(rp.x, rp.y);
+      scanCtx.rotate(-robotPose.theta);
+      scanCtx.fillStyle = '#00d4ff';
+      scanCtx.beginPath();
+      scanCtx.moveTo(12, 0);
+      scanCtx.lineTo(-8, 7);
+      scanCtx.lineTo(-8, -7);
+      scanCtx.closePath();
+      scanCtx.fill();
+      scanCtx.restore();
     }
 
     function renderMap() {

@@ -49,7 +49,10 @@ def generate_launch_description():
                          PythonExpression(["'sllidar_' + '", lidar_model, "' + '_launch.py'"])
                          )
         ),
-        launch_arguments={'serial_port': serial_port}.items()
+        launch_arguments={
+            'serial_port': serial_port,
+            'serial_baudrate': '256000',   # A1M8 requires 256000 baud (not driver's default 1000000)
+        }.items()
     )
 
     # SLAM Toolbox launch
