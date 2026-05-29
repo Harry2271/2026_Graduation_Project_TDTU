@@ -20,13 +20,13 @@ echo "  Workspace: $WORKSPACE"
 cd "$WORKSPACE"
 
 if [ "$MODE" = "manual" ]; then
-    echo "[1/5] Pulling latest code..."
+    echo "[1/4] Pulling latest code..."
     git pull origin master
-    echo "[2/5] Installing dependencies..."
+    echo "[2/4] Installing dependencies..."
     yarn install --frozen-lockfile
-    echo "[3/5] Building..."
+    echo "[3/4] Building..."
     NEXT_TELEMETRY_DISABLED=1 yarn build
-    echo "[4/5] Installing production deps..."
+    echo "[4/4] Installing production deps..."
     yarn install --production --frozen-lockfile
 else
     echo "[1/3] Artifact downloaded — installing production deps..."
@@ -40,11 +40,11 @@ NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:5000}
 NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:9091}
 ENVEOF
 
-echo "[5/5] Restarting with PM2..."
+echo "[3/3] Restarting with PM2..."
+cd "$WORKSPACE"
 pm2 stop    "$SERVICE_NAME" 2>/dev/null || true
 pm2 delete  "$SERVICE_NAME" 2>/dev/null || true
-pm2 start   ecosystem.json --env production 2>/dev/null || \
-pm2 start   "node_modules/next/dist/bin/next" --name "$SERVICE_NAME" -- start -p 3000
+pm2 start   ecosystem.json --env production
 pm2 save
 
 echo "=== Frontend deployed ==="
