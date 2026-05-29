@@ -39,7 +39,7 @@ export default function MapPage() {
   const [isHeadingUp, setIsHeadingUp] = useState(true);
   const [isRobotLock, setIsRobotLock] = useState(true);
   const [zoom, setZoom] = useState(1);
-  const [lidarAxis, setLidarAxis] = useState(0);
+  const [lidarAxis, setLidarAxis] = useState(1);
 
   const mapDataRef = useRef<MapData | null>(null);
   const poseRef = useRef<PoseData | null>(null);
@@ -53,7 +53,7 @@ export default function MapPage() {
   const connectWsRef = useRef<() => void>(() => {});
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
-  const lidarAxisRef = useRef<number>(0);
+  const lidarAxisRef = useRef<number>(1);
   const occGridRef = useRef<MapData | null>(null);
   const occScaleRef = useRef<number>(0.05);
   const occSizeRef = useRef<number>(500);
@@ -365,8 +365,7 @@ export default function MapPage() {
         }, 5000);
       };
       ws.onmessage = (event) => {
-        try {
-          const msg: { type: string; data?: unknown } = JSON.parse(event.data as string);
+        function dispatch(msg: { type: string; data?: unknown }) {
           switch (msg.type) {
             case 'map': setMapData({ ...(msg.data as MapData) }); mapDataRef.current = msg.data as MapData; break;
             case 'pose': setPose({ ...(msg.data as PoseData) }); poseRef.current = { ...(msg.data as PoseData) }; break;
@@ -375,7 +374,27 @@ export default function MapPage() {
             case 'info': setInfo(msg.data as InfoData); break;
             case 'mode': setInfo(prev => ({ ...prev, mode: msg.data as string })); break;
           }
-        } catch { /* ignore */ }
+        }
+        function parse(data: ArrayBuffer | Blob | string) {
+          const bytes = data instanceof Blob ? null : (data instanceof ArrayBuffer ? new Uint8Array(data) : null);
+          const isGzip = bytes && bytes[0] === 0x1f && bytes[1] === 0x8b;
+          let text: string;
+          if (data instanceof Blob) {
+            data.arrayBuffer().then(buf => parse(buf));
+            return;
+          } else if (isGzip && bytes) {
+            const ds = new DecompressionStream('gzip');
+            const writer = ds.writable.getWriter();
+            writer.write(bytes);
+            writer.close();
+            new Response(ds.readable).text().then(t => { try { dispatch(JSON.parse(t)); } catch { /* ignore */ } });
+            return;
+          } else {
+            text = typeof data === 'string' ? data : new TextDecoder().decode(data as ArrayBuffer);
+          }
+          try { dispatch(JSON.parse(text)); } catch { /* ignore */ }
+        }
+        parse(event.data);
       };
       ws.onclose = () => {
         setWsStatus('disconnected');
