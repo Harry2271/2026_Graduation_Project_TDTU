@@ -1,7 +1,7 @@
 {
   "name": "nguyen-backend",
   "script": "dist/main.js",
-  "cwd": "/home/pi/nguyen-tdtu",
+  "cwd": ".",
   "instances": 1,
   "exec_mode": "cluster",
   "env": {
