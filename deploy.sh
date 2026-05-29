@@ -37,6 +37,11 @@ if [ ! -L "$ROS_WS/src/my_robot_controller" ]; then
     ln -s "$WORKSPACE/src/my_robot_controller" "$ROS_WS/src/my_robot_controller"
 fi
 
+# Also symlink config directory
+if [ ! -d "$WORKSPACE/src/config" ]; then
+    echo "⚠️ Config directory not found at $WORKSPACE/src/config"
+fi
+
 cd "$ROS_WS"
 # Đảm bảo có bộ biên dịch cho sllidar_ros2
 if ! command -v g++ &>/dev/null; then 
@@ -47,6 +52,14 @@ fi
 echo "🏗️ Building workspace with colcon..."
 colcon build --merge-install --executor sequential
 source "$ROS_WS/install/setup.bash"
+
+# Fallback: copy config files if setup.py glob missed them
+if [ ! -f "$ROS_WS/install/share/my_robot_controller/config/slam_params.yaml" ]; then
+    echo "📋 Config files missing — copying manually..."
+    mkdir -p "$ROS_WS/install/share/my_robot_controller/config"
+    cp "$WORKSPACE/src/config/slam_params.yaml" \
+       "$ROS_WS/install/share/my_robot_controller/config/" 2>/dev/null || true
+fi
 
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."
