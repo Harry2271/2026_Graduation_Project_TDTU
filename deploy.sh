@@ -60,8 +60,7 @@ fi
 # Build
 echo "[2/4] Building with colcon..."
 cd "$ROS_WS"
-source "$ROS_WS/install/setup.bash" 2>/dev/null || true
-export PYTHONPATH="$ROS_WS/src/my_robot_controller:$PYTHONPATH"
+source "$ROS_WS/install/setup.bash"
 colcon build --merge-install --executor sequential
 
 # Restart robot nodes
@@ -74,7 +73,13 @@ pkill -f "lidar_only"       2>/dev/null || true
 pkill -f "static_transform"  2>/dev/null || true
 sleep 2
 
+# Re-source workspace setup (loads RMW + local packages) and ensure scripts are executable
+ROBOT_PKG="$ROS_WS/src/my_robot_controller"
 source "$ROS_WS/install/setup.bash"
+chmod +x "$ROBOT_PKG/brain_node.py" \
+         "$ROBOT_PKG/map_manager_node.py" \
+         "$ROBOT_PKG/web_bridge.py"
+
 LOG_DIR="$HOME/robot_logs"
 mkdir -p "$LOG_DIR"
 
@@ -116,14 +121,13 @@ ros2 run tf2_ros static_transform_publisher \
     >> "$LOG_DIR/tf.log" 2>&1 &
 sleep 1
 
-ROBOT_PKG="$ROS_WS/src/my_robot_controller/my_robot_controller"
-"$ROBOT_PKG/brain_node.py"        > "$LOG_DIR/brain.log"      2>&1 &
-"$ROBOT_PKG/map_manager_node.py"  > "$LOG_DIR/map_manager.log" 2>&1 &
+python3 "$ROBOT_PKG/brain_node.py"       > "$LOG_DIR/brain.log"       2>&1 &
+python3 "$ROBOT_PKG/map_manager_node.py" > "$LOG_DIR/map_manager.log" 2>&1 &
 
 start_web_bridge() {
     while true; do
         echo "[WS] restart at $(date)" >> "$LOG_DIR/web_bridge.log"
-        "$ROBOT_PKG/web_bridge.py" >> "$LOG_DIR/web_bridge.log" 2>&1
+        python3 "$ROBOT_PKG/web_bridge.py" >> "$LOG_DIR/web_bridge.log" 2>&1
         [ $? -eq 0 ] && break
         sleep 3
     done
