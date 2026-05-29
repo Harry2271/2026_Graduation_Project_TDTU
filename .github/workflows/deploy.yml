@@ -12,10 +12,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build and Deploy via Script
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
           # Nạp đường dẫn PM2 và Node
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
-          
+
+          # Debug: verify workspace has the files we need
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls "$GITHUB_WORKSPACE/src/launch/"
+          ls "$GITHUB_WORKSPACE/src/my_robot_controller/"
+
           # Làm sạch file và thực thi
           sed -i 's/\r$//' ./deploy.sh
           chmod +x ./deploy.sh
@@ -26,11 +33,11 @@ jobs:
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
           echo "Waiting for ROS 2 nodes to stabilize..."
           sleep 10
-          
+
           # Kiểm tra PM2
           pm2 status
-          
+
           # Kiểm tra Topic (Nạp source để dùng lệnh ros2)
           source /opt/ros/jazzy/setup.bash
-          ros2 topic list | grep "/scan" || (echo "❌ Lidar topic NOT FOUND. Check logs: pm2 logs nexus-robot-lidar"; exit 1)
-          echo "✅ Everything is running!"
+          ros2 topic list | grep "/scan" || (echo "Lidar topic NOT FOUND. Check logs: pm2 logs nexus-robot-lidar"; exit 1)
+          echo "Everything is running!"
