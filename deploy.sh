@@ -55,10 +55,9 @@ start_ros_node "${SERVICE_NAME_PREFIX}-lidar" "ros2 launch sllidar_ros2 sllidar_
 start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller slam_only_launch.py"
 
 # 2. Logic Nodes
-PKG_BIN="$ROS_WS/install/lib/my_robot_controller"
-start_ros_node "${SERVICE_NAME_PREFIX}-brain" "python3 $ROS_WS/src/my_robot_controller/my_robot_controller/brain_node.py"
-start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "python3 $ROS_WS/src/my_robot_controller/my_robot_controller/map_manager_node.py"
-start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "python3 $ROS_WS/src/my_robot_controller/my_robot_controller/web_bridge.py"
+start_ros_node "${SERVICE_NAME_PREFIX}-brain" "ros2 run my_robot_controller brain"
+start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
+start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
 
 pm2 save
 echo "✅ DEPLOY THÀNH CÔNG!"

@@ -19,8 +19,6 @@ setup(
         # Include config files from config/
         (os.path.join('share', package_name, 'config'),
             ['config/slam_params.yaml']),
-        # Include Python module files from src/my_robot_controller/
-        (os.path.join('share', package_name), glob('*.py')),
     ],
     install_requires=['setuptools', 'websockets>=10.0'],
     zip_safe=True,
