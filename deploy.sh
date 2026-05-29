@@ -80,7 +80,7 @@ fi
 # Clone sllidar_ros2 if not present (needed for lidar_only_launch.py)
 if [ ! -d "$ROS_WS/src/sllidar_ros2" ]; then
     echo "[INFO] Cloning sllidar_ros2..."
-    git clone --branch ros2 --depth 1 https://github.com/Slamtec/sllidar_ros2.git "$ROS_WS/src/sllidar_ros2"
+    git clone --branch main --depth 1 https://github.com/Slamtec/sllidar_ros2.git "$ROS_WS/src/sllidar_ros2"
 fi
 
 # Build
