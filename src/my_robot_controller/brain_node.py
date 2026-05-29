@@ -9,7 +9,8 @@ from std_msgs.msg import String
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 
-LINEAR_SPEED = 0.15   # m/s — simulated forward speed
+LINEAR_SPEED = 0.0    # m/s — 0 = robot is stationary, user physically moves it
+                       #         frontend handles localization via scan matching
 
 
 class BrainNode(Node):
@@ -35,7 +36,7 @@ class BrainNode(Node):
 
     def _on_scan(self, msg: LaserScan):
         self._scan_count += 1
-        self.vx = LINEAR_SPEED  # always move forward (simulated)
+        self.vx = LINEAR_SPEED  # 0 = stationary; frontend localizes via scan matching
 
     def _tick(self):
         now = self.get_clock().now()
