@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
-"""web_bridge — WebSocket server. ROS topics -> JSON messages."""
+"""
+web_bridge — WebSocket server. ROS topics → JSON messages → browser.
+
+Messages (Robot → Frontend):
+  type          | content                                           | max rate
+  -------------|---------------------------------------------------|----------
+  scan         | robot-centric lidar point cloud                   |  5 Hz
+  map_layer    | persistent occupancy grid (MAPPING or LIVE)        |  5 Hz
+  obstacle_layer| 2m awareness-zone grid (post-mapping final scan) | on event
+  pose         | robot x, y, theta from odometry                   | 10 Hz
+  status       | human-readable state string                       | on change
+  mode         | machine state: idle / mapping_idle / mapping_active
+               | / scan_obstacle / live                            | on change
+  info         | device availability + current mode                |  0.2 Hz
+  ping         | keepalive                                         |  0.2 Hz
+
+Commands (Frontend → Robot):
+  { "type": "cmd", "command": "start" | "stop" | "idle" }
+
+Web throttle: scan and map_layer are hard-capped at 5 Hz by dropping
+intermediate messages in the ROS callback before they enter the queue.
+"""
 import asyncio
 import gzip
 import json
@@ -17,6 +38,19 @@ from std_msgs.msg import String
 HOST = '0.0.0.0'
 PORT = 9091
 
+# ── Web throttle ──────────────────────────────────────────────────────────────
+MAX_SCAN_RATE_HZ = 5.0
+MIN_SCAN_INTERVAL = 1.0 / MAX_SCAN_RATE_HZ   # 0.2 s
+
+# ── State labels ──────────────────────────────────────────────────────────────
+STATE_LABELS = {
+    'IDLE':           'idle',
+    'MAPPING_IDLE':   'mapping_idle',
+    'MAPPING_ACTIVE': 'mapping_active',
+    'SCAN_OBSTACLE': 'scan_obstacle',
+    'LIVE':           'live',
+}
+
 
 class WebBridge(Node):
     def __init__(self, msg_q, cmd_q):
@@ -27,22 +61,29 @@ class WebBridge(Node):
         self.lidar_seen = False
         self.map_seen   = False
         self.pose_seen  = False
-        self.mode       = 'live'
+        self.mode       = 'idle'
 
+        # ── Throttle state ─────────────────────────────────────────────────
+        self._last_scan_sent_time = 0.0
+
+        # ── Subscriptions ───────────────────────────────────────────────────
         self.cmd_pub = self.create_publisher(String, '/mapping/control', 10)
 
-        self.create_subscription(LaserScan, '/scan',               self._on_scan,            10)
-        self.create_subscription(OccupancyGrid, '/map_combined',  self._on_map,            10)
-        self.create_subscription(String, '/robot_status',         self._on_status,         10)
-        self.create_subscription(String, '/mapping_status',        self._on_mapping_status, 10)
-        self.create_subscription(Odometry, '/odom',                self._on_odom,           10)
+        self.create_subscription(LaserScan,    '/scan',               self._on_scan,            10)
+        self.create_subscription(OccupancyGrid, '/map_combined',      self._on_map_layer,      10)
+        self.create_subscription(OccupancyGrid, '/obstacle_layer',    self._on_obstacle_layer, 10)
+        self.create_subscription(String,         '/robot_status',      self._on_status,         10)
+        self.create_subscription(String,         '/mapping_status',    self._on_mapping_status, 10)
+        self.create_subscription(Odometry,       '/odom',             self._on_odom,            10)
 
         self.create_timer(5.0, self._broadcast_info)
         self.create_timer(0.1, self._poll_commands)
 
         self.get_logger().info(f'WebBridge listening on ws://{HOST}:{PORT}')
         self._emit({'type': 'info', 'data': {
-            'lidar': False, 'map': False, 'pose': False, 'mode': 'live'}})
+            'lidar': False, 'map': False, 'pose': False, 'mode': 'idle'}})
+
+    # ── Emit helpers ───────────────────────────────────────────────────────────
 
     def _emit(self, msg):
         try:
@@ -50,8 +91,16 @@ class WebBridge(Node):
         except queue.Full:
             pass
 
+    # ── Scan — throttled to MAX_SCAN_RATE_HZ ──────────────────────────────────
+
     def _on_scan(self, msg: LaserScan):
         self.lidar_seen = True
+
+        now = time.monotonic()
+        if now - self._last_scan_sent_time < MIN_SCAN_INTERVAL:
+            return
+        self._last_scan_sent_time = now
+
         pts = []
         angle = msg.angle_min
         for r in msg.ranges:
@@ -61,28 +110,49 @@ class WebBridge(Node):
             angle += msg.angle_increment
         self._emit({'type': 'scan', 'data': {'points': pts, 'count': len(pts)}})
 
-    def _on_map(self, msg: OccupancyGrid):
+    # ── Map layer ──────────────────────────────────────────────────────────────
+
+    def _on_map_layer(self, msg: OccupancyGrid):
         self.map_seen = True
-        self._emit({'type': 'map', 'data': {
-            'width': msg.info.width,
-            'height': msg.info.height,
-            'resolution': msg.info.resolution,
-            'origin_x': msg.info.origin.position.x,
-            'origin_y': msg.info.origin.position.y,
-            'data': list(msg.data)}})
+        self._emit({'type': 'map_layer', 'data': {
+            'width':       msg.info.width,
+            'height':      msg.info.height,
+            'resolution':  msg.info.resolution,
+            'origin_x':    msg.info.origin.position.x,
+            'origin_y':    msg.info.origin.position.y,
+            'data':        list(msg.data)}})
+
+    # ── Obstacle awareness-zone layer ───────────────────────────────────────────
+
+    def _on_obstacle_layer(self, msg: OccupancyGrid):
+        self._emit({'type': 'obstacle_layer', 'data': {
+            'width':       msg.info.width,
+            'height':      msg.info.height,
+            'resolution':  msg.info.resolution,
+            'origin_x':    msg.info.origin.position.x,
+            'origin_y':    msg.info.origin.position.y,
+            'data':        list(msg.data)}})
+
+    # ── Status ─────────────────────────────────────────────────────────────────
 
     def _on_status(self, msg: String):
         self._emit({'type': 'status', 'data': msg.data})
 
     def _on_mapping_status(self, msg: String):
-        data = msg.data
-        new_mode = ('live' if 'LIVE' in data else
-                    'mapping' if 'MAPPING' in data else 'idle')
+        raw = msg.data
+        # Parse state from status string: "MAPPING: recording..." etc.
+        for ros_state, label in STATE_LABELS.items():
+            if ros_state in raw.upper():
+                new_mode = label
+                break
+        else:
+            new_mode = 'idle'
+
         if new_mode != self.mode:
             self.mode = new_mode
-            self.get_logger().info(f'Mode changed to {self.mode}')
+            self.get_logger().info(f'Mode changed → {self.mode}')
         self._emit({'type': 'mode', 'data': self.mode})
-        self._emit({'type': 'status', 'data': data})
+        self._emit({'type': 'status', 'data': raw})
 
     def _on_odom(self, msg: Odometry):
         self.pose_seen = True
@@ -153,8 +223,8 @@ class WSServer:
                     for m in batch:
                         try:
                             payload = json.dumps(m)
-                            # Compress map messages (~1.5MB raw -> ~50KB compressed)
-                            if m.get('type') == 'map':
+                            # Compress grid messages (~1.5 MB raw → ~50 KB compressed)
+                            if m.get('type') in ('map_layer', 'obstacle_layer'):
                                 payload = gzip.compress(payload.encode(), compresslevel=1)
                             await ws.send(payload)
                         except Exception:
@@ -170,7 +240,7 @@ class WSServer:
 
 def main():
     msg_q = queue.Queue(maxsize=500)
-    cmd_q = queue.Queue(maxsize=20)  # dedicated queue for commands — only _poll_commands reads this
+    cmd_q = queue.Queue(maxsize=20)
 
     def ros_spin():
         if rclpy.ok():
