@@ -119,12 +119,12 @@ class WSServer:
         self.clients = set()
         self.running = True
 
-    async def handler(self, ws, path):
-        addr = getattr(ws.remote_address, '__str__', lambda: path)()
+    async def handler(self, connection):
+        addr = str(connection.remote_address)
         print(f'[WS] + {addr}')
-        self.clients.add(ws)
+        self.clients.add(connection)
         try:
-            async for raw in ws:
+            async for raw in connection:
                 try:
                     cmd = json.loads(raw)
                     if cmd.get('type') == 'cmd' and cmd.get('command'):
@@ -135,7 +135,7 @@ class WSServer:
         except Exception as e:
             print(f'[WS] {addr} error: {e}')
         finally:
-            self.clients.discard(ws)
+            self.clients.discard(connection)
             print(f'[WS] - {addr}')
 
     async def broadcast_loop(self):
@@ -157,8 +157,7 @@ class WSServer:
 
     async def run(self):
         import websockets
-        async with websockets.serve(
-                lambda ws, path: self.handler(ws, path), HOST, PORT) as srv:
+        async with websockets.serve(self.handler, HOST, PORT) as srv:
             print(f'[WS] Server on ws://{HOST}:{PORT}')
             await asyncio.gather(self.broadcast_loop(), srv.__aenter__())
 

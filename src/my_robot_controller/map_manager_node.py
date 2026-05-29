@@ -93,7 +93,7 @@ class MapManager(Node):
         dists     = np.arange(max_steps, dtype=np.float32) * step
 
         xs = self.odom_x + np.outer(np.cos(abs_angles), dists).astype(np.float32)
-        ys = self.odom_y + np.sin(np.tile(abs_angles, (max_steps, 1)).T * np.ones((n, max_steps)), dists).T.astype(np.float32)
+        ys = self.odom_y + np.outer(np.sin(abs_angles), dists).astype(np.float32)
 
         gxs = ((xs - ORIGIN) / RESOLUTION).astype(np.int32)
         gys = ((ys - ORIGIN) / RESOLUTION).astype(np.int32)
