@@ -2,7 +2,8 @@
 # =============================================================================
 # deploy.sh — Build and restart ROS 2 robot controller on the Pi
 #
-# Builds on Pi (ARM64 native — can't cross-compile ROS 2).
+# CI/CD flow: actions/checkout lands here → colcon build → restart nodes
+# Manual flow: git pull + build + restart
 # =============================================================================
 
 set -e
@@ -10,19 +11,24 @@ set -e
 WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 ROS_WS="/opt/ros/robot_ws"
 LIDAR_MODEL="${LIDAR_MODEL:-a1}"
+MODE="${1:-}"
 
 echo "=== Deploying Robot Controller ==="
 echo "  Lidar model: $LIDAR_MODEL"
 echo "  Workspace:   $WORKSPACE"
 
-# Source ROS 2
 source /opt/ros/jazzy/setup.bash
 source /opt/ros/sllidar_ros2/install/setup.bash 2>/dev/null || true
 
-# Pull latest code
-echo "[1/3] Pulling latest code..."
 cd "$WORKSPACE"
-git pull origin master
+
+# Manual mode: pull latest code first
+if [ "$MODE" = "manual" ]; then
+    echo "[1/4] Pulling latest code..."
+    git pull origin master
+else
+    echo "[1/4] CI/CD mode — code already checked out"
+fi
 
 # Link src into ROS workspace
 mkdir -p "$ROS_WS/src"
@@ -31,14 +37,14 @@ if [ ! -e "$ROS_WS/src/my_robot_controller" ]; then
 fi
 
 # Build
-echo "[2/3] Building with colcon..."
+echo "[2/4] Building with colcon..."
 cd "$ROS_WS"
 source "$ROS_WS/install/setup.bash" 2>/dev/null || true
 export PYTHONPATH="$ROS_WS/src/my_robot_controller:$PYTHONPATH"
 colcon build --merge-install --executor sequential
 
 # Restart robot nodes
-echo "[3/3] Restarting robot nodes..."
+echo "[3/4] Restarting robot nodes..."
 
 pkill -f "brain_node"       2>/dev/null || true
 pkill -f "map_manager"      2>/dev/null || true
@@ -51,7 +57,6 @@ source "$ROS_WS/install/setup.bash"
 LOG_DIR="/var/log/robot"
 mkdir -p "$LOG_DIR"
 
-# Detect lidar port
 find_lidar_port() {
     for link in /dev/serial/by-id/*; do
         [ -e "$link" ] || continue
@@ -69,7 +74,6 @@ find_lidar_port() {
 LIDAR_PORT=$(find_lidar_port | tr -d '[:space:]')
 echo "  Lidar port: $LIDAR_PORT"
 
-# Lidar driver
 ros2 launch my_robot_controller lidar_only_launch.py \
     lidar_model:="$LIDAR_MODEL" serial_port:="$LIDAR_PORT" \
     > "$LOG_DIR/lidar.log" 2>&1 &
@@ -81,7 +85,6 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# TF publishers
 ros2 run tf2_ros static_transform_publisher \
     --x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0 \
     --frame-id base_footprint --child-frame-id base_link \
@@ -92,12 +95,10 @@ ros2 run tf2_ros static_transform_publisher \
     >> "$LOG_DIR/tf.log" 2>&1 &
 sleep 1
 
-# Python nodes
 ROBOT_PKG="$ROS_WS/src/my_robot_controller/my_robot_controller"
-"$ROBOT_PKG/brain_node.py"         > "$LOG_DIR/brain.log"      2>&1 &
-"$ROBOT_PKG/map_manager_node.py"   > "$LOG_DIR/map_manager.log" 2>&1 &
+"$ROBOT_PKG/brain_node.py"        > "$LOG_DIR/brain.log"      2>&1 &
+"$ROBOT_PKG/map_manager_node.py"  > "$LOG_DIR/map_manager.log" 2>&1 &
 
-# WebSocket bridge with auto-restart
 start_web_bridge() {
     while true; do
         echo "[WS] restart at $(date)" >> "$LOG_DIR/web_bridge.log"
