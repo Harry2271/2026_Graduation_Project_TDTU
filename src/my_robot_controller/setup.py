@@ -13,12 +13,12 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # Include launch files from src/launch/ (relative to src/my_robot_controller/)
+        # Include launch files from launch/ (relative to package root)
         (os.path.join('share', package_name, 'launch'),
-            ['src/launch/slam_only_launch.py', 'src/launch/lidar_only_launch.py']),
-        # Include config files from src/config/
+            ['launch/slam_only_launch.py', 'launch/lidar_only_launch.py']),
+        # Include config files from config/
         (os.path.join('share', package_name, 'config'),
-            ['src/config/slam_params.yaml']),
+            ['config/slam_params.yaml']),
         # Include Python module files from src/my_robot_controller/
         (os.path.join('share', package_name), glob('*.py')),
     ],

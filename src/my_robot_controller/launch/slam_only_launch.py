@@ -10,7 +10,7 @@ def generate_launch_description():
     slam_toolbox_pkg = FindPackageShare('slam_toolbox').find('slam_toolbox')
     slam_params_file = os.path.join(
         FindPackageShare('my_robot_controller').find('my_robot_controller'),
-        '..', 'config', 'slam_params.yaml')
+        'config', 'slam_params.yaml')
 
     return LaunchDescription([
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),

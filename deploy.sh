@@ -28,19 +28,12 @@ echo "📍 Lidar Port: $LIDAR_PORT"
 sudo chmod 666 "$LIDAR_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $LIDAR_PORT"
 
 # --- [BƯỚC 2] Sửa cấu trúc Folder & Build ---
-mkdir -p "$ROS_WS/src/my_robot_controller/launch"
-mkdir -p "$ROS_WS/src/my_robot_controller/my_robot_controller"
+mkdir -p "$ROS_WS/src"
 
-# FIX: Đưa file vào đúng chỗ mà setup.py của ROS 2 yêu cầu
+# FIX: Copy the entire package directory from Workspace to ROS Workspace
 echo "📂 Reorganizing files for colcon build..."
-cp "$WORKSPACE/slam_only_launch.py" "$ROS_WS/src/my_robot_controller/launch/" 2>/dev/null || true
-cp "$WORKSPACE/lidar_only_launch.py" "$ROS_WS/src/my_robot_controller/launch/" 2>/dev/null || true
-cp "$WORKSPACE/brain_node.py" "$ROS_WS/src/my_robot_controller/my_robot_controller/" 2>/dev/null || true
-cp "$WORKSPACE/map_manager_node.py" "$ROS_WS/src/my_robot_controller/my_robot_controller/" 2>/dev/null || true
-cp "$WORKSPACE/web_bridge.py" "$ROS_WS/src/my_robot_controller/my_robot_controller/" 2>/dev/null || true
-cp "$WORKSPACE/package.xml" "$ROS_WS/src/my_robot_controller/" 2>/dev/null || true
-cp "$WORKSPACE/setup.py" "$ROS_WS/src/my_robot_controller/" 2>/dev/null || true
-cp "$WORKSPACE/setup.cfg" "$ROS_WS/src/my_robot_controller/" 2>/dev/null || true
+rm -rf "$ROS_WS/src/my_robot_controller"
+cp -r "$WORKSPACE/src/my_robot_controller" "$ROS_WS/src/"
 
 cd "$ROS_WS"
 echo "🏗️ Building workspace..."

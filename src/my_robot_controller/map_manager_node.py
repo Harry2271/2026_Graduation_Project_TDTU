@@ -173,6 +173,13 @@ class MapManager(Node):
                 self._enter_scan_obstacle()
         elif cmd == 'idle':
             self._enter_idle()
+        elif cmd == 'reset':
+            self.persistent_grid[:] = CELL_UNKNOWN
+            self.temp_grid[:]       = CELL_UNKNOWN
+            self.obstacle_grid[:]   = CELL_UNKNOWN
+            self._enter_idle()
+            self._publish_map_layer()
+            self._publish_obstacle_layer()
 
     def _on_scan(self, msg: LaserScan):
         """Route scan to the appropriate handler based on current state."""
