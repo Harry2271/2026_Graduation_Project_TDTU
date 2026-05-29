@@ -9,7 +9,7 @@
 set -e
 
 WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
-ROS_WS="/opt/ros/robot_ws"
+ROS_WS="$HOME/robot_ws"
 LIDAR_MODEL="${LIDAR_MODEL:-a1}"
 MODE="${1:-}"
 
