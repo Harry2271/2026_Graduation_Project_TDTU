@@ -12,10 +12,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # Include all launch files (flattened: src/launch/)
-        (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
-        # Include Python module files (flattened: src/my_robot_controller/)
-        (os.path.join('share', package_name), glob('my_robot_controller/*.py')),
+        # Include launch files from src/launch/
+        (os.path.join('share', package_name, 'launch'), glob('../launch/*.py')),
+        # Include Python module files from src/my_robot_controller/
+        (os.path.join('share', package_name), glob('*.py')),
     ],
     install_requires=['setuptools', 'websockets>=10.0'],
     zip_safe=True,

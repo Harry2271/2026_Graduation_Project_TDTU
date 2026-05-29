@@ -37,6 +37,9 @@ fi
 source "$ROS_SETUP"
 echo "[INFO] Sourced ROS 2 from $ROS_SETUP"
 
+# Use CycloneDDS RMW (Fast DDS not installed on this system)
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
 # Source SLLidar driver
 source /opt/ros/sllidar_ros2/install/setup.bash 2>/dev/null || \
 source /opt/ros/sllidar_ros2/setup.bash 2>/dev/null || true
