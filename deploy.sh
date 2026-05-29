@@ -75,7 +75,7 @@ pkill -f "static_transform"  2>/dev/null || true
 sleep 2
 
 source "$ROS_WS/install/setup.bash"
-LOG_DIR="/var/log/robot"
+LOG_DIR="$HOME/robot_logs"
 mkdir -p "$LOG_DIR"
 
 find_lidar_port() {
