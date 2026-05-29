@@ -10,8 +10,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
-from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav_msgs.msg import OccupancyGrid, Odometry
 from std_msgs.msg import String
 
 HOST = '0.0.0.0'
@@ -34,7 +33,7 @@ class WebBridge(Node):
         self.create_subscription(OccupancyGrid, '/map_combined',  self._on_map,   10)
         self.create_subscription(String, '/robot_status',         self._on_status, 10)
         self.create_subscription(String, '/mapping_status',        self._on_mapping_status, 10)
-        self.create_subscription(PoseWithCovarianceStamped, '/pose', self._on_pose, 10)
+        self.create_subscription(nav_msgs.msg.Odometry, '/odom', self._on_odom, 10)
 
         self.create_timer(5.0, self._broadcast_info)
         self.create_timer(0.1, self._poll_commands)
@@ -83,7 +82,7 @@ class WebBridge(Node):
         self._emit({'type': 'mode', 'data': self.mode})
         self._emit({'type': 'status', 'data': data})
 
-    def _on_pose(self, msg: PoseWithCovarianceStamped):
+    def _on_odom(self, msg: Odometry):
         self.pose_seen = True
         q = msg.pose.pose.orientation
         theta = self._yaw(q.x, q.y, q.z, q.w)
