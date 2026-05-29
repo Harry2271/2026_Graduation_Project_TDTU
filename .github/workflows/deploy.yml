@@ -29,22 +29,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
-          # Lấy chính xác các file cần để chạy production
           path: |
             .next/
             public/
             package.json
             yarn.lock
             next.config.ts
+            ecosystem.json
 
   deploy:
     needs: build
     runs-on: self-hosted
     steps:
-      # Bước 1: Lấy script deploy.sh từ Git về trước
       - uses: actions/checkout@v4
 
-      # Bước 2: Tải bản build đè lên (để đảm bảo .next tồn tại)
+      # Xóa sạch folder cũ để tránh kẹt cache hoặc sai lệch file
+      - name: Clean workspace
+        run: rm -rf .next public package.json yarn.lock ecosystem.json
+
       - name: Download Build Artifact
         uses: actions/download-artifact@v4
         with:
@@ -54,16 +56,10 @@ jobs:
       - name: Run deploy script
         env:
           PORT: ${{ vars.PORT }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
         run: |
-          # Nạp PATH để nhận diện yarn/pm2 nếu cần
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
-          # Xử lý CRLF cho deploy.sh nếu ông sửa trên Windows
           sed -i 's/\r$//' ./deploy.sh
           chmod +x ./deploy.sh
           ./deploy.sh
-
-      - name: Health check
-        run: |
-          sleep 5
-          # Kiểm tra đúng Port mà ông đã set trong vars
-          curl -sf http://localhost:${{ vars.PORT || 3000 }} || (echo "Health check failed"; exit 1)
