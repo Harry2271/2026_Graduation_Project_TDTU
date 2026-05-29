@@ -10,7 +10,8 @@ import math
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import LaserScan, Odometry
+from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import Odometry
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
 

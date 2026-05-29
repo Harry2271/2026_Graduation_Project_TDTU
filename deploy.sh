@@ -37,8 +37,14 @@ fi
 source "$ROS_SETUP"
 echo "[INFO] Sourced ROS 2 from $ROS_SETUP"
 
-# Use CycloneDDS RMW (Fast DDS not installed on this system)
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+# Detect available RMW implementation
+for rmw in rmw_connextdds rmw_fastrtps_cpp rmw_cyclonedds_cpp; do
+    if find /opt/ros/jazzy/lib -name "lib${rmw}.so" 2>/dev/null | grep -q .; then
+        export RMW_IMPLEMENTATION="$rmw"
+        echo "[INFO] Using RMW: $rmw"
+        break
+    fi
+done
 
 # Source SLLidar driver
 source /opt/ros/sllidar_ros2/install/setup.bash 2>/dev/null || \
