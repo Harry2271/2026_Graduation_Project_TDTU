@@ -46,6 +46,8 @@ jobs:
           path: .
 
       - name: Run deploy script
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
           chmod +x ./deploy.sh
           ./deploy.sh
