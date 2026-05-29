@@ -17,6 +17,9 @@ jobs:
           cache: 'yarn'
 
       - name: Install & Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
         run: |
           yarn install --frozen-lockfile
           NEXT_TELEMETRY_DISABLED=1 yarn build
@@ -45,6 +48,8 @@ jobs:
           path: .
 
       - name: Run deploy script
+        env:
+          PORT: ${{ vars.PORT }}
         run: |
           chmod +x ./deploy.sh
           ./deploy.sh

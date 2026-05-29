@@ -33,14 +33,12 @@ else
     yarn install --production --frozen-lockfile
 fi
 
-# Protect .env.local
-if [ ! -f "$ENV_FILE" ]; then
-    echo "[WARN] .env.local not found — creating default"
-    cat > "$ENV_FILE" << 'ENVEOF'
-NEXT_PUBLIC_API_BASE_URL=http://localhost:5000
-NEXT_PUBLIC_WS_URL=ws://localhost:9091
+# Write .env.local from env vars (all vars from GitHub Actions)
+echo "[INFO] Writing .env.local..."
+cat > "$ENV_FILE" << ENVEOF
+NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:5000}
+NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:9091}
 ENVEOF
-fi
 
 echo "[5/5] Restarting with PM2..."
 pm2 stop    "$SERVICE_NAME" 2>/dev/null || true
