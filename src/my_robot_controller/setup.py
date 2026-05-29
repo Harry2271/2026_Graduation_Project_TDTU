@@ -14,6 +14,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         # Include launch files from src/launch/
         (os.path.join('share', package_name, 'launch'), glob('../launch/*.py')),
+        # Include config files from src/config/
+        (os.path.join('share', package_name, 'config'), glob('../config/*.yaml')),
         # Include Python module files from src/my_robot_controller/
         (os.path.join('share', package_name), glob('*.py')),
     ],

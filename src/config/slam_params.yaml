@@ -1,0 +1,30 @@
+slam_toolbox:
+  ros__parameters:
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: /scan
+    use_map_saver: true
+    mode: online
+
+    # Scan matching
+    use_scan_barycenter: true
+    minimum_time_interval: 0.1
+    scan_match_probability: 0.9
+
+    # Map parameters
+    map_update_interval: 1.0
+    map_build_debug: false
+
+    # ICP / scan matching
+    transform_timeout: 0.2
+    max_laser_range: 12.0
+    minimum_travel_distance: 0.15
+    minimum_travel_heading: 0.26
+    laser_hokuyo_node: true
+
+    # Solver settings
+    ceres_solver:
+      type: G2O_CERES
+      max_iterations: 50
+      num_threads: 2
