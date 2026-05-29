@@ -70,6 +70,7 @@ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME
         ros-jazzy-sensor-msgs \
         ros-jazzy-nav-msgs \
         ros-jazzy-geometry2 \
+        ros-jazzy-slam-toolbox \
         python3-colcon-common-extensions \
         python3-pip \
         python3-venv

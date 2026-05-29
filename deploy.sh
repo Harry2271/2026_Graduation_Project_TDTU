@@ -64,6 +64,10 @@ start_ros_node() {
 start_ros_node "${SERVICE_NAME_PREFIX}-lidar" \
 "ros2 launch sllidar_ros2 sllidar_a1_launch.py serial_port:=$LIDAR_PORT"
 
+# 1b. Khởi chạy SLAM Toolbox (tạo frame 'map' cần cho pose tracking)
+start_ros_node "${SERVICE_NAME_PREFIX}-slam" \
+"ros2 launch my_robot_controller slam_only_launch.py"
+
 # 2. Khởi chạy Brain Node
 # Symlink: $ROS_WS/src/my_robot_controller -> $WORKSPACE/src/
 # Files are at $WORKSPACE/src/my_robot_controller/
