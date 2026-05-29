@@ -1,0 +1,112 @@
+#!/bin/bash
+# =============================================================================
+# deploy.sh — Build and restart ROS 2 robot controller on the Pi
+#
+# Builds on Pi (ARM64 native — can't cross-compile ROS 2).
+# =============================================================================
+
+set -e
+
+WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
+ROS_WS="/opt/ros/robot_ws"
+LIDAR_MODEL="${LIDAR_MODEL:-a1}"
+
+echo "=== Deploying Robot Controller ==="
+echo "  Lidar model: $LIDAR_MODEL"
+echo "  Workspace:   $WORKSPACE"
+
+# Source ROS 2
+source /opt/ros/jazzy/setup.bash
+source /opt/ros/sllidar_ros2/install/setup.bash 2>/dev/null || true
+
+# Pull latest code
+echo "[1/3] Pulling latest code..."
+cd "$WORKSPACE"
+git pull origin master
+
+# Link src into ROS workspace
+mkdir -p "$ROS_WS/src"
+if [ ! -e "$ROS_WS/src/my_robot_controller" ]; then
+    ln -s "$WORKSPACE/src" "$ROS_WS/src/my_robot_controller"
+fi
+
+# Build
+echo "[2/3] Building with colcon..."
+cd "$ROS_WS"
+source "$ROS_WS/install/setup.bash" 2>/dev/null || true
+export PYTHONPATH="$ROS_WS/src/my_robot_controller:$PYTHONPATH"
+colcon build --merge-install --executor sequential
+
+# Restart robot nodes
+echo "[3/3] Restarting robot nodes..."
+
+pkill -f "brain_node"       2>/dev/null || true
+pkill -f "map_manager"      2>/dev/null || true
+pkill -f "web_bridge"       2>/dev/null || true
+pkill -f "lidar_only"       2>/dev/null || true
+pkill -f "static_transform"  2>/dev/null || true
+sleep 2
+
+source "$ROS_WS/install/setup.bash"
+LOG_DIR="/var/log/robot"
+mkdir -p "$LOG_DIR"
+
+# Detect lidar port
+find_lidar_port() {
+    for link in /dev/serial/by-id/*; do
+        [ -e "$link" ] || continue
+        target=$(readlink -f "$link" 2>/dev/null)
+        if echo "$link" | grep -qi 'slamtec\|sllidar\|lidar'; then
+            echo "$target" && return 0
+        fi
+    done
+    for dev in /dev/ttyACM* /dev/ttyUSB*; do
+        [ -e "$dev" ] && echo "$dev" && return 0
+    done
+    echo "/dev/ttyUSB0"
+}
+
+LIDAR_PORT=$(find_lidar_port | tr -d '[:space:]')
+echo "  Lidar port: $LIDAR_PORT"
+
+# Lidar driver
+ros2 launch my_robot_controller lidar_only_launch.py \
+    lidar_model:="$LIDAR_MODEL" serial_port:="$LIDAR_PORT" \
+    > "$LOG_DIR/lidar.log" 2>&1 &
+
+echo "  Waiting for /scan topic..."
+for i in $(seq 1 30); do
+    ros2 topic list 2>/dev/null | grep -q '^/scan$' && break
+    [ $i -eq 30 ] && echo "  WARNING: /scan not detected"
+    sleep 1
+done
+
+# TF publishers
+ros2 run tf2_ros static_transform_publisher \
+    --x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0 \
+    --frame-id base_footprint --child-frame-id base_link \
+    > "$LOG_DIR/tf.log" 2>&1 &
+ros2 run tf2_ros static_transform_publisher \
+    --x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0 \
+    --frame-id base_link --child-frame-id laser \
+    >> "$LOG_DIR/tf.log" 2>&1 &
+sleep 1
+
+# Python nodes
+ROBOT_PKG="$ROS_WS/src/my_robot_controller/my_robot_controller"
+"$ROBOT_PKG/brain_node.py"         > "$LOG_DIR/brain.log"      2>&1 &
+"$ROBOT_PKG/map_manager_node.py"   > "$LOG_DIR/map_manager.log" 2>&1 &
+
+# WebSocket bridge with auto-restart
+start_web_bridge() {
+    while true; do
+        echo "[WS] restart at $(date)" >> "$LOG_DIR/web_bridge.log"
+        "$ROBOT_PKG/web_bridge.py" >> "$LOG_DIR/web_bridge.log" 2>&1
+        [ $? -eq 0 ] && break
+        sleep 3
+    done
+}
+start_web_bridge &
+
+echo "=== Robot Controller deployed ==="
+echo "  Logs: $LOG_DIR/"

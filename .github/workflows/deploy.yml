@@ -1,0 +1,36 @@
+name: Deploy Robot Controller
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Lint Python
+        run: |
+          pip install websockets numpy ruff --quiet
+          ruff check src/ || true
+
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy robot controller
+        run: ./deploy.sh
+
+      - name: Verify ROS topics
+        run: |
+          sleep 5
+          . /opt/ros/jazzy/setup.bash 2>/dev/null || true
+          ros2 topic list 2>/dev/null | grep -E "^/scan$|^/map_combined$|^/odom$" || \
+            (echo "WARNING: expected ROS topics not found"; exit 0)
