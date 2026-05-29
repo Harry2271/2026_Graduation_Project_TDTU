@@ -158,7 +158,8 @@ class WSServer:
 
     async def run(self):
         import websockets
-        async with websockets.serve(self.handler, HOST, PORT) as srv:
+        async with websockets.serve(
+                lambda ws, path: self.handler(ws, path), HOST, PORT) as srv:
             print(f'[WS] Server on ws://{HOST}:{PORT}')
             await asyncio.gather(self.broadcast_loop(), srv.__aenter__())
 
