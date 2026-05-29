@@ -49,6 +49,7 @@ STATE_LABELS = {
     'MAPPING_ACTIVE': 'mapping_active',
     'SCAN_OBSTACLE': 'scan_obstacle',
     'LIVE':           'live',
+    'RUNNING':        'live',   # brain_node: STATE=RUNNING → live mode
 }
 
 

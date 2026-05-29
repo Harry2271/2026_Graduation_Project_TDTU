@@ -19,6 +19,7 @@ class BrainNode(Node):
         self.scan_sub  = self.create_subscription(LaserScan, '/scan',  self._on_scan, 10)
         self.status_pub = self.create_publisher(String, '/robot_status', 10)
         self.odom_pub   = self.create_publisher(Odometry, '/odom', 10)
+        self.control_sub = self.create_subscription(String, '/mapping/control', self._on_control, 10)
         self.tf_broadcaster = TransformBroadcaster(self)
 
         self.x = 0.0
@@ -30,6 +31,7 @@ class BrainNode(Node):
         self._last_time = self.get_clock().now()
         self._last_status = self._last_time
         self._scan_count = 0
+        self._mapping_mode = False
 
         self.create_timer(0.1, self._tick)
         self.get_logger().info('Brain node started')
@@ -37,6 +39,15 @@ class BrainNode(Node):
     def _on_scan(self, msg: LaserScan):
         self._scan_count += 1
         self.vx = LINEAR_SPEED  # 0 = stationary; frontend localizes via scan matching
+
+    def _on_control(self, msg: String):
+        cmd = msg.data.strip().lower()
+        if cmd == 'start':
+            self._mapping_mode = True
+            self.get_logger().info(f'Brain: mapping mode ON')
+        elif cmd in ('stop', 'reset', 'idle'):
+            self._mapping_mode = False
+            self.get_logger().info(f'Brain: mapping mode OFF')
 
     def _tick(self):
         now = self.get_clock().now()
@@ -76,7 +87,8 @@ class BrainNode(Node):
         if (now - self._last_status).nanoseconds >= 1e9:
             self._last_status = now
             status = String()
-            status.data = f'STATE=RUNNING x={self.x:.2f} y={self.y:.2f} scans={self._scan_count}'
+            mode_tag = 'MAPPING' if self._mapping_mode else 'LIVE'
+            status.data = f'STATE={mode_tag} x={self.x:.2f} y={self.y:.2f} scans={self._scan_count}'
             self.status_pub.publish(status)
 
     @staticmethod
