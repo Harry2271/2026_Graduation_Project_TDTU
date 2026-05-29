@@ -46,7 +46,9 @@ jobs:
           path: .
 
       - name: Run deploy script
-        run: ./deploy.sh
+        run: |
+          chmod +x ./deploy.sh
+          ./deploy.sh
 
       - name: Health check
         run: |
