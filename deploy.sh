@@ -1,58 +1,43 @@
 #!/bin/bash
-# =============================================================================
-# deploy.sh — Optimized for Next.js Native Deployment on Pi 5
-# =============================================================================
-
 set -e
 
-WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 SERVICE_NAME="nguyen-frontend"
-MODE="${1:-auto}"
 
-echo "=== 🚀 Deploying Frontend ($MODE mode) ==="
-cd "$WORKSPACE"
+echo "=== 🚀 NEXUS FRONTEND: LOCAL BUILD & DEPLOY ==="
 
-# --- [BƯỚC 1] Xử lý Code & Dependencies ---
-if [ "$MODE" = "manual" ]; then
-    echo "[1/3] 📥 Manual mode: Pulling and Building..."
-    git fetch origin master
-    git reset --hard origin/master
-    yarn install
-    NEXT_TELEMETRY_DISABLED=1 yarn build
-else
-    echo "[1/3] ⬇️ Auto mode: Verifying Artifact..."
-    if [ ! -d ".next" ]; then
-        echo "❌ [ERROR] Folder .next NOT FOUND. Artifact transfer failed."
-        exit 1
-    fi
-    # Cài production deps để PM2 có thể gọi 'next'
-    yarn install --production --frozen-lockfile
-fi
+# 1. Cập nhật code mới nhất (nếu bước checkout chưa làm sạch)
+echo "[1/4] 📥 Cleaning up workspace..."
+git reset --hard HEAD
+git clean -fd
 
-# --- [BƯỚC 2] Cấu hình Môi trường ---
-echo "[2/3] ⚙️ Configuring runtime env..."
-cat > .env.local << ENVEOF
-PORT=${PORT:-3000}
-NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
-NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
-ENVEOF
+# 2. Cài đặt toàn bộ dependencies
+echo "[2/4] 📦 Installing all dependencies..."
+yarn install --frozen-lockfile
 
-# --- [BƯỚC 3] Vận hành PM2 ---
-echo "[3/3] 🔄 Refreshing PM2 process..."
+# 3. Build Next.js ngay trên Pi
+echo "[3/4] 🏗️ Building Next.js (Pi 5 is fast, please wait)..."
+# Truyền biến môi trường vào lúc build
+export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL}"
+export NEXT_PUBLIC_WS_URL="${NEXT_PUBLIC_WS_URL}"
+export NEXT_TELEMETRY_DISABLED=1
+
+yarn build
+
+# 4. Vận hành PM2
+echo "[4/4] 🔄 Restarting PM2..."
 mkdir -p /home/pi/.pm2/logs
 
-# Xóa cũ để đảm bảo nhận cấu hình mới từ ecosystem.json
+# Xóa và chạy mới để cập nhật cấu hình
 pm2 delete "$SERVICE_NAME" 2>/dev/null || true
 
 if [ -f "ecosystem.json" ]; then
-    echo "📄 Starting with ecosystem.json..."
     pm2 start ecosystem.json
 else
-    echo "⚠️ No ecosystem.json, starting directly..."
-    pm2 start node_modules/next/dist/bin/next --name "$SERVICE_NAME" -- start -p ${PORT:-3000}
+    pm2 start yarn --name "$SERVICE_NAME" --interpreter bash -- start -p ${PORT:-3000}
 fi
 
 pm2 save
+
 echo "----------------------------------------------"
-echo "✅ DEPLOYMENT FINISHED!"
+echo "✅ DEPLOY FINISHED TRỰC TIẾP TRÊN PI!"
 pm2 status "$SERVICE_NAME"

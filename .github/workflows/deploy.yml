@@ -6,52 +6,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'yarn'
-
-      - name: Install & Build
-        env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
-          NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
-          NEXT_TELEMETRY_DISABLED: 1
-        run: |
-          yarn install --frozen-lockfile
-          yarn build
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-build
-          path: |
-            .next/
-            public/
-            package.json
-            yarn.lock
-            next.config.ts
-            ecosystem.json
-
   deploy:
-    needs: build
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-
-      # Xóa sạch folder cũ để tránh kẹt cache hoặc sai lệch file
-      - name: Clean workspace
-        run: rm -rf .next public package.json yarn.lock ecosystem.json
-
-      - name: Download Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-build
-          path: .
 
       - name: Run deploy script
         env:
@@ -59,7 +17,12 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
           NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
         run: |
+          # Nạp môi trường Node/Yarn trên Pi
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
+          
+          # Dọn dẹp ký tự Windows và cấp quyền
           sed -i 's/\r$//' ./deploy.sh
           chmod +x ./deploy.sh
+          
+          # Chạy build và deploy trực tiếp
           ./deploy.sh
