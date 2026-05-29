@@ -34,14 +34,17 @@ else
     yarn install --production --frozen-lockfile
 fi
 
-# Protect .env (MONGO_URI must come from environment — GitHub Secret is passed as $MONGO_URI)
-if [ ! -f "$ENV_FILE" ]; then
-    echo "[WARN] .env not found — creating default"
-    cat > "$ENV_FILE" << ENVEOF
-PORT=5000
-MONGO_URI=${MONGO_URI:-mongodb://localhost:27017/nguyen_tdtu}
-ENVEOF
+# Write .env from env vars (secrets/vars from GitHub Actions)
+# MONGO_URI must come from secrets.MONGO_URI, PORT comes from vars
+if [ -z "$MONGO_URI" ]; then
+    echo "[ERROR] MONGO_URI is not set — check GitHub Secrets"
+    exit 1
 fi
+echo "[INFO] Writing .env..."
+cat > "$ENV_FILE" << ENVEOF
+PORT=${PORT:-5000}
+MONGO_URI=${MONGO_URI}
+ENVEOF
 
 echo "[5/5] Restarting with PM2..."
 pm2 stop    "$SERVICE_NAME" 2>/dev/null || true
