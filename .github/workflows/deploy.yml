@@ -37,14 +37,16 @@ jobs:
     needs: build
     runs-on: self-hosted
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download Build Artifact
         uses: actions/download-artifact@v4
         with:
           name: backend-dist
-          path: /home/pi/nguyen-tdtu
+          path: .
 
       - name: Run deploy script
-        run: /home/pi/nguyen-tdtu/deploy.sh
+        run: ./deploy.sh
 
       - name: Health check
         run: |

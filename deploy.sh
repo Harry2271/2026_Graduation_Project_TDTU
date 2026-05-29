@@ -5,20 +5,20 @@
 # Usage:
 #   ./deploy.sh          # auto: artifact already downloaded, just restart
 #   ./deploy.sh manual   # manual: pull code + build on Pi
-#
-# Cloned at: /home/pi/nguyen-tdtu
 # =============================================================================
 
 set -e
 
-PROJECT_DIR="/home/pi/nguyen-tdtu"
+# Runner's workspace directory (actions/checkout lands here)
+WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 SERVICE_NAME="nguyen-backend"
-ENV_FILE="$PROJECT_DIR/.env"
+ENV_FILE="$WORKSPACE/.env"
 MODE="${1:-auto}"
 
 echo "=== Deploying Backend ($MODE mode) ==="
+echo "  Workspace: $WORKSPACE"
 
-cd "$PROJECT_DIR"
+cd "$WORKSPACE"
 
 if [ "$MODE" = "manual" ]; then
     echo "[1/5] Pulling latest code..."
@@ -30,7 +30,6 @@ if [ "$MODE" = "manual" ]; then
     echo "[4/5] Installing production deps..."
     yarn install --production --frozen-lockfile
 else
-    # Artifact already downloaded — just install deps
     echo "[1/3] Artifact downloaded — installing production deps..."
     yarn install --production --frozen-lockfile
 fi
