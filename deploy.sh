@@ -34,7 +34,7 @@ sudo chmod 666 "$LIDAR_PORT" || true
 # --- [BƯỚC 2] Đồng bộ và Build ---
 mkdir -p "$ROS_WS/src"
 if [ ! -L "$ROS_WS/src/my_robot_controller" ]; then
-    ln -s "$WORKSPACE/src" "$ROS_WS/src/my_robot_controller"
+    ln -s "$WORKSPACE/src/my_robot_controller" "$ROS_WS/src/my_robot_controller"
 fi
 
 cd "$ROS_WS"
@@ -65,13 +65,19 @@ start_ros_node "${SERVICE_NAME_PREFIX}-lidar" \
 "ros2 launch sllidar_ros2 sllidar_a1_launch.py serial_port:=$LIDAR_PORT"
 
 # 2. Khởi chạy Brain Node
+# Symlink: $ROS_WS/src/my_robot_controller -> $WORKSPACE/src/
+# Files are at $WORKSPACE/src/my_robot_controller/
 ROBOT_PKG="$WORKSPACE/src/my_robot_controller"
-chmod +x "$ROBOT_PKG/brain_node.py" "$ROBOT_PKG/web_bridge.py"
+chmod +x "$ROBOT_PKG/brain_node.py" "$ROBOT_PKG/map_manager_node.py" "$ROBOT_PKG/web_bridge.py"
 
 start_ros_node "${SERVICE_NAME_PREFIX}-brain" \
 "python3 $ROBOT_PKG/brain_node.py"
 
-# 3. Khởi chạy Web Bridge
+# 3. Khởi chạy Map Manager Node
+start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" \
+"python3 $ROBOT_PKG/map_manager_node.py"
+
+# 4. Khởi chạy Web Bridge
 start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" \
 "python3 $ROBOT_PKG/web_bridge.py"
 

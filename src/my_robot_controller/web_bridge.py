@@ -33,7 +33,7 @@ class WebBridge(Node):
         self.create_subscription(OccupancyGrid, '/map_combined',  self._on_map,   10)
         self.create_subscription(String, '/robot_status',         self._on_status, 10)
         self.create_subscription(String, '/mapping_status',        self._on_mapping_status, 10)
-        self.create_subscription(nav_msgs.msg.Odometry, '/odom', self._on_odom, 10)
+        self.create_subscription(Odometry, '/odom', self._on_odom, 10)
 
         self.create_timer(5.0, self._broadcast_info)
         self.create_timer(0.1, self._poll_commands)
