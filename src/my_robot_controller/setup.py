@@ -4,7 +4,6 @@ from glob import glob
 
 package_name = 'my_robot_controller'
 pkg_dir = os.path.dirname(os.path.abspath(__file__))
-src_root = os.path.normpath(os.path.join(pkg_dir, '..'))
 
 setup(
     name=package_name,
@@ -14,12 +13,12 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # Include launch files from src/launch/
+        # Include launch files from src/launch/ (relative to src/my_robot_controller/)
         (os.path.join('share', package_name, 'launch'),
-            glob(os.path.join(src_root, 'launch', '*.py'))),
+            ['src/launch/slam_only_launch.py', 'src/launch/lidar_only_launch.py']),
         # Include config files from src/config/
         (os.path.join('share', package_name, 'config'),
-            glob(os.path.join(src_root, 'config', '*.yaml'))),
+            ['src/config/slam_params.yaml']),
         # Include Python module files from src/my_robot_controller/
         (os.path.join('share', package_name), glob('*.py')),
     ],
