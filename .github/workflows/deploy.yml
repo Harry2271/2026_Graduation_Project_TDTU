@@ -1,68 +1,52 @@
-name: Deploy Park Smart API
+name: Deploy Backend
 
 on:
   push:
-    branches: ['master']
+    branches: [master]
+  workflow_dispatch:
 
 jobs:
-  # --- JOB 1: CHẠY TRÊN MÁY CHỦ GITHUB (Offload Build) ---
-  build-and-cache:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4 # 👈 Đổi thành v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4 # 👈 Đổi thành v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
+          cache: 'yarn'
 
-      - name: Install dependencies & Build
+      - name: Install deps & lint
         run: |
-          yarn install
-          yarn build
+          yarn install --frozen-lockfile
+          yarn lint
 
-      # Nén thư mục dist và các file cần thiết lại làm "Cache"
-      - name: Upload Artifact (Lưu Cache)
-        uses: actions/upload-artifact@v4 # 👈 Đổi thành v4
+      - name: Build
+        run: yarn build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: park-smart-build
+          name: backend-dist
           path: |
             dist/
             package.json
             yarn.lock
-            Dockerfile
-            docker-compose.yml
 
-  # --- JOB 2: CHẠY TRÊN CON PI (Triển khai Docker) ---
-  deploy-to-pi:
-    needs: build-and-cache
+  deploy:
+    needs: build
     runs-on: self-hosted
     steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v4 # 👈 Đổi thành v4
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
         with:
-          name: park-smart-build
-          path: ./api-server
+          name: backend-dist
+          path: /home/pi/nguyen-tdtu
 
-      - name: 🔐 Khởi tạo file .env cho ParkingService
+      - name: Run deploy script
+        run: /home/pi/nguyen-tdtu/deploy.sh
+
+      - name: Health check
         run: |
-          cd ./api-server 
-          echo ">>> Đang tạo file .env bảo mật..."
-
-          # Dùng > để ghi đè file mới tinh, tránh dính rác từ lần chạy trước
-          cat <<EOF > .env
-          PORT=${{ vars.PORT }}
-          MONGO_URI=${{ secrets.MONGO_URI }}
-          EOF
-
-          echo ">>> Khởi tạo .env thành công."
-
-      # Xóa container cũ, build image mới và chạy container mới
-      - name: Deploy with Docker Compose
-        run: |
-          cd ./api-server
-          # Docker Compose sẽ tự làm hết: dừng, xóa, build, chạy
-          docker compose up -d --build
-          # Dọn dẹp image cũ để tiết kiệm dung lượng thẻ nhớ
-          docker image prune -f
+          sleep 3
+          curl -sf http://localhost:5000/ || (echo "Health check failed"; exit 1)

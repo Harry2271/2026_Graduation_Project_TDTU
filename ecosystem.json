@@ -1,0 +1,18 @@
+{
+  "name": "nguyen-backend",
+  "script": "dist/main.js",
+  "cwd": "/home/pi/nguyen-tdtu",
+  "instances": 1,
+  "exec_mode": "cluster",
+  "env": {
+    "NODE_ENV": "production",
+    "PORT": 5000
+  },
+  "error_file": "/var/log/pm2/nguyen-backend-error.log",
+  "out_file": "/var/log/pm2/nguyen-backend-out.log",
+  "time": true,
+  "autorestart": true,
+  "max_restarts": 10,
+  "max_memory_restart": "500M",
+  "kill_timeout": 5000
+}
