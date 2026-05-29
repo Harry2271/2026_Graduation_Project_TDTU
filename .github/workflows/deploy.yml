@@ -1,36 +1,51 @@
-name: Deploy Park Smart Web
+name: Deploy Frontend
 
 on:
   push:
-    branches: ['master']
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    branches: [master]
+  workflow_dispatch:
 
 jobs:
-  deploy-to-pi:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'yarn'
+
+      - name: Install & Build
+        run: |
+          yarn install --frozen-lockfile
+          NEXT_TELEMETRY_DISABLED=1 yarn build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: |
+            .next/
+            public/
+            package.json
+            yarn.lock
+            next.config.ts
+
+  deploy:
+    needs: build
     runs-on: self-hosted
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: /home/pi/nguyen-web-app
 
-      - name: 🔐 Khởi tạo file .env cho Frontend
-        run: |
-          echo ">>> Đang tạo file .env bảo mật..."
-          # Dùng > để ghi đè file mới tinh, tránh dính rác từ lần chạy trước
-          cat <<EOF > .env
-          PORT=${{ vars.PORT }}
-          NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL }}
-          NEXT_PUBLIC_WS_URL=${{ vars.NEXT_PUBLIC_WS_URL }}
-          EOF
-          echo ">>> Khởi tạo .env thành công."
+      - name: Run deploy script
+        run: /home/pi/nguyen-web-app/deploy.sh
 
-      # Xóa container cũ, build image mới (sử dụng multi-stage cache) và chạy container mới
-      - name: Deploy with Docker Compose
+      - name: Health check
         run: |
-          # Dọn dẹp container "web" cũ (nếu được tạo từ project cũ web-client) để tránh lỗi Conflict tên
-          docker rm -f web 2>/dev/null || true
-          # Docker Compose sẽ tự làm hết: dừng, xóa, build, chạy
-          docker compose up -d --build
-          # Dọn dẹp image cũ để tiết kiệm dung lượng thẻ nhớ
-          docker image prune -f
+          sleep 5
+          curl -sf http://localhost:3000 || (echo "Health check failed"; exit 1)
