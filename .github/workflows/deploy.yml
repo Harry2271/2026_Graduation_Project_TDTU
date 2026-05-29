@@ -33,6 +33,8 @@ jobs:
       - name: Verify ROS topics
         run: |
           sleep 5
-          . /opt/ros/jazzy/setup.bash 2>/dev/null || true
+          for p in /opt/ros/jazzy/setup.bash /opt/ros/humble/setup.bash; do
+            [ -f "$p" ] && { . "$p"; break; }
+          done
           ros2 topic list 2>/dev/null | grep -E "^/scan$|^/map_combined$|^/odom$" || \
             (echo "WARNING: expected ROS topics not found"; exit 0)

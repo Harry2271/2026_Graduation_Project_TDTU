@@ -17,8 +17,29 @@ echo "=== Deploying Robot Controller ==="
 echo "  Lidar model: $LIDAR_MODEL"
 echo "  Workspace:   $WORKSPACE"
 
-source /opt/ros/jazzy/setup.bash
-source /opt/ros/sllidar_ros2/install/setup.bash 2>/dev/null || true
+# Source ROS 2 — try multiple known installation paths
+ROS_SETUP=""
+for path in /opt/ros/jazzy/setup.bash /opt/ros/humble/setup.bash /opt/ros/galactic/setup.bash; do
+    if [ -f "$path" ]; then
+        ROS_SETUP="$path"
+        break
+    fi
+done
+
+if [ -z "$ROS_SETUP" ]; then
+    echo "[ERROR] ROS 2 not found. Run install-pi.sh first."
+    echo "  Expected one of:"
+    echo "    /opt/ros/jazzy/setup.bash"
+    echo "    /opt/ros/humble/setup.bash"
+    echo "    /opt/ros/galactic/setup.bash"
+    exit 1
+fi
+source "$ROS_SETUP"
+echo "[INFO] Sourced ROS 2 from $ROS_SETUP"
+
+# Source SLLidar driver
+source /opt/ros/sllidar_ros2/install/setup.bash 2>/dev/null || \
+source /opt/ros/sllidar_ros2/setup.bash 2>/dev/null || true
 
 cd "$WORKSPACE"
 
@@ -32,7 +53,7 @@ fi
 
 # Link src into ROS workspace
 mkdir -p "$ROS_WS/src"
-if [ ! -e "$ROS_WS/src/my_robot_controller" ]; then
+if [ ! -L "$ROS_WS/src/my_robot_controller" ]; then
     ln -s "$WORKSPACE/src" "$ROS_WS/src/my_robot_controller"
 fi
 
