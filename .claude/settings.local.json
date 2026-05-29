@@ -21,7 +21,8 @@
       "Bash(curl *)",
       "Bash(git ls-remote *)",
       "Bash(apt list *)",
-      "Bash(xargs grep -l \"sllidar\")"
+      "Bash(xargs grep -l \"sllidar\")",
+      "Bash(apt-cache search *)"
     ]
   }
 }

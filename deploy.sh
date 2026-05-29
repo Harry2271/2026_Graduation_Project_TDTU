@@ -81,6 +81,11 @@ fi
 if [ ! -d "$ROS_WS/src/sllidar_ros2" ]; then
     echo "[INFO] Cloning sllidar_ros2..."
     git clone --branch main --depth 1 https://github.com/Slamtec/sllidar_ros2.git "$ROS_WS/src/sllidar_ros2"
+    # Ensure g++ is installed for building C++ packages
+    if ! command -v g++ &>/dev/null; then
+        echo "[INFO] Installing g++ for C++ build..."
+        sudo apt install -y g++
+    fi
 fi
 
 # Build
