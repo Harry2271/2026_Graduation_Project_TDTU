@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# deploy.sh — ROS 2 Robot Controller (Optimized with PM2)
+# deploy.sh — ROS 2 Robot Controller (Fix: Sudo & Path issues)
 # =============================================================================
 
 set -e
@@ -12,15 +12,9 @@ SERVICE_NAME_PREFIX="nexus-robot"
 
 echo "=== 🤖 STARTING DEPLOYMENT: ROBOT CONTROLLER ==="
 
-# --- [BƯỚC 1] Setup Môi trường ---
-ROS_SETUP="/opt/ros/jazzy/setup.bash"
-if [ ! -f "$ROS_SETUP" ]; then
-    echo "❌ [ERROR] Không tìm thấy ROS 2 Jazzy. Hãy cài đặt trước!"
-    exit 1
-fi
-source "$ROS_SETUP"
+# --- [BƯỚC 1] Setup Môi trường & Quyền Serial ---
+source "/opt/ros/jazzy/setup.bash"
 
-# Tự động tìm và cấp quyền cổng Lidar
 find_lidar_port() {
     for dev in /dev/ttyUSB* /dev/ttyACM*; do
         [ -e "$dev" ] && echo "$dev" && return 0
@@ -28,77 +22,50 @@ find_lidar_port() {
     echo "/dev/ttyUSB0"
 }
 LIDAR_PORT=$(find_lidar_port)
-echo "📍 Lidar Port detected: $LIDAR_PORT"
-sudo chmod 666 "$LIDAR_PORT" || true
+echo "📍 Lidar Port: $LIDAR_PORT"
 
-# --- [BƯỚC 2] Đồng bộ và Build ---
-mkdir -p "$ROS_WS/src"
-if [ ! -L "$ROS_WS/src/my_robot_controller" ]; then
-    ln -s "$WORKSPACE/src/my_robot_controller" "$ROS_WS/src/my_robot_controller"
-fi
+# FIX: Cấp quyền không cần pass (đã dặn ông chạy visudo ở dưới)
+sudo chmod 666 "$LIDAR_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $LIDAR_PORT"
 
-# Also symlink config directory
-if [ ! -d "$WORKSPACE/src/config" ]; then
-    echo "⚠️ Config directory not found at $WORKSPACE/src/config"
-fi
+# --- [BƯỚC 2] Sửa cấu trúc Folder & Build ---
+mkdir -p "$ROS_WS/src/my_robot_controller/launch"
+mkdir -p "$ROS_WS/src/my_robot_controller/my_robot_controller"
+
+# FIX: Đưa file vào đúng chỗ mà setup.py của ROS 2 yêu cầu
+echo "📂 Reorganizing files for colcon build..."
+cp "$WORKSPACE/slam_only_launch.py" "$ROS_WS/src/my_robot_controller/launch/" 2>/dev/null || true
+cp "$WORKSPACE/lidar_only_launch.py" "$ROS_WS/src/my_robot_controller/launch/" 2>/dev/null || true
+cp "$WORKSPACE/brain_node.py" "$ROS_WS/src/my_robot_controller/my_robot_controller/" 2>/dev/null || true
+cp "$WORKSPACE/map_manager_node.py" "$ROS_WS/src/my_robot_controller/my_robot_controller/" 2>/dev/null || true
+cp "$WORKSPACE/web_bridge.py" "$ROS_WS/src/my_robot_controller/my_robot_controller/" 2>/dev/null || true
+cp "$WORKSPACE/package.xml" "$ROS_WS/src/my_robot_controller/" 2>/dev/null || true
+cp "$WORKSPACE/setup.py" "$ROS_WS/src/my_robot_controller/" 2>/dev/null || true
+cp "$WORKSPACE/setup.cfg" "$ROS_WS/src/my_robot_controller/" 2>/dev/null || true
 
 cd "$ROS_WS"
-# Đảm bảo có bộ biên dịch cho sllidar_ros2
-if ! command -v g++ &>/dev/null; then 
-    echo "📦 Installing build-essential..."
-    sudo apt update && sudo apt install -y build-essential
-fi
-
-echo "🏗️ Building workspace with colcon..."
+echo "🏗️ Building workspace..."
 colcon build --merge-install --executor sequential
 source "$ROS_WS/install/setup.bash"
-
-# Fallback: copy config files if setup.py glob missed them
-if [ ! -f "$ROS_WS/install/share/my_robot_controller/config/slam_params.yaml" ]; then
-    echo "📋 Config files missing — copying manually..."
-    mkdir -p "$ROS_WS/install/share/my_robot_controller/config"
-    cp "$WORKSPACE/src/config/slam_params.yaml" \
-       "$ROS_WS/install/share/my_robot_controller/config/" 2>/dev/null || true
-fi
 
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."
 
-# Hàm khởi động node bọc trong môi trường ROS 2
 start_ros_node() {
     local name=$1
     local command=$2
     pm2 delete "$name" 2>/dev/null || true
-    # Chạy qua bash -c để nạp source môi trường mỗi khi node restart
-    pm2 start "bash" --name "$name" -- -c "source $ROS_SETUP && source $ROS_WS/install/setup.bash && $command"
+    pm2 start "bash" --name "$name" -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $command"
 }
 
-# 1. Khởi chạy Lidar (Sửa timeout bằng cách cấp quyền và dùng đúng driver)
-start_ros_node "${SERVICE_NAME_PREFIX}-lidar" \
-"ros2 launch sllidar_ros2 sllidar_a1_launch.py serial_port:=$LIDAR_PORT"
+# 1. Lidar & SLAM
+start_ros_node "${SERVICE_NAME_PREFIX}-lidar" "ros2 launch sllidar_ros2 sllidar_a1_launch.py serial_port:=$LIDAR_PORT"
+start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller slam_only_launch.py"
 
-# 1b. Khởi chạy SLAM Toolbox (tạo frame 'map' cần cho pose tracking)
-start_ros_node "${SERVICE_NAME_PREFIX}-slam" \
-"ros2 launch my_robot_controller slam_only_launch.py"
-
-# 2. Khởi chạy Brain Node
-# Symlink: $ROS_WS/src/my_robot_controller -> $WORKSPACE/src/
-# Files are at $WORKSPACE/src/my_robot_controller/
-ROBOT_PKG="$WORKSPACE/src/my_robot_controller"
-chmod +x "$ROBOT_PKG/brain_node.py" "$ROBOT_PKG/map_manager_node.py" "$ROBOT_PKG/web_bridge.py"
-
-start_ros_node "${SERVICE_NAME_PREFIX}-brain" \
-"python3 $ROBOT_PKG/brain_node.py"
-
-# 3. Khởi chạy Map Manager Node
-start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" \
-"python3 $ROBOT_PKG/map_manager_node.py"
-
-# 4. Khởi chạy Web Bridge
-start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" \
-"python3 $ROBOT_PKG/web_bridge.py"
+# 2. Logic Nodes
+PKG_BIN="$ROS_WS/install/lib/my_robot_controller"
+start_ros_node "${SERVICE_NAME_PREFIX}-brain" "python3 $ROS_WS/src/my_robot_controller/my_robot_controller/brain_node.py"
+start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "python3 $ROS_WS/src/my_robot_controller/my_robot_controller/map_manager_node.py"
+start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "python3 $ROS_WS/src/my_robot_controller/my_robot_controller/web_bridge.py"
 
 pm2 save
-echo "----------------------------------------------"
-echo "✅ DEPLOY ROBOT THÀNH CÔNG!"
-pm2 status | grep "$SERVICE_NAME_PREFIX"
+echo "✅ DEPLOY THÀNH CÔNG!"
