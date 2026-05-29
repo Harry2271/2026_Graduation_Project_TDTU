@@ -5,20 +5,19 @@
 # Usage:
 #   ./deploy.sh          # auto: artifact already downloaded, just restart
 #   ./deploy.sh manual   # manual: pull code + build on Pi
-#
-# Cloned at: /home/pi/nguyen-web-app
 # =============================================================================
 
 set -e
 
-PROJECT_DIR="/home/pi/nguyen-web-app"
+WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 SERVICE_NAME="nguyen-frontend"
-ENV_FILE="$PROJECT_DIR/.env.local"
+ENV_FILE="$WORKSPACE/.env.local"
 MODE="${1:-auto}"
 
 echo "=== Deploying Frontend ($MODE mode) ==="
+echo "  Workspace: $WORKSPACE"
 
-cd "$PROJECT_DIR"
+cd "$WORKSPACE"
 
 if [ "$MODE" = "manual" ]; then
     echo "[1/5] Pulling latest code..."
