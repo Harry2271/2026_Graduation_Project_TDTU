@@ -37,11 +37,22 @@ fi
 source "$ROS_SETUP"
 echo "[INFO] Sourced ROS 2 from $ROS_SETUP"
 
-# Detect available RMW implementation
+# Detect available RMW implementation using ldconfig
 for rmw in rmw_connextdds rmw_fastrtps_cpp rmw_cyclonedds_cpp; do
-    if find /opt/ros/jazzy/lib -name "lib${rmw}.so" 2>/dev/null | grep -q .; then
+    if ldconfig -p 2>/dev/null | grep -q "lib${rmw}.so"; then
         export RMW_IMPLEMENTATION="$rmw"
         echo "[INFO] Using RMW: $rmw"
+        break
+    fi
+done
+
+# Ensure RMW_IMPLEMENTATION is set AFTER sourcing workspace setup
+# (workspace install/setup.bash may reset it to the default, which is fastrtps)
+unset RMW_IMPLEMENTATION
+for rmw in rmw_connextdds rmw_fastrtps_cpp rmw_cyclonedds_cpp; do
+    if ldconfig -p 2>/dev/null | grep -q "lib${rmw}.so"; then
+        export RMW_IMPLEMENTATION="$rmw"
+        echo "[INFO] RMW override: $rmw"
         break
     fi
 done
@@ -64,6 +75,12 @@ fi
 mkdir -p "$ROS_WS/src"
 if [ ! -L "$ROS_WS/src/my_robot_controller" ]; then
     ln -s "$WORKSPACE/src" "$ROS_WS/src/my_robot_controller"
+fi
+
+# Clone sllidar_ros2 if not present (needed for lidar_only_launch.py)
+if [ ! -d "$ROS_WS/src/sllidar_ros2" ]; then
+    echo "[INFO] Cloning sllidar_ros2..."
+    git clone --branch ros2 --depth 1 https://github.com/Slamtec/sllidar_ros2.git "$ROS_WS/src/sllidar_ros2"
 fi
 
 # Build
