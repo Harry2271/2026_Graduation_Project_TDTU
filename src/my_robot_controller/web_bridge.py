@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """web_bridge — WebSocket server. ROS topics -> JSON messages."""
 import asyncio
+import gzip
 import json
 import math
 import queue
@@ -22,18 +23,19 @@ class WebBridge(Node):
         super().__init__('web_bridge')
         self.msg_q = msg_q
         self.cmd_q = cmd_q
-        self.cmd_pub = self.create_publisher(String, '/mapping/control', 10)
 
         self.lidar_seen = False
         self.map_seen   = False
         self.pose_seen  = False
         self.mode       = 'live'
 
-        self.create_subscription(LaserScan, '/scan',                 self._on_scan,  10)
-        self.create_subscription(OccupancyGrid, '/map_combined',  self._on_map,   10)
-        self.create_subscription(String, '/robot_status',         self._on_status, 10)
+        self.cmd_pub = self.create_publisher(String, '/mapping/control', 10)
+
+        self.create_subscription(LaserScan, '/scan',               self._on_scan,            10)
+        self.create_subscription(OccupancyGrid, '/map_combined',  self._on_map,            10)
+        self.create_subscription(String, '/robot_status',         self._on_status,         10)
         self.create_subscription(String, '/mapping_status',        self._on_mapping_status, 10)
-        self.create_subscription(Odometry, '/odom', self._on_odom, 10)
+        self.create_subscription(Odometry, '/odom',                self._on_odom,           10)
 
         self.create_timer(5.0, self._broadcast_info)
         self.create_timer(0.1, self._poll_commands)
@@ -150,7 +152,11 @@ class WSServer:
                 for ws in list(self.clients):
                     for m in batch:
                         try:
-                            await ws.send(json.dumps(m))
+                            payload = json.dumps(m)
+                            # Compress map messages (~1.5MB raw -> ~50KB compressed)
+                            if m.get('type') == 'map':
+                                payload = gzip.compress(payload.encode(), compresslevel=1)
+                            await ws.send(payload)
                         except Exception:
                             self.clients.discard(ws)
             await asyncio.sleep(0.05)
@@ -164,9 +170,12 @@ class WSServer:
 
 def main():
     msg_q = queue.Queue(maxsize=500)
-    cmd_q = queue.Queue(maxsize=20)
+    cmd_q = queue.Queue(maxsize=20)  # dedicated queue for commands — only _poll_commands reads this
 
     def ros_spin():
+        if rclpy.ok():
+            rclpy.try_shutdown()
+            time.sleep(0.5)
         rclpy.init()
         node = WebBridge(msg_q, cmd_q)
         executor = rclpy.executors.MultiThreadedExecutor()
