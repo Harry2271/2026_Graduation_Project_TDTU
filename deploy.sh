@@ -74,7 +74,7 @@ pkill -f "static_transform"  2>/dev/null || true
 sleep 2
 
 # Re-source workspace setup (loads RMW + local packages) and ensure scripts are executable
-ROBOT_PKG="$ROS_WS/src/my_robot_controller"
+ROBOT_PKG="$ROS_WS/src/my_robot_controller/my_robot_controller"
 source "$ROS_WS/install/setup.bash"
 chmod +x "$ROBOT_PKG/brain_node.py" \
          "$ROBOT_PKG/map_manager_node.py" \
