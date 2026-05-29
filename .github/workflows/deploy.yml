@@ -6,35 +6,31 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Lint Python
-        run: |
-          pip install websockets numpy ruff --quiet
-          ruff check src/ || true
-
   deploy:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy robot controller
+      - name: Build and Deploy via Script
         run: |
+          # Nạp đường dẫn PM2 và Node
+          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
+          
+          # Làm sạch file và thực thi
+          sed -i 's/\r$//' ./deploy.sh
           chmod +x ./deploy.sh
           ./deploy.sh
 
-      - name: Verify ROS topics
+      - name: Verify Health
         run: |
-          sleep 5
-          for p in /opt/ros/jazzy/setup.bash /opt/ros/humble/setup.bash; do
-            [ -f "$p" ] && { . "$p"; break; }
-          done
-          ros2 topic list 2>/dev/null | grep -E "^/scan$|^/map_combined$|^/odom$" || \
-            (echo "WARNING: expected ROS topics not found"; exit 0)
+          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
+          echo "Waiting for ROS 2 nodes to stabilize..."
+          sleep 10
+          
+          # Kiểm tra PM2
+          pm2 status
+          
+          # Kiểm tra Topic (Nạp source để dùng lệnh ros2)
+          source /opt/ros/jazzy/setup.bash
+          ros2 topic list | grep "/scan" || (echo "❌ Lidar topic NOT FOUND. Check logs: pm2 logs nexus-robot-lidar"; exit 1)
+          echo "✅ Everything is running!"
