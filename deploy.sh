@@ -42,6 +42,7 @@ ENVEOF
 
 echo "[3/3] Restarting with PM2..."
 cd "$WORKSPACE"
+mkdir -p /home/pi/.pm2/logs
 pm2 stop    "$SERVICE_NAME" 2>/dev/null || true
 pm2 delete  "$SERVICE_NAME" 2>/dev/null || true
 pm2 start   ecosystem.json --env production

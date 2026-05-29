@@ -9,8 +9,8 @@
     "PORT": 3000,
     "NEXT_TELEMETRY_DISABLED": "1"
   },
-  "error_file": "/var/log/pm2/nguyen-frontend-error.log",
-  "out_file": "/var/log/pm2/nguyen-frontend-out.log",
+  "error_file": "/home/pi/.pm2/logs/nguyen-frontend-error.log",
+  "out_file": "/home/pi/.pm2/logs/nguyen-frontend-out.log",
   "time": true,
   "autorestart": true,
   "max_restarts": 10,
