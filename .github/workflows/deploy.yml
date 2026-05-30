@@ -22,7 +22,18 @@ jobs:
       - name: Verify Health
         run: |
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
-          sleep 5
-          pm2 status
           source /opt/ros/jazzy/setup.bash
-          ros2 topic list | grep "/scan" || (echo "Lidar topic not found"; exit 1)
+          
+          echo "⏳ Waiting for Lidar topic /scan (max 30s)..."
+          for i in {1..30}; do
+            if ros2 topic list | grep -q "/scan"; then
+              echo "✅ Lidar is UP and publishing!"
+              exit 0
+            fi
+            echo "..."
+            sleep 1
+          done
+          
+          echo "❌ Lidar topic NOT FOUND after 30s. Check logs:"
+          pm2 logs nexus-robot-lidar --lines 20
+          exit 1
