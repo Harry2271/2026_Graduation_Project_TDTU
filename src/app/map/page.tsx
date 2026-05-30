@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Ruler, Compass, Target, WifiOff, Crosshair, Activity } from 'lucide-react';
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity } from 'lucide-react';
 import { Button, App, Tooltip } from 'antd';
 
 const WS_URL =
@@ -32,7 +32,7 @@ function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number)
 const MINI_SIZE = 160;
 const MINI_RANGE = 3.0; // metres visible in minimap
 
-function drawMinimap(ctx: CanvasRenderingContext2D, scan: ScanData | null, pose: PoseData | null, occGrid: MapData | null) {
+function drawMinimap(ctx: CanvasRenderingContext2D, scan: ScanData | null, pose: PoseData | null) {
   const W = MINI_SIZE, H = MINI_SIZE;
   ctx.clearRect(0, 0, W, H);
 
@@ -263,6 +263,7 @@ export default function MapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapData) buildMapImage(); }, [mapData]);
 
   function drawOverlay() {
@@ -376,28 +377,31 @@ export default function MapPage() {
     // ── Path B: occupancy grid ──────────────────────────────────────
     if (occGridRef.current && occOffscreenRef.current) {
       const off = occOffscreenRef.current;
-      const { width: gw, height: gh, resolution: res, origin_x, origin_y } = occGridRef.current;
+      const { width: gw, height: gh, resolution: res } = occGridRef.current;
       const minScale = Math.min(W, H) * 0.75 / Math.max(gw, gh);
       const rawFit = Math.min(W / gw, H / gh) * zoom;
       const scale = Math.max(rawFit, minScale);
-      const mapX = W / 2 + origin_x / res * scale;
-      const mapY = H / 2 - origin_y / res * scale;
+      // Center the grid: grid covers [-half, +half] in world X and Y.
+      // Robot (world 0,0) maps to grid center (gw/2, gh/2).
+      // Screen center = (W/2, H/2). Grid top-left on screen:
+      const mapX = W / 2 - (gw / 2) * scale;
+      const mapY = H / 2 - (gh / 2) * scale;
 
       ctx.save();
       if (p && isHU) {
-        const cx2 = mapX + (p.x - origin_x) / res * scale;
-        const cy2 = mapY + (gh - (p.y - origin_y) / res) * scale;
+        const cx2 = W / 2;
+        const cy2 = H / 2;
         ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
       }
       ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
       ctx.restore();
 
       const worldToScreen = (wx: number, wy: number) => {
-        let sx = mapX + (wx - origin_x) / res * scale;
-        let sy = mapY + (wy - origin_y) / res * scale;
+        let sx = W / 2 + wx * scale / res;
+        let sy = H / 2 - wy * scale / res;
         if (p && isHU) {
-          const cx2 = mapX + (p.x - origin_x) / res * scale;
-          const cy2 = mapY + (p.y - origin_y) / res * scale;
+          const cx2 = W / 2;
+          const cy2 = H / 2;
           const cos = Math.cos(-p.theta - Math.PI / 2); const sin = Math.sin(-p.theta - Math.PI / 2);
           const dx = sx - cx2; const dy2 = sy - cy2;
           sx = cx2 + cos * dx - sin * dy2; sy = cy2 + sin * dx + cos * dy2;
@@ -496,7 +500,7 @@ export default function MapPage() {
         frameCount++;
         if (frameCount % 2 === 0 && miniCanvasRef.current) {
           const mctx = miniCanvasRef.current.getContext('2d');
-          if (mctx) drawMinimap(mctx, scanDataRef.current, poseRef.current, occGridRef.current);
+          if (mctx) drawMinimap(mctx, scanDataRef.current, poseRef.current);
         }
         lastTs = ts;
       }
@@ -600,7 +604,7 @@ export default function MapPage() {
     }
     wsRef.current.send(JSON.stringify({ type: 'cmd', action: 'mapping', command }));
     notification.success({ title: 'Thành công', description: `Đã gửi lệnh ${label}`, placement: 'topRight' });
-  }, []);
+  }, [notification]);
 
   const handleStartScan = () => {
     setIsStarting(true); sendCmd('start', 'bắt đầu quét bản đồ');
@@ -729,7 +733,6 @@ export default function MapPage() {
                   label="POSE"
                   value={`${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}`}
                   color="var(--warning)"
-                  mono
                 />
               )}
             </div>
@@ -1170,7 +1173,7 @@ export default function MapPage() {
             </div>
           )}
 
-          <canvas ref={canvasRef} className="w-full h-full block" style={{ imageRendering: 'pixelated', position: 'relative', zIndex: 1 }} />
+          <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" style={{ imageRendering: 'pixelated', zIndex: 1 }} />
         </div>
       </div>
 
@@ -1185,7 +1188,7 @@ export default function MapPage() {
 }
 
 // ── Small stat chip component ───────────────────────────────────────────────
-function StatChip({ label, value, color, mono }: { label: string; value: string; color: string; mono?: boolean }) {
+function StatChip({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div
       className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
