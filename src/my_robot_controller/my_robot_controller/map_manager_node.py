@@ -517,10 +517,9 @@ class MapManager(Node):
         msg.info.origin.position.y = ORIGIN
         msg.info.origin.orientation.w = 1.0
 
-        if self.state == STATE_LIVE:
-            msg.data = self.temp_grid.tolist()
-        else:
-            msg.data = self.persistent_grid.tolist()
+        # Always publish the accumulated persistent grid.
+        # The 2m awareness zone is published separately via /obstacle_layer.
+        msg.data = self.persistent_grid.tolist()
 
         self.map_pub.publish(msg)
 
