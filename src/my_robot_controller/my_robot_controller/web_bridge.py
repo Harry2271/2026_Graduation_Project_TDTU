@@ -369,9 +369,14 @@ def main():
         executor.add_node(node)
         try:
             executor.spin()
+        except KeyboardInterrupt:
+            pass
         finally:
             node.destroy_node()
-            rclpy.shutdown()
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
 
     t = threading.Thread(target=ros_spin, daemon=True, name='ros-spin')
     t.start()

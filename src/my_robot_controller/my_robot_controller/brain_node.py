@@ -184,7 +184,10 @@ def main():
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except rclpy._rclpy_pybind11.RCLError:
+            pass
 
 
 if __name__ == '__main__':
