@@ -55,10 +55,10 @@ CELL_FREE      = 0
 CELL_OCCUPIED  = 100
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
-DIST_THRESHOLD   = 0.15       # m — minimum linear movement to trigger map update
-ANGLE_THRESHOLD  = math.radians(15)  # rad — minimum angular movement
-SETTLING_TIME_MIN = 0.5       # s
-SETTLING_TIME_MAX = 1.0       # s
+DIST_THRESHOLD   = 0.05       # m — minimum linear movement to trigger map update
+ANGLE_THRESHOLD  = math.radians(5)  # rad — minimum angular movement
+SETTLING_TIME_MIN = 0.2       # s
+SETTLING_TIME_MAX = 0.4       # s
 OBSTACLE_RADIUS  = 2.0        # m — post-mapping awareness zone radius
 WEB_THROTTLE_HZ  = 5          # max Hz for layer publication
 
@@ -339,8 +339,8 @@ class MapManager(Node):
         bearings = np.arctan2(vy - self.odom_y, vx - self.odom_x)
         hit_dists = np.sqrt((vx - self.odom_x) ** 2 + (vy - self.odom_y) ** 2)
 
-        # Ray march
-        step     = RESOLUTION * 0.5
+        # Ray march — fully vectorized (no Python loops)
+        step      = RESOLUTION * 0.5
         max_steps = int(MAX_RANGE / step) + 1
         dists     = np.arange(max_steps, dtype=np.float32) * step
 
@@ -357,19 +357,29 @@ class MapManager(Node):
             0, max_steps - 1)
 
         grid = self.persistent_grid
-        for i in range(vx.size):
-            ht   = hit_steps[i]
-            gx_i = gxs[i]
-            gy_i = gys[i]
-            ib_i = in_bounds[i]
-            for s in range(ht):
-                if ib_i[s]:
-                    j = gy_i[s] * GRID_SIZE + gx_i[s]
-                    if grid[j] == CELL_UNKNOWN:
-                        grid[j] = CELL_FREE
-            gi = gy_i[ht] * GRID_SIZE + gx_i[ht]
-            if 0 <= gi < len(grid):
-                grid[gi] = CELL_OCCUPIED
+
+        # Mark all free cells along each ray in bulk.
+        # Build a flat index array for every cell in the ray-march volume,
+        # then mask to only cells that are (a) before the hit and (b) in bounds.
+        n_rays = vx.size
+        ray_idx  = np.repeat(np.arange(n_rays, dtype=np.int32), max_steps)
+        step_idx = np.tile(np.arange(max_steps, dtype=np.int32), n_rays)
+        flat     = gys.ravel()[:, None] * GRID_SIZE + gxs.ravel()
+        flat     = flat.ravel()
+        ok       = (step_idx < hit_steps.ravel()[ray_idx]) & in_bounds.ravel()
+        free_cells = flat[ok]
+        if free_cells.size > 0:
+            unknown_mask = grid[free_cells] == CELL_UNKNOWN
+            grid[free_cells[unknown_mask]] = CELL_FREE
+
+        # Mark hit cells as occupied
+        ht_indices = np.clip(hit_steps, 0, max_steps - 1)
+        hit_flat = (
+            gys[np.arange(n_rays), ht_indices] * GRID_SIZE +
+            gxs[np.arange(n_rays), ht_indices]
+        )
+        hit_valid = (hit_flat >= 0) & (hit_flat < GRID_SIZE * GRID_SIZE)
+        grid[hit_flat[hit_valid]] = CELL_OCCUPIED
 
         # Update last recorded pose
         self.last_recorded_x      = self.odom_x
@@ -394,7 +404,7 @@ class MapManager(Node):
         abs_angles   = angles[valid] + self.odom_theta
         valid_ranges = ranges[valid]
 
-        step     = RESOLUTION * 0.5
+        step      = RESOLUTION * 0.5
         max_steps = int(MAX_RANGE / step) + 1
         dists     = np.arange(max_steps, dtype=np.float32) * step
 
@@ -413,31 +423,42 @@ class MapManager(Node):
         grid = self.temp_grid
         grid[:] = CELL_UNKNOWN
 
-        r_gx     = int((self.odom_x - ORIGIN) / RESOLUTION)
-        r_gy     = int((self.odom_y - ORIGIN) / RESOLUTION)
+        # ── Vectorized ray-march + occupancy (no Python loops) ─────────────
+        n_rays = len(valid_ranges)
+        ray_idx  = np.repeat(np.arange(n_rays, dtype=np.int32), max_steps)
+        step_idx = np.tile(np.arange(max_steps, dtype=np.int32), n_rays)
+        flat     = gys.ravel()[:, None] * GRID_SIZE + gxs.ravel()
+        flat     = flat.ravel()
+        ok       = (step_idx < hit_steps.ravel()[ray_idx]) & in_bounds.ravel()
+        free_cells = flat[ok]
+        if free_cells.size > 0:
+            unknown_mask = grid[free_cells] == CELL_UNKNOWN
+            grid[free_cells[unknown_mask]] = CELL_FREE
+
+        ht_indices = np.clip(hit_steps, 0, max_steps - 1)
+        hit_flat = (
+            gys[np.arange(n_rays), ht_indices] * GRID_SIZE +
+            gxs[np.arange(n_rays), ht_indices]
+        )
+        hit_valid = (hit_flat >= 0) & (hit_flat < GRID_SIZE * GRID_SIZE)
+        grid[hit_flat[hit_valid]] = CELL_OCCUPIED
+
+        # ── Vectorized 2m radius mask ──────────────────────────────────────
+        r_gx = int((self.odom_x - ORIGIN) / RESOLUTION)
+        r_gy = int((self.odom_y - ORIGIN) / RESOLUTION)
         r_radius = int(OBSTACLE_RADIUS / RESOLUTION)
-
-        for i in range(len(valid_ranges)):
-            ht   = hit_steps[i]
-            gx_i = gxs[i]
-            gy_i = gys[i]
-            ib_i = in_bounds[i]
-            for s in range(ht):
-                if ib_i[s]:
-                    j = gy_i[s] * GRID_SIZE + gx_i[s]
-                    if grid[j] == CELL_UNKNOWN:
-                        grid[j] = CELL_FREE
-            gi = gy_i[ht] * GRID_SIZE + gx_i[ht]
-            if 0 <= gi < len(grid):
-                grid[gi] = CELL_OCCUPIED
-
-        # Mask: keep only 2m radius around robot
-        for gy in range(max(0, r_gy - r_radius), min(GRID_SIZE, r_gy + r_radius)):
-            for gx in range(max(0, r_gx - r_radius), min(GRID_SIZE, r_gx + r_radius)):
-                wx = gx * RESOLUTION + ORIGIN
-                wy = gy * RESOLUTION + ORIGIN
-                if (wx - self.odom_x) ** 2 + (wy - self.odom_y) ** 2 > OBSTACLE_RADIUS ** 2:
-                    grid[gy * GRID_SIZE + gx] = CELL_UNKNOWN
+        y_lo, y_hi = max(0, r_gy - r_radius), min(GRID_SIZE, r_gy + r_radius)
+        x_lo, x_hi = max(0, r_gx - r_radius), min(GRID_SIZE, r_gx + r_radius)
+        if y_hi > y_lo and x_hi > x_lo:
+            gy_range = np.arange(y_lo, y_hi, dtype=np.int32)
+            gx_range = np.arange(x_lo, x_hi, dtype=np.int32)
+            yy, xx = np.meshgrid(gy_range, gx_range, indexing='ij')
+            wx = xx * RESOLUTION + ORIGIN
+            wy = yy * RESOLUTION + ORIGIN
+            dist_sq = (wx - self.odom_x) ** 2 + (wy - self.odom_y) ** 2
+            outside = dist_sq > OBSTACLE_RADIUS ** 2
+            flat_idx = yy.ravel() * GRID_SIZE + xx.ravel()
+            grid[flat_idx[outside.ravel()]] = CELL_UNKNOWN
 
     # ── Obstacle scan finalisation ─────────────────────────────────────────────
 
