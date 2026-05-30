@@ -12,25 +12,21 @@
    +-- Lidar  -->  /scan  (LaserScan ~12 Hz)
    |
    v
-[lidar_only_launch.py]  <-- SLLidar ROS 2 driver
+[sllidar_ros2 driver]  <-- sllidar_a1_launch.py
    |
-   +-- /scan  -->  [map_manager_node.py]
-   |              [brain_node.py]  -->  /odom
-   |              [web_bridge.py]
-   |
-   v
-[WebSocket server]  ws://0.0.0.0:9091
+   +-- /scan  -->  [brain_node.py]  -->  /odom
+   |              [map_manager_node.py]
+   |              [web_bridge.py]  ws://0.0.0.0:9091
    |
    v
 [Web App]
 ```
 
-**Nodes started by entrypoint.sh:**
-1. `lidar_only_launch.py` — SLLidar driver, publishes `/scan`
-2. `static_transform_publisher` x2 — TF: `base_footprint → base_link → laser`
-3. `map_manager_node.py` — builds occupancy grid, two modes
-4. `brain_node.py` — publishes simulated odometry (`/odom`) and robot TF
-5. `web_bridge.py` — WebSocket server on port 9091
+**ROS 2 nodes (managed by PM2 via deploy.sh):**
+1. `sllidar_ros2` — SLLidar driver, publishes `/scan`
+2. `my_robot_controller/brain` — scan-based odometry (`/odom`) + TF
+3. `my_robot_controller/map_manager` — builds occupancy grid
+4. `my_robot_controller/web_bridge` — WebSocket server on port 9091
 
 ---
 
@@ -50,9 +46,48 @@
 
 **Post-Mapping Obstacle Scan:** After 'stop', a clean 360° scan accumulates all points within 2m of the robot. These are published as a separate `obstacle_layer` OccupancyGrid and rendered by the frontend as a semi-transparent overlay on top of the static map.
 
-**No SLAM Toolbox** — pose comes from `brain_node.py` simulated odometry. Sufficient for single-room scanning.
+**No SLAM Toolbox** — pose comes from `brain_node.py` ICP-based scan matching. Sufficient for single-room scanning.
 
 **Map parameters:** 800×800 cells, 5cm/cell → 40m × 40m world. Origin at center.
+
+---
+
+## Running on the Pi
+
+**First-time setup** (one-time on the Pi):
+```bash
+sudo ./install-pi.sh
+```
+
+**Deploy / restart all nodes:**
+```bash
+./deploy.sh
+```
+
+**Restart a single node:**
+```bash
+pm2 restart nexus-robot-brain
+pm2 restart nexus-robot-map-manager
+pm2 restart nexus-robot-web-bridge
+pm2 restart nexus-robot-lidar
+```
+
+**Check node status:**
+```bash
+pm2 status
+```
+
+**View node logs:**
+```bash
+pm2 logs nexus-robot-web-bridge
+pm2 logs nexus-robot-brain
+```
+
+**Verify ROS 2 topics:**
+```bash
+ros2 topic list
+ros2 topic echo /odom
+```
 
 ---
 
@@ -170,7 +205,7 @@ ws.send(JSON.stringify({ type: 'cmd', 'command': 'idle' }));
 
 | Source | Topic | Message Type | Frequency | WebSocket field |
 |---|---|---|---|---|
-| lidar driver | `/scan` | LaserScan | ~12 Hz | `scan.points[]` (throttled to 5 Hz) |
+| sllidar driver | `/scan` | LaserScan | ~12 Hz | `scan.points[]` (throttled to 5 Hz) |
 | map_manager | `/map_combined` | OccupancyGrid | ≤5 Hz | `map_layer.*` |
 | map_manager | `/obstacle_layer` | OccupancyGrid | one-shot | `obstacle_layer.*` |
 | brain_node | `/odom` | Odometry | ~10 Hz | (internal — drives map_manager) |
@@ -183,10 +218,10 @@ ws.send(JSON.stringify({ type: 'cmd', 'command': 'idle' }));
 
 | Symptom | Cause |
 |---|---|
-| WebSocket never connects | Wrong IP, or port 9091 not reachable |
-| `map_layer` all gray | `map_manager` not running |
+| WebSocket never connects | Wrong IP, or port 9091 not reachable — check `pm2 status` |
+| `map_layer` all gray | `map_manager` not running — check `pm2 status` |
 | Map stays blank | Robot hasn't moved > 15cm or rotated > 15° yet — move the robot |
-| No `pose` data | brain_node not publishing `/odom` |
+| No `pose` data | brain_node not publishing `/odom` — check `ros2 topic echo /odom` |
 | `obstacle_layer` not arriving | Not yet in SCAN_OBSTACLE state — 'stop' must be sent first |
 | Map grows in LIVE mode | Still in MAPPING_ACTIVE — send `command: 'stop'` |
 | Port 9091 already in use | Kill the stray process: `sudo lsof -ti :9091 | xargs kill` |
@@ -194,7 +229,8 @@ ws.send(JSON.stringify({ type: 'cmd', 'command': 'idle' }));
 
 **Verify from Pi:**
 ```bash
-docker exec robot_core ps aux | grep python3 | grep -v grep
-docker exec robot_core ros2 topic list
+pm2 status
+ros2 topic list
+ros2 topic echo /odom
 sudo lsof -i :9091
 ```
