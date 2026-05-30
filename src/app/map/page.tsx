@@ -29,7 +29,7 @@ function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number)
 }
 
 // ── MiniMap canvas ref (separate from main canvas) ──────────────────────────
-const MINI_SIZE = 160;
+const MINI_SIZE = 320;
 const MINI_RANGE = 3.0; // metres visible in minimap
 
 function drawMinimap(ctx: CanvasRenderingContext2D, scan: ScanData | null, pose: PoseData | null) {
@@ -144,6 +144,11 @@ export default function MapPage() {
   const occOffscreenRef = useRef<HTMLCanvasElement | null>(null);
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [scanCount, setScanCount] = useState(0);
+  // Tracks accumulated server map across MAPPING states.
+  // In LIVE mode the server sends a 2m temp_grid — we ignore it.
+  const serverMapRef = useRef<MapData | null>(null);
+  // Mode ref — used inside WebSocket handlers where React state is stale.
+  const infoModeRef = useRef('live');
 
   useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
   useEffect(() => { poseRef.current = pose; }, [pose]);
@@ -531,10 +536,18 @@ export default function MapPage() {
         function dispatch(msg: { type: string; data?: unknown }) {
           switch (msg.type) {
             case 'map':
-            case 'map_layer':
-              setMapData({ ...(msg.data as MapData) });
-              mapDataRef.current = msg.data as MapData;
+            case 'map_layer': {
+              const incoming = msg.data as MapData;
+              // In LIVE mode the server sends a 2m temp_grid — ignore it so we keep the accumulated map.
+              if (info.mode === 'live' && serverMapRef.current) break;
+              // In MAPPING states, accumulate the map.
+              if (info.mode === 'mapping_active' || info.mode === 'mapping_idle') {
+                serverMapRef.current = incoming;
+              }
+              setMapData(incoming);
+              mapDataRef.current = incoming;
               break;
+            }
             case 'pose': setPose({ ...(msg.data as PoseData) }); poseRef.current = { ...(msg.data as PoseData) }; break;
             case 'scan':
               setScanData({ ...(msg.data as ScanData) });
@@ -636,6 +649,7 @@ export default function MapPage() {
     setIsClearingLidar(true);
     occGridRef.current = null; occOffscreenRef.current = null; scanBoundsRef.current = null;
     setScanCount(0);
+    redrawTriggerRef.current++;
     setTimeout(() => setIsClearingLidar(false), 1500);
   };
   const confirmReset = () => {
