@@ -329,24 +329,27 @@ export default function MapPage() {
       const minScale = Math.min(W, H) * 0.75 / Math.max(gw, gh);
       const rawFit = Math.min(W / gw, H / gh) * zoom;
       const scale = Math.max(rawFit, minScale);
+      // Center: world (origin) maps to screen center; grid is drawn offset from there.
+      // origin_y in SLAM is typically negative (below robot), so -origin_y/res*scale pushes down.
+      // Fix: always center the grid so robot (world 0,0) = screen center.
       const mapX = W / 2 + origin_x / res * scale;
-      const mapY = H / 2 - origin_y / res * scale;
+      const mapY = H / 2 + origin_y / res * scale;
 
       ctx.save();
       if (p && isHU) {
-        const cx2 = mapX + (p.x - origin_x) / res * scale;
-        const cy2 = mapY + (gh - (p.y - origin_y) / res) * scale;
+        const cx2 = W / 2;
+        const cy2 = H / 2;
         ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
       }
       ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
       ctx.restore();
 
       const worldToScreen = (wx: number, wy: number) => {
-        let sx = mapX + (wx - origin_x) / res * scale;
-        let sy = mapY + (wy - origin_y) / res * scale;
+        let sx = W / 2 + wx * scale / res;
+        let sy = H / 2 - wy * scale / res;
         if (p && isHU) {
-          const cx2 = mapX + (p.x - origin_x) / res * scale;
-          const cy2 = mapY + (p.y - origin_y) / res * scale;
+          const cx2 = W / 2;
+          const cy2 = H / 2;
           const cos = Math.cos(-p.theta - Math.PI / 2); const sin = Math.sin(-p.theta - Math.PI / 2);
           const dx = sx - cx2; const dy2 = sy - cy2;
           sx = cx2 + cos * dx - sin * dy2; sy = cy2 + sin * dx + cos * dy2;
@@ -539,7 +542,16 @@ export default function MapPage() {
               setScanCount(c => c + 1);
               buildOccupancyGrid(msg.data as ScanData);
               break;
-            case 'status': setStatusText((msg.data as string) || ''); break;
+            case 'status': {
+              const raw = (msg.data as string) || '';
+              setStatusText(raw);
+              // Derive mode from status string like "STATE=MAPPING x=0.10 ..."
+              const upper = raw.toUpperCase();
+              if (upper.startsWith('STATE=MAPPING')) setInfo(prev => ({ ...prev, mode: 'mapping_active' }));
+              else if (upper.startsWith('STATE=LIVE')) setInfo(prev => ({ ...prev, mode: 'live' }));
+              else if (upper.startsWith('STATE=IDLE')) setInfo(prev => ({ ...prev, mode: 'idle' }));
+              break;
+            }
             case 'info': setInfo(msg.data as InfoData); break;
             case 'mode': setInfo(prev => ({ ...prev, mode: msg.data as string })); break;
           }
