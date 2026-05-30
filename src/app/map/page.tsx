@@ -230,7 +230,11 @@ export default function MapPage() {
     if (map) {
       const isGenerated = !mapDataRef.current;
       const off = isGenerated ? occOffscreenRef.current : offscreenRef.current;
-      if (!off) return;
+      if (!off) {
+        // Race: mapData set but offscreen canvas not built yet — draw inline
+        if (!isGenerated && mapDataRef.current) buildMapImage();
+        return;
+      }
       const { width: gw, height: gh, resolution: res, origin_x, origin_y } = map;
 
       // ── Auto-fit so the full 40×40m world grid fills at least 75 % of the
