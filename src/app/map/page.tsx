@@ -147,8 +147,10 @@ export default function MapPage() {
   // Tracks accumulated server map across MAPPING states.
   // In LIVE mode the server sends a 2m temp_grid — we ignore it.
   const serverMapRef = useRef<MapData | null>(null);
-  // Mode ref — used inside WebSocket handlers where React state is stale.
+  // Mode ref — kept in sync with React state; used inside WebSocket handler (stale closure).
   const infoModeRef = useRef('live');
+  // Incremented to force animation loop to redraw (e.g. after clearing).
+  const redrawTriggerRef = useRef(0);
 
   useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
   useEffect(() => { poseRef.current = pose; }, [pose]);
@@ -156,6 +158,8 @@ export default function MapPage() {
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { headingUpRef.current = isHeadingUp; }, [isHeadingUp]);
   useEffect(() => { lidarAxisRef.current = lidarAxis; }, [lidarAxis]);
+  // Keep mode ref in sync — WebSocket handler uses this ref (not stale React state).
+  useEffect(() => { infoModeRef.current = info.mode; }, [info.mode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -538,12 +542,10 @@ export default function MapPage() {
             case 'map':
             case 'map_layer': {
               const incoming = msg.data as MapData;
-              // In LIVE mode the server sends a 2m temp_grid — ignore it so we keep the accumulated map.
-              if (info.mode === 'live' && serverMapRef.current) break;
-              // In MAPPING states, accumulate the map.
-              if (info.mode === 'mapping_active' || info.mode === 'mapping_idle') {
-                serverMapRef.current = incoming;
-              }
+              // Always accumulate incoming map data into serverMapRef.
+              serverMapRef.current = incoming;
+              // In LIVE mode the server sends a 2m temp_grid — render accumulated map instead.
+              if (infoModeRef.current === 'live' && mapDataRef.current) break;
               setMapData(incoming);
               mapDataRef.current = incoming;
               break;
