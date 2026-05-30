@@ -232,9 +232,17 @@ export default function MapPage() {
       const off = isGenerated ? occOffscreenRef.current : offscreenRef.current;
       if (!off) return;
       const { width: gw, height: gh, resolution: res, origin_x, origin_y } = map;
-      const scaleX = (W / gw) * zoom; const scaleY = (H / gh) * zoom;
-      const scale = Math.min(scaleX, scaleY);
-      const mapX = (W - gw * scale) / 2; const mapY = (H - gh * scale) / 2;
+
+      // ── Auto-fit so the full 40×40m world grid fills at least 75 % of the
+      //    shorter canvas dimension, then apply user zoom on top.
+      const minScale       = Math.min(W, H) * 0.75 / Math.max(gw, gh);
+      const rawFitScale    = Math.min(W / gw, H / gh) * zoom;
+      const scale          = Math.max(rawFitScale, minScale);
+
+      // ── Place world (0,0) at canvas centre.  The grid's top-left corner
+      //    in canvas space is therefore offset by -origin_* / res * scale.
+      const mapX = W / 2 + origin_x / res * scale;
+      const mapY = H / 2 - origin_y / res * scale;
       ctx.save();
       if (p && isHU) {
         const cx = mapX + (p.x - origin_x) / res * scale;
@@ -282,10 +290,10 @@ export default function MapPage() {
     if (bounds) {
       const worldW = bounds.maxX - bounds.minX + padding * 2;
       const worldH = bounds.maxY - bounds.minY + padding * 2;
-      scale = Math.min((W - 40) / worldW, (H - 40) / worldH) * zoom;
+      scale = Math.max(Math.min((W - 40) / worldW, (H - 40) / worldH) * zoom, 20);
     } else {
       const defaultRange = 6.0;
-      scale = Math.min(W, H) / defaultRange * zoom;
+      scale = Math.max(Math.min(W, H) / defaultRange * zoom, 60);
     }
     const cx = W / 2; const cy = H / 2;
     const worldToCanvas = (wx: number, wy: number) => {
@@ -367,7 +375,11 @@ export default function MapPage() {
       ws.onmessage = (event) => {
         function dispatch(msg: { type: string; data?: unknown }) {
           switch (msg.type) {
-            case 'map': setMapData({ ...(msg.data as MapData) }); mapDataRef.current = msg.data as MapData; break;
+            case 'map':
+            case 'map_layer':
+              setMapData({ ...(msg.data as MapData) });
+              mapDataRef.current = msg.data as MapData;
+              break;
             case 'pose': setPose({ ...(msg.data as PoseData) }); poseRef.current = { ...(msg.data as PoseData) }; break;
             case 'scan': setScanData({ ...(msg.data as ScanData) }); scanDataRef.current = msg.data as ScanData; buildOccupancyGrid(msg.data as ScanData); break;
             case 'status': setStatusText((msg.data as string) || ''); break;
@@ -483,6 +495,7 @@ export default function MapPage() {
   };
 
   const isOnline = wsStatus === 'connected';
+  const isMapping = info.mode === 'mapping_idle' || info.mode === 'mapping_active' || info.mode === 'mapping';
 
   return (
     <div
@@ -554,8 +567,8 @@ export default function MapPage() {
               <span
                 className="px-2 py-0.5 rounded font-mono font-bold text-[10px]"
                 style={{
-                  background: info.mode === 'mapping' ? 'rgba(255,184,0,0.15)' : 'rgba(0,255,136,0.1)',
-                  color: info.mode === 'mapping' ? 'var(--warning)' : 'var(--success)',
+                  background: isMapping || info.mode === 'scan_obstacle' ? 'rgba(255,184,0,0.15)' : 'rgba(0,255,136,0.1)',
+                  color: isMapping || info.mode === 'scan_obstacle' ? 'var(--warning)' : 'var(--success)',
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
@@ -593,7 +606,7 @@ export default function MapPage() {
                 icon={<MapPin size={16} />}
                 loading={isStarting}
                 onClick={handleStartScan}
-                disabled={info.mode === 'mapping'}
+                disabled={isMapping || info.mode === 'scan_obstacle'}
                 style={{
                   background: 'linear-gradient(135deg, #00d4ff, #00b8e6)',
                   border: 'none',
@@ -617,7 +630,7 @@ export default function MapPage() {
                 icon={<Target size={16} />}
                 loading={isStopping}
                 onClick={handleStopScan}
-                disabled={info.mode !== 'mapping'}
+                disabled={!isMapping}
                 style={{
                   borderRadius: '12px',
                   fontFamily: "'JetBrains Mono', monospace",
