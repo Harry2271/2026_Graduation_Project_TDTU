@@ -1,0 +1,252 @@
+#include "CommandParser.h"
+#include "config.h"
+
+CommandParser::CommandParser()
+    : buffer_index_(0)
+{
+    buffer_[0] = '\0';
+}
+
+CommandType CommandParser::feed(uint8_t byte, Command& out_cmd)
+{
+    if (byte == '\r') return CMD_UNKNOWN;
+
+    if (byte == CMD_TERMINATOR || byte == '\n') {
+        if (buffer_index_ > 0) {
+            buffer_[buffer_index_] = '\0';
+            buffer_index_ = 0;
+            return parse(buffer_, out_cmd);
+        }
+        return CMD_UNKNOWN;
+    }
+
+    if (buffer_index_ < CMD_BUFFER_SIZE - 1) {
+        buffer_[buffer_index_++] = (char)byte;
+        buffer_[buffer_index_] = '\0';
+    }
+    return CMD_UNKNOWN;
+}
+
+CommandType CommandParser::parse(const char* cmd, Command& out)
+{
+    memset(&out, 0, sizeof(out));
+
+    if (cmd[0] == '{') {
+        return parseJSON(cmd, out);
+    }
+    return parseASCII(cmd, out);
+}
+
+CommandType CommandParser::parseASCII(const char* cmd, Command& out)
+{
+    out.type = CMD_UNKNOWN;
+
+    char first = cmd[0];
+
+    switch (first) {
+        case 'F': case 'f': {
+            int v = atoi(cmd + 1);
+            out.type  = CMD_FORWARD;
+            out.speed = clampVal(v, 0, 255);
+        } break;
+
+        case 'B': case 'b': {
+            int v = atoi(cmd + 1);
+            out.type  = CMD_BACKWARD;
+            out.speed = clampVal(v, 0, 255);
+        } break;
+
+        case 'L': case 'l': {
+            int v = atoi(cmd + 1);
+            out.type        = CMD_MOVE;
+            out.move_vx     = 0;
+            out.move_vy     = -clampVal(v, 0, 255);
+            out.move_omega  = 0;
+        } break;
+
+        case 'R': case 'r': {
+            if (cmd[1] != '\0' && cmd[1] >= '0' && cmd[1] <= '9') {
+                int v = atoi(cmd + 1);
+                out.type        = CMD_MOVE;
+                out.move_vx     = 0;
+                out.move_vy     = clampVal(v, 0, 255);
+                out.move_omega  = 0;
+            } else {
+                out.type = CMD_RESET_ENCODER;
+            }
+        } break;
+
+        case 'Q': case 'q': {
+            int v = atoi(cmd + 1);
+            out.type        = CMD_MOVE;
+            out.move_vx     = 0;
+            out.move_vy     = 0;
+            out.move_omega  = -clampVal(v, 0, 255);
+        } break;
+
+        case 'E': case 'e': {
+            int v = atoi(cmd + 1);
+            out.type        = CMD_MOVE;
+            out.move_vx     = 0;
+            out.move_vy     = 0;
+            out.move_omega  = clampVal(v, 0, 255);
+        } break;
+
+        case 'M': case 'm': {
+            int m[4] = {0, 0, 0, 0};
+            int n = sscanf(cmd + 1, "%d %d %d %d", &m[0], &m[1], &m[2], &m[3]);
+            if (n >= 4) {
+                out.type = CMD_INDIVIDUAL;
+                for (int i = 0; i < 4; i++) {
+                    out.motor_speeds[i] = clampVal(m[i], -255, 255);
+                }
+            }
+        } break;
+
+        case 'S': case 's': {
+            out.type = CMD_STOP;
+        } break;
+
+        case 'D': case 'd': {
+            out.type = CMD_E_STOP;
+        } break;
+
+        case 'K': case 'k': {
+            out.type = CMD_E_STOP_CLEAR;
+        } break;
+
+        case 'V': case 'v': {
+            out.type = CMD_GET_STATUS;
+        } break;
+
+        case 'P': case 'p': {
+            float kp, ki, kd;
+            if (sscanf(cmd + 1, "%f %f %f", &kp, &ki, &kd) == 3) {
+                out.type = CMD_SET_PID;
+                out.kp   = kp;
+                out.ki   = ki;
+                out.kd   = kd;
+            }
+        } break;
+
+        case 'X': case 'x': {
+            int v = atoi(cmd + 1);
+            out.type      = CMD_SET_MAX_SPEED;
+            out.max_speed = clampVal(v, 0, 100);
+        } break;
+
+        case 'T': case 't': {
+            out.type = CMD_TEST;
+        } break;
+
+        case 'Z': case 'z': {
+            out.type = CMD_HEARTBEAT;
+        } break;
+
+        case '?': case 'h': case 'H': {
+            out.type = CMD_HELP;
+        } break;
+
+        default:
+            out.type = CMD_UNKNOWN;
+            break;
+    }
+
+    return out.type;
+}
+
+CommandType CommandParser::parseJSON(const char* json_str, Command& out)
+{
+    memset(&out, 0, sizeof(out));
+    out.type = CMD_UNKNOWN;
+
+    static ArduinoJson::JsonDocument doc;
+    doc.clear();
+
+    ArduinoJson::DeserializationError err = deserializeJson(doc, json_str);
+    if (err) return CMD_UNKNOWN;
+
+    const char* cmd = doc["cmd"];
+    if (!cmd) return CMD_UNKNOWN;
+
+    if (strcmp(cmd, "forward") == 0) {
+        out.type  = CMD_FORWARD;
+        out.speed = doc["speed"] | 0;
+    }
+    else if (strcmp(cmd, "backward") == 0) {
+        out.type  = CMD_BACKWARD;
+        out.speed = doc["speed"] | 0;
+    }
+    else if (strcmp(cmd, "stop") == 0) {
+        out.type = CMD_STOP;
+    }
+    else if (strcmp(cmd, "e_stop") == 0) {
+        out.type = CMD_E_STOP;
+    }
+    else if (strcmp(cmd, "e_stop_clear") == 0) {
+        out.type = CMD_E_STOP_CLEAR;
+    }
+    else if (strcmp(cmd, "get_encoder") == 0) {
+        out.type = CMD_GET_ENCODER;
+    }
+    else if (strcmp(cmd, "reset_encoder") == 0) {
+        out.type = CMD_RESET_ENCODER;
+    }
+    else if (strcmp(cmd, "set_pid") == 0) {
+        out.type = CMD_SET_PID;
+        out.kp   = doc["kp"] | DEFAULT_KP;
+        out.ki   = doc["ki"] | DEFAULT_KI;
+        out.kd   = doc["kd"] | DEFAULT_KD;
+    }
+    else if (strcmp(cmd, "get_status") == 0) {
+        out.type = CMD_GET_STATUS;
+    }
+    else if (strcmp(cmd, "set_max_speed") == 0) {
+        out.type      = CMD_SET_MAX_SPEED;
+        out.max_speed = doc["speed"] | 100;
+    }
+    else if (strcmp(cmd, "move") == 0) {
+        out.type        = CMD_MOVE;
+        out.move_vx     = doc["vx"]     | 0;
+        out.move_vy     = doc["vy"]     | 0;
+        out.move_omega  = doc["omega"]  | 0;
+        out.move_vx     = clampVal(out.move_vx,   -255, 255);
+        out.move_vy     = clampVal(out.move_vy,   -255, 255);
+        out.move_omega = clampVal(out.move_omega, -255, 255);
+    }
+    else if (strcmp(cmd, "individual") == 0) {
+        out.type = CMD_INDIVIDUAL;
+        ArduinoJson::JsonArray arr = doc["speeds"];
+        if (arr.size() >= 4) {
+            for (int i = 0; i < 4; i++) {
+                out.motor_speeds[i] = clampVal((int)arr[i].as<int>(), -255, 255);
+            }
+        } else {
+            out.type = CMD_UNKNOWN;
+        }
+    }
+    else if (strcmp(cmd, "heartbeat") == 0) {
+        out.type = CMD_HEARTBEAT;
+    }
+    else if (strcmp(cmd, "obstacle_left") == 0) {
+        out.type = CMD_OBSTACLE_LEFT;
+    }
+    else if (strcmp(cmd, "obstacle_right") == 0) {
+        out.type = CMD_OBSTACLE_RIGHT;
+    }
+    else if (strcmp(cmd, "obstacle_front") == 0) {
+        out.type = CMD_OBSTACLE_FRONT;
+    }
+    else if (strcmp(cmd, "obstacle_clear") == 0) {
+        out.type = CMD_OBSTACLE_CLEAR;
+    }
+
+    return out.type;
+}
+
+int CommandParser::clampVal(int val, int min_val, int max_val)
+{
+    if (val < min_val) return min_val;
+    if (val > max_val) return max_val;
+    return val;
+}
