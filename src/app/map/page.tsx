@@ -60,12 +60,7 @@ export default function MapPage() {
   const scanBoundsRef = useRef<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const prevMapDataRef = useRef<number[] | null>(null);
-  // Version counter used to force re-render when occupancy grid offscreen canvas is rebuilt.
-  // The value itself is intentionally unused — only the state setter triggers React updates.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [occGridVersion, setOccGridVersion] = useState(0);
   const occOffscreenRef = useRef<HTMLCanvasElement | null>(null);
-  const prevOccGridRef = useRef<number[] | null>(null);
 
   useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
   useEffect(() => { poseRef.current = pose; }, [pose]);
@@ -89,111 +84,69 @@ export default function MapPage() {
     return () => observer.disconnect();
   }, []);
 
-  // Build occupancy grid image (reads from occGridRef, draws to occOffscreenRef)
-  // drawOverlay reads occOffscreenRef.current directly on each animation frame.
-  useEffect(() => {
-    const grid = occGridRef.current;
-    if (!grid) return;
-    const { width: gw, height: gh } = grid;
-    let off = occOffscreenRef.current;
-    if (!off || off.width !== gw || off.height !== gh) {
-      off = document.createElement('canvas');
-      off.width = gw; off.height = gh;
-      occOffscreenRef.current = off;
-      prevOccGridRef.current = null;
+  // Draw a grid (number[] of -1/0/100) into an offscreen canvas.
+  function drawGridToCanvas(grid: MapData, canvas: HTMLCanvasElement) {
+    const { width: gw, height: gh, data } = grid;
+    if (canvas.width !== gw || canvas.height !== gh) {
+      canvas.width = gw; canvas.height = gh;
     }
-    const ctx = off.getContext('2d');
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    let imgData: ImageData;
-    try { imgData = ctx.getImageData(0, 0, gw, gh); } catch { return; }
+    const imgData = ctx.createImageData(gw, gh);
     const buf = imgData.data;
-    const prev = prevOccGridRef.current;
-    if (prev && prev.length === grid.data.length) {
-      for (let i = 0; i < grid.data.length; i++) {
-        if (prev[i] !== grid.data[i]) {
-          const j = i * 4;
-          const v = grid.data[i];
-          if (v === 100) { buf[j]=0; buf[j+1]=0; buf[j+2]=0; buf[j+3]=255; }
-          else if (v === 0) { buf[j]=255; buf[j+1]=255; buf[j+2]=255; buf[j+3]=255; }
-          else { buf[j]=128; buf[j+1]=128; buf[j+2]=128; buf[j+3]=255; }
-        }
-      }
-    } else {
-      for (let i = 0; i < grid.data.length; i++) {
-        const v = grid.data[i];
-        const j = i * 4;
-        if (v === 100) { buf[j]=0; buf[j+1]=0; buf[j+2]=0; buf[j+3]=255; }
-        else if (v === 0) { buf[j]=255; buf[j+1]=255; buf[j+2]=255; buf[j+3]=255; }
-        else { buf[j]=128; buf[j+1]=128; buf[j+2]=128; buf[j+3]=255; }
-      }
+    for (let i = 0; i < data.length; i++) {
+      const j = i * 4;
+      const v = data[i];
+      if (v === 100) { buf[j]=0; buf[j+1]=0; buf[j+2]=0; buf[j+3]=255; }
+      else if (v === 0) { buf[j]=255; buf[j+1]=255; buf[j+2]=255; buf[j+3]=255; }
+      else { buf[j]=128; buf[j+1]=128; buf[j+2]=128; buf[j+3]=255; }
     }
-    prevOccGridRef.current = [...grid.data];
     ctx.putImageData(imgData, 0, 0);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setOccGridVersion(v => v + 1);
-  }, [occGridRef.current?.data.length]);
+  }
 
-  const buildMapImage = useCallback(() => {
+  function buildMapImage() {
     const map = mapDataRef.current;
     if (!map) return;
-    const { width: gw, height: gh } = map;
-    let off = offscreenRef.current;
-    if (!off || off.width !== gw || off.height !== gh) {
-      off = document.createElement('canvas');
-      off.width = gw; off.height = gh;
-      offscreenRef.current = off;
-      prevMapDataRef.current = null;
-    }
-    const ctx = off.getContext('2d');
-    if (!ctx) return;
-    let imgData: ImageData;
-    try { imgData = ctx.getImageData(0, 0, gw, gh); } catch { return; }
-    const buf = imgData.data;
-    const prev = prevMapDataRef.current;
-    if (prev && prev.length === map.data.length) {
-      for (let i = 0; i < map.data.length; i++) {
-        if (prev[i] !== map.data[i]) {
-          const j = i * 4;
-          const v = map.data[i];
-          if (v === 100) { buf[j]=0; buf[j+1]=0; buf[j+2]=0; buf[j+3]=255; }
-          else if (v === 0) { buf[j]=255; buf[j+1]=255; buf[j+2]=255; buf[j+3]=255; }
-          else { buf[j]=128; buf[j+1]=128; buf[j+2]=128; buf[j+3]=255; }
-        }
-      }
-    } else {
-      for (let i = 0; i < map.data.length; i++) {
-        const v = map.data[i];
-        const j = i * 4;
-        if (v === 100) { buf[j]=0; buf[j+1]=0; buf[j+2]=0; buf[j+3]=255; }
-        else if (v === 0) { buf[j]=255; buf[j+1]=255; buf[j+2]=255; buf[j+3]=255; }
-        else { buf[j]=128; buf[j+1]=128; buf[j+2]=128; buf[j+3]=255; }
-      }
-    }
+    if (!offscreenRef.current) offscreenRef.current = document.createElement('canvas');
+    drawGridToCanvas(map, offscreenRef.current);
     prevMapDataRef.current = [...map.data];
-    ctx.putImageData(imgData, 0, 0);
-  }, []);
+  }
 
-  useEffect(() => { if (mapData) buildMapImage(); }, [mapData, buildMapImage]);
-
+  // buildOccupancyGrid: called on every scan message.
+  // Requires pose to convert robot-local points → world coordinates.
+  // Rebuilds the offscreen canvas immediately after updating grid data.
   function buildOccupancyGrid(scan: ScanData) {
     const p = poseRef.current;
-    if (!p || !scan.points.length) return;
+    if (!p) return;   // cannot convert to world coords without pose
+    if (!scan.points.length) return;
+
     const res = occScaleRef.current;
     const size = occSizeRef.current;
     const half = (size * res) / 2;
-    let grid = occGridRef.current;
-    if (!grid || grid.width !== size || grid.height !== size) {
-      grid = { width: size, height: size, resolution: res, origin_x: -half, origin_y: -half, origin_theta: 0, data: new Array(size * size).fill(-1) };
-      occGridRef.current = grid;
+
+    // Init or reuse grid
+    if (!occGridRef.current || occGridRef.current.width !== size || occGridRef.current.height !== size) {
+      occGridRef.current = {
+        width: size, height: size, resolution: res,
+        origin_x: -half, origin_y: -half, origin_theta: 0,
+        data: new Array(size * size).fill(-1),
+      };
     }
+    const grid = occGridRef.current;
+
     const visitedFree = new Set<number>();
     for (let i = 0; i < scan.points.length; i++) {
       const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
       const wx = wp.wx; const wy = wp.wy;
+
+      // Robot cell in grid
       const rx = Math.round((p.x + half) / res);
       const ry = Math.round(size - (p.y + half) / res);
+      // Endpoint cell
       const ex = Math.round((wx + half) / res);
       const ey = Math.round(size - (wy + half) / res);
+
+      // Bresenham from (rx,ry) to (ex,ey)
       const dx = Math.abs(ex - rx); const dy = Math.abs(ey - ry);
       const sx = rx < ex ? 1 : -1; const sy = ry < ey ? 1 : -1;
       let err = dx - dy; let cx = rx; let cy = ry;
@@ -201,17 +154,37 @@ export default function MapPage() {
         if (cx < 0 || cx >= size || cy < 0 || cy >= size) break;
         const idx = cy * size + cx;
         if (cx === ex && cy === ey) break;
-        if (!visitedFree.has(idx)) { visitedFree.add(idx); if (grid!.data[idx] === -1) grid!.data[idx] = 0; }
+        if (!visitedFree.has(idx)) {
+          visitedFree.add(idx);
+          if (grid.data[idx] === -1) grid.data[idx] = 0;
+        }
         const e2 = 2 * err;
         if (e2 > -dy) { err -= dy; cx += sx; }
         if (e2 < dx) { err += dx; cy += sy; }
       }
-      if (ex >= 0 && ex < size && ey >= 0 && ey < size) { const idx = ey * size + ex; if (grid!.data[idx] !== 0) grid!.data[idx] = 100; }
+      // Mark hit cell as occupied (unless it was already free)
+      if (ex >= 0 && ex < size && ey >= 0 && ey < size) {
+        const idx = ey * size + ex;
+        if (grid.data[idx] !== 0) grid.data[idx] = 100;
+      }
+
+      // Track world-space bounds of scan hits
       const b = scanBoundsRef.current;
-      if (!b) { scanBoundsRef.current = { minX: wx, maxX: wx, minY: wy, maxY: wy }; }
-      else { scanBoundsRef.current = { minX: Math.min(b.minX, wx), maxX: Math.max(b.maxX, wx), minY: Math.min(b.minY, wy), maxY: Math.max(b.maxY, wy) }; }
+      if (!b) scanBoundsRef.current = { minX: wx, maxX: wx, minY: wy, maxY: wy };
+      else {
+        scanBoundsRef.current = {
+          minX: Math.min(b.minX, wx), maxX: Math.max(b.maxX, wx),
+          minY: Math.min(b.minY, wy), maxY: Math.max(b.maxY, wy),
+        };
+      }
     }
+
+    // Rebuild offscreen canvas immediately so drawOverlay sees it on next frame
+    if (!occOffscreenRef.current) occOffscreenRef.current = document.createElement('canvas');
+    drawGridToCanvas(grid, occOffscreenRef.current);
   }
+
+  useEffect(() => { if (mapData) buildMapImage(); }, [mapData]);
 
   function drawOverlay() {
     const canvas = canvasRef.current;
@@ -219,34 +192,26 @@ export default function MapPage() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const W = canvas.width; const H = canvas.height;
-    const zoom = zoomRef.current; const isHU = headingUpRef.current;
+    if (W === 0 || H === 0) return;
+
+    const zoom = zoomRef.current;
+    const isHU = headingUpRef.current;
     const p = poseRef.current;
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#080b10';
     ctx.fillRect(0, 0, W, H);
 
-    const map = mapDataRef.current || occGridRef.current;
-    if (map) {
-      const isGenerated = !mapDataRef.current;
-      const off = isGenerated ? occOffscreenRef.current : offscreenRef.current;
-      if (!off) {
-        // Race: mapData set but offscreen canvas not built yet — draw inline
-        if (!isGenerated && mapDataRef.current) buildMapImage();
-        return;
-      }
-      const { width: gw, height: gh, resolution: res, origin_x, origin_y } = map;
+    // ── Path A: server map_layer available ───────────────────────────────
+    if (mapDataRef.current) {
+      const off = offscreenRef.current;
+      if (!off) { buildMapImage(); return; }
+      const { width: gw, height: gh, resolution: res, origin_x, origin_y } = mapDataRef.current;
+      const minScale  = Math.min(W, H) * 0.75 / Math.max(gw, gh);
+      const rawFit    = Math.min(W / gw, H / gh) * zoom;
+      const scale     = Math.max(rawFit, minScale);
+      const mapX     = W / 2 + origin_x / res * scale;
+      const mapY     = H / 2 - origin_y / res * scale;
 
-      // ── Auto-fit so the full 40×40m world grid fills at least 75 % of the
-      //    shorter canvas dimension, then apply user zoom on top.
-      const minScale       = Math.min(W, H) * 0.75 / Math.max(gw, gh);
-      const rawFitScale    = Math.min(W / gw, H / gh) * zoom;
-      const scale          = Math.max(rawFitScale, minScale);
-
-      // ── Place world (0,0) at canvas centre.  The grid's top-left corner
-      //    in canvas space is therefore offset by -origin_* / res * scale.
-      const mapX = W / 2 + origin_x / res * scale;
-      const mapY = H / 2 - origin_y / res * scale;
       ctx.save();
       if (p && isHU) {
         const cx = mapX + (p.x - origin_x) / res * scale;
@@ -255,19 +220,22 @@ export default function MapPage() {
       }
       ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
       ctx.restore();
+
       const worldToScreen = (wx: number, wy: number) => {
-        const gx = (wx - origin_x) / res; const gy = (wy - origin_y) / res;
-        let sx = mapX + gx * scale; let sy = mapY + gy * scale;
+        let sx = mapX + (wx - origin_x) / res * scale;
+        let sy = mapY + (wy - origin_y) / res * scale;
         if (p && isHU) {
-          const cx = mapX + (p.x - origin_x) / res * scale; const cy = mapY + (p.y - origin_y) / res * scale;
+          const cx = mapX + (p.x - origin_x) / res * scale;
+          const cy = mapY + (p.y - origin_y) / res * scale;
           const cos = Math.cos(-p.theta - Math.PI / 2); const sin = Math.sin(-p.theta - Math.PI / 2);
           const dx = sx - cx; const dy = sy - cy;
           sx = cx + cos * dx - sin * dy; sy = cy + sin * dx + cos * dy;
         }
         return { sx, sy };
       };
+
       const scan = scanDataRef.current;
-      if (p && scan && scan.points.length > 0) {
+      if (p && scan?.points.length) {
         ctx.beginPath();
         for (let i = 0; i < scan.points.length; i++) {
           const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
@@ -279,75 +247,105 @@ export default function MapPage() {
         for (let i = 0; i < scan.points.length; i += 2) {
           const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
           const sp = worldToScreen(wp.wx, wp.wy);
-          ctx.beginPath(); ctx.arc(sp.sx, sp.sy, 1, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(sp.sx, sp.sy, 1.5, 0, Math.PI * 2); ctx.fill();
         }
       }
       if (p) { const rp = worldToScreen(p.x, p.y); drawRobot(ctx, rp.sx, rp.sy, zoom); }
       return;
     }
 
-    const scan = scanDataRef.current;
-    const hasScan = p && scan && scan.points.length > 0;
-    const bounds = scanBoundsRef.current;
-    const padding = 0.3;
-    let scale: number;
-    if (bounds) {
-      const worldW = bounds.maxX - bounds.minX + padding * 2;
-      const worldH = bounds.maxY - bounds.minY + padding * 2;
-      scale = Math.max(Math.min((W - 40) / worldW, (H - 40) / worldH) * zoom, 20);
-    } else {
-      const defaultRange = 6.0;
-      scale = Math.max(Math.min(W, H) / defaultRange * zoom, 60);
-    }
-    const cx = W / 2; const cy = H / 2;
-    const worldToCanvas = (wx: number, wy: number) => {
-      let sx: number, sy: number;
-      if (bounds) {
-        const worldCX = (bounds.minX + bounds.maxX) / 2; const worldCY = (bounds.minY + bounds.maxY) / 2;
-        sx = cx + (wx - worldCX) * scale; sy = cy + (wy - worldCY) * scale;
-      } else { sx = cx + wx * scale; sy = cy + wy * scale; }
-      if (isHU && p) {
-        const cos = Math.cos(-p.theta - Math.PI / 2); const sin = Math.sin(-p.theta - Math.PI / 2);
-        const dx = sx - cx; const dy = sy - cy;
-        sx = cx + cos * dx - sin * dy; sy = cy + sin * dx + cos * dy;
+    // ── Path B: locally-built occupancy grid from lidar scans ─────────────
+    if (occGridRef.current && occOffscreenRef.current) {
+      const off = occOffscreenRef.current;
+      const { width: gw, height: gh, resolution: res, origin_x, origin_y } = occGridRef.current;
+      const minScale  = Math.min(W, H) * 0.75 / Math.max(gw, gh);
+      const rawFit    = Math.min(W / gw, H / gh) * zoom;
+      const scale     = Math.max(rawFit, minScale);
+      const mapX      = W / 2 + origin_x / res * scale;
+      const mapY      = H / 2 - origin_y / res * scale;
+
+      ctx.save();
+      if (p && isHU) {
+        const cx = mapX + (p.x - origin_x) / res * scale;
+        const cy = mapY + (gh - (p.y - origin_y) / res) * scale;
+        ctx.translate(cx, cy); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx, -cy);
       }
-      return { sx, sy };
-    };
-    const robotPos = isHU && p ? worldToCanvas(p.x, p.y) : worldToCanvas(0, 0);
-    drawRobot(ctx, robotPos.sx, robotPos.sy, zoom);
-    if (hasScan) {
+      ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
+      ctx.restore();
+
+      const worldToScreen = (wx: number, wy: number) => {
+        let sx = mapX + (wx - origin_x) / res * scale;
+        let sy = mapY + (wy - origin_y) / res * scale;
+        if (p && isHU) {
+          const cx = mapX + (p.x - origin_x) / res * scale;
+          const cy = mapY + (p.y - origin_y) / res * scale;
+          const cos = Math.cos(-p.theta - Math.PI / 2); const sin = Math.sin(-p.theta - Math.PI / 2);
+          const dx = sx - cx; const dy = sy - cy;
+          sx = cx + cos * dx - sin * dy; sy = cy + sin * dx + cos * dy;
+        }
+        return { sx, sy };
+      };
+
+      if (p) { const rp = worldToScreen(p.x, p.y); drawRobot(ctx, rp.sx, rp.sy, zoom); }
+      return;
+    }
+
+    // ── Path C: scan-only fallback — always draws robot and lidar points ─────
+    const scan = scanDataRef.current;
+    const bounds = scanBoundsRef.current;
+    const defaultRange = 6.0;
+    const scale = Math.max(Math.min(W, H) / defaultRange * zoom, 60);
+
+    // Robot is always drawn at canvas center (or at pose position if known)
+    const robotX = p ? p.x : 0;
+    const robotY = p ? p.y : 0;
+
+    const robotScreenX = W / 2;
+    const robotScreenY = H / 2;
+
+    // Heading-up: rotate entire scene around robot
+    if (isHU && p) {
+      ctx.save();
+      ctx.translate(robotScreenX, robotScreenY);
+      ctx.rotate(-p.theta - Math.PI / 2);
+      ctx.translate(-robotScreenX, -robotScreenY);
+    }
+
+    // Draw robot
+    drawRobot(ctx, robotScreenX, robotScreenY, zoom);
+
+    // Draw scan points — in robot-local frame, robot is at origin
+    if (scan?.points.length) {
       ctx.beginPath();
       for (let i = 0; i < scan.points.length; i++) {
-        const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p!, lidarAxisRef.current);
-        const sp = worldToCanvas(wp.wx, wp.wy);
-        if (i === 0) ctx.moveTo(sp.sx, sp.sy); else ctx.lineTo(sp.sx, sp.sy);
+        const sx = robotScreenX + scan.points[i].x * scale;
+        const sy = robotScreenY - scan.points[i].y * scale;
+        if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
       }
       ctx.strokeStyle = 'rgba(0,212,255,0.25)'; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.fillStyle = 'rgba(0,212,255,0.7)';
+
+      ctx.fillStyle = 'rgba(0,212,255,0.8)';
       for (let i = 0; i < scan.points.length; i += 2) {
-        const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p!, lidarAxisRef.current);
-        const sp = worldToCanvas(wp.wx, wp.wy);
-        ctx.beginPath(); ctx.arc(sp.sx, sp.sy, 2, 0, Math.PI * 2); ctx.fill();
+        const sx = robotScreenX + scan.points[i].x * scale;
+        const sy = robotScreenY - scan.points[i].y * scale;
+        ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, Math.PI * 2); ctx.fill();
       }
     }
+
+    if (isHU && p) ctx.restore();
   }
 
   function drawRobot(ctx: CanvasRenderingContext2D, sx: number, sy: number, zoom: number) {
-    const robotPx = Math.max(12, zoom * 0.8);
+    const robotPx = Math.max(14, zoom * 1.5);
     ctx.save();
     ctx.translate(sx, sy);
-    ctx.beginPath();
-    ctx.arc(0, 0, robotPx, 0, Math.PI * 2);
-    ctx.fillStyle = '#00ff88';
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, robotPx, 0, Math.PI * 2);
+    ctx.fillStyle = '#00ff88'; ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
     const aLen = robotPx * 2; const aW = robotPx * 0.7;
     ctx.beginPath();
     ctx.moveTo(aLen, 0); ctx.lineTo(aLen - aW, -aW * 0.5); ctx.lineTo(aLen - aW, aW * 0.5); ctx.closePath();
-    ctx.fillStyle = '#ff3b5c';
-    ctx.fill();
+    ctx.fillStyle = '#ff3b5c'; ctx.fill();
     ctx.restore();
   }
 
@@ -456,9 +454,7 @@ export default function MapPage() {
 
   const handleStartScan = () => {
     setIsStarting(true); sendCmd('start', 'bắt đầu quét bản đồ');
-    if (occGridRef.current) { occGridRef.current.data = new Array(occGridRef.current.width * occGridRef.current.height).fill(-1); }
-    occGridRef.current = null; occOffscreenRef.current = null; prevOccGridRef.current = null; scanBoundsRef.current = null;
-    setOccGridVersion(v => v + 1);
+    occGridRef.current = null; occOffscreenRef.current = null; scanBoundsRef.current = null;
     setTimeout(() => setIsStarting(false), 1500);
   };
   const handleStopScan = () => { setIsStopping(true); sendCmd('stop', 'dừng quét bản đồ'); setTimeout(() => setIsStopping(false), 1500); };
@@ -470,8 +466,7 @@ export default function MapPage() {
   };
   const handleClearLidarGrid = () => {
     setIsClearingLidar(true);
-    occGridRef.current = null; occOffscreenRef.current = null; prevOccGridRef.current = null; scanBoundsRef.current = null;
-    setOccGridVersion(v => v + 1);
+    occGridRef.current = null; occOffscreenRef.current = null; scanBoundsRef.current = null;
     setTimeout(() => setIsClearingLidar(false), 1500);
   };
   const confirmReset = () => {
