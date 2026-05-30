@@ -14,12 +14,18 @@ Messages (Robot → Frontend):
                | / scan_obstacle / live                            | on change
   info         | device availability + current mode                |  0.2 Hz
   ping         | keepalive                                         |  0.2 Hz
+  ack          | acknowledgment for every received command         | on event
 
 Commands (Frontend → Robot):
   { "type": "cmd", "command": "start" | "stop" | "idle" }
 
 Web throttle: scan and map_layer are hard-capped at 5 Hz by dropping
 intermediate messages in the ROS callback before they enter the queue.
+
+Static TF:
+  Always publishes odom→base_footprint so the TF tree is complete even if
+  brain_node is not running. The pose (x,y,theta) comes from /odom when
+  available; otherwise stays at (0,0,0).
 """
 import asyncio
 import gzip
@@ -28,12 +34,15 @@ import math
 import queue
 import threading
 import time
+import sys
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid, Odometry
 from std_msgs.msg import String
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
 
 HOST = '0.0.0.0'
 PORT = 9091
@@ -64,8 +73,22 @@ class WebBridge(Node):
         self.pose_seen  = False
         self.mode       = 'idle'
 
+        # ── Pose tracking for static TF ────────────────────────────────────
+        self._odom_x     = 0.0
+        self._odom_y     = 0.0
+        self._odom_theta = 0.0
+        self._last_odom_time = None
+
         # ── Throttle state ─────────────────────────────────────────────────
         self._last_scan_sent_time = 0.0
+
+        # ── Static TF broadcaster (guarantees odom→base_footprint) ─────────
+        try:
+            self._tf_broadcaster = TransformBroadcaster(self)
+            self.get_logger().info('Static TF broadcaster enabled (odom→base_footprint)')
+        except Exception as e:
+            self.get_logger().warn(f'Could not create TransformBroadcaster: {e}')
+            self._tf_broadcaster = None
 
         # ── Subscriptions ───────────────────────────────────────────────────
         self.cmd_pub = self.create_publisher(String, '/mapping/control', 10)
@@ -79,6 +102,7 @@ class WebBridge(Node):
 
         self.create_timer(5.0, self._broadcast_info)
         self.create_timer(0.1, self._poll_commands)
+        self.create_timer(0.1, self._publish_static_tf)   # guarantees odom→base_footprint
 
         self.get_logger().info(f'WebBridge listening on ws://{HOST}:{PORT}')
         self._emit({'type': 'info', 'data': {
@@ -157,12 +181,49 @@ class WebBridge(Node):
 
     def _on_odom(self, msg: Odometry):
         self.pose_seen = True
+        self._odom_x     = msg.pose.pose.position.x
+        self._odom_y     = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
-        theta = self._yaw(q.x, q.y, q.z, q.w)
+        self._odom_theta = self._yaw(q.x, q.y, q.z, q.w)
+        self._last_odom_time = self.get_clock().now().to_msg()
         self._emit({'type': 'pose', 'data': {
-            'x': round(msg.pose.pose.position.x, 4),
-            'y': round(msg.pose.pose.position.y, 4),
-            'theta': round(theta, 4)}})
+            'x': round(self._odom_x, 4),
+            'y': round(self._odom_y, 4),
+            'theta': round(self._odom_theta, 4)}})
+
+    def _publish_static_tf(self):
+        """Always publish odom→base_footprint so the TF tree is complete.
+
+        Even if brain_node is dead, this guarantees the parent chain:
+          map → odom → base_footprint → base_link → laser
+        slam_toolbox needs odom as parent of base_footprint.
+        """
+        if self._tf_broadcaster is None:
+            return
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'odom'
+        t.child_frame_id  = 'base_footprint'
+        t.transform.translation.x = self._odom_x
+        t.transform.translation.y = self._odom_y
+        q = self._euler_to_quat(0, 0, self._odom_theta)
+        t.transform.rotation.x = q[0]
+        t.transform.rotation.y = q[1]
+        t.transform.rotation.z = q[2]
+        t.transform.rotation.w = q[3]
+        self._tf_broadcaster.sendTransform(t)
+
+    @staticmethod
+    def _euler_to_quat(r, p, y):
+        cr, sr = math.cos(r * 0.5), math.sin(r * 0.5)
+        cp, sp = math.cos(p * 0.5), math.sin(p * 0.5)
+        cy, sy = math.cos(y * 0.5), math.sin(y * 0.5)
+        return (
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy,
+        )
 
     def _broadcast_info(self):
         self._emit({'type': 'info', 'data': {
@@ -198,15 +259,70 @@ class WSServer:
         self.clients.add(connection)
         try:
             async for raw in connection:
+                # ── Always log every incoming message (even malformed) ──────────
+                raw_str = raw.decode('utf-8', errors='replace') if isinstance(raw, bytes) else str(raw)
+                print(f'[WS] ← {addr}: {raw_str[:300]}')
+
                 try:
-                    cmd = json.loads(raw)
-                    if cmd.get('type') == 'cmd' and cmd.get('command'):
-                        print(f'[WS] Command: {cmd["command"]}')
-                        self.cmd_q.put_nowait(cmd['command'])
-                except (json.JSONDecodeError, queue.Full):
-                    pass
+                    msg = json.loads(raw_str)
+                    msg_type = msg.get('type', '(no type)')
+
+                    if msg_type == 'cmd':
+                        command = msg.get('command', '(no command)')
+                        action  = msg.get('action',  '(no action)')
+                        print(f'[WS] CMD received: action={action!r} command={command!r}')
+
+                        # ── Validate ───────────────────────────────────────────
+                        valid_commands = {'start', 'stop', 'idle', 'reset'}
+                        if command in valid_commands:
+                            try:
+                                self.cmd_q.put_nowait(command)
+                                print(f'[WS] CMD queued → /mapping/control: {command}')
+                                ack = {'type': 'ack', 'data': {
+                                    'command': command,
+                                    'accepted': True,
+                                    'queued': True,
+                                    'mode':    msg.get('_mode_hint', 'unknown'),
+                                }}
+                            except queue.Full:
+                                print(f'[WS] CMD rejected — queue full')
+                                ack = {'type': 'ack', 'data': {
+                                    'command': command,
+                                    'accepted': False,
+                                    'error': 'command queue full',
+                                }}
+                        else:
+                            print(f'[WS] CMD ignored — unknown command: {command!r}')
+                            ack = {'type': 'ack', 'data': {
+                                'command': command,
+                                'accepted': False,
+                                'error': f'unknown command: {command!r}',
+                            }}
+
+                        # ── Send ack back to client ──────────────────────────────
+                        try:
+                            await connection.send(json.dumps(ack))
+                            print(f'[WS] → {addr}: ack {ack["data"]["command"]} accepted={ack["data"]["accepted"]}')
+                        except Exception as send_err:
+                            print(f'[WS] ack send failed: {send_err}')
+
+                    elif msg_type == 'ping':
+                        # Respond to ping immediately so the frontend knows we're alive
+                        pong = {'type': 'pong', 'data': {'ts': time.time()}}
+                        try:
+                            await connection.send(json.dumps(pong))
+                        except Exception:
+                            pass
+
+                    else:
+                        print(f'[WS] unhandled type: {msg_type!r} — message: {str(msg)[:200]}')
+
+                except json.JSONDecodeError as e:
+                    print(f'[WS] JSON parse error from {addr}: {e}  raw={raw_str[:100]!r}')
+                except queue.Full:
+                    print(f'[WS] queue full — dropped message from {addr}')
         except Exception as e:
-            print(f'[WS] {addr} error: {e}')
+            print(f'[WS] {addr} error: {e}', file=sys.stderr)
         finally:
             self.clients.discard(connection)
             print(f'[WS] - {addr}')
