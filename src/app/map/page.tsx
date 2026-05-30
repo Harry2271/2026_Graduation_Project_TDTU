@@ -649,7 +649,6 @@ export default function MapPage() {
     setIsClearingLidar(true);
     occGridRef.current = null; occOffscreenRef.current = null; scanBoundsRef.current = null;
     setScanCount(0);
-    redrawTriggerRef.current++;
     setTimeout(() => setIsClearingLidar(false), 1500);
   };
   const confirmReset = () => {
