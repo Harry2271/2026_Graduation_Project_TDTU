@@ -14,6 +14,26 @@ interface MapData { width: number; height: number; resolution: number; origin_x:
 interface PoseData { x: number; y: number; theta: number; }
 interface InfoData { lidar: boolean; map: boolean; pose: boolean; mode: string; coverage_pct?: number; }
 
+// ── Shared canvas helpers ─────────────────────────────────────────────────────
+function drawGridToOffscreen(grid: MapData, canvas: HTMLCanvasElement) {
+  const { width: gw, height: gh, data } = grid;
+  if (canvas.width !== gw || canvas.height !== gh) {
+    canvas.width = gw; canvas.height = gh;
+  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const imgData = ctx.createImageData(gw, gh);
+  const buf = imgData.data;
+  for (let i = 0; i < data.length; i++) {
+    const j = i * 4;
+    const v = data[i];
+    if (v === 100) { buf[j]=0; buf[j+1]=0; buf[j+2]=0; buf[j+3]=255; }
+    else if (v === 0) { buf[j]=255; buf[j+1]=255; buf[j+2]=255; buf[j+3]=255; }
+    else { buf[j]=128; buf[j+1]=128; buf[j+2]=128; buf[j+3]=255; }
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
 function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number): { wx: number; wy: number } {
   const c = Math.cos(pose.theta);
   const s = Math.sin(pose.theta);
@@ -145,12 +165,14 @@ export default function MapPage() {
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [scanCount, setScanCount] = useState(0);
   // Tracks accumulated server map across MAPPING states.
-  // In LIVE mode the server sends a 2m temp_grid — we ignore it.
   const serverMapRef = useRef<MapData | null>(null);
   // Mode ref — kept in sync with React state; used inside WebSocket handler (stale closure).
   const infoModeRef = useRef('live');
   // Incremented to force animation loop to redraw (e.g. after clearing).
   const redrawTriggerRef = useRef(0);
+  // Obstacle layer overlay
+  const obstacleDataRef = useRef<MapData | null>(null);
+  const obstacleOffscreenRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
   useEffect(() => { poseRef.current = pose; }, [pose]);
@@ -351,6 +373,13 @@ export default function MapPage() {
         ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
       }
       ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
+
+      // Overlay obstacle_layer (semi-transparent 2m awareness zone)
+      if (obstacleDataRef.current && obstacleOffscreenRef.current) {
+        ctx.globalAlpha = 0.45;
+        ctx.drawImage(obstacleOffscreenRef.current, mapX, mapY, gw * scale, gh * scale);
+        ctx.globalAlpha = 1.0;
+      }
       ctx.restore();
 
       const worldToScreen = (wx: number, wy: number) => {
@@ -542,12 +571,21 @@ export default function MapPage() {
             case 'map':
             case 'map_layer': {
               const incoming = msg.data as MapData;
-              // Always accumulate incoming map data into serverMapRef.
-              serverMapRef.current = incoming;
-              // In LIVE mode the server sends a 2m temp_grid — render accumulated map instead.
-              if (infoModeRef.current === 'live' && mapDataRef.current) break;
+              // Accumulate: keep the largest non-trivial map as the persistent map.
+              const prev = serverMapRef.current;
+              if (!prev || incoming.data.length > prev.data.length) {
+                serverMapRef.current = incoming;
+              }
               setMapData(incoming);
               mapDataRef.current = incoming;
+              break;
+            }
+            case 'obstacle_layer': {
+              const od = msg.data as MapData;
+              obstacleDataRef.current = od;
+              // Build offscreen canvas for obstacle overlay
+              if (!obstacleOffscreenRef.current) obstacleOffscreenRef.current = document.createElement('canvas');
+              drawGridToCanvas(od, obstacleOffscreenRef.current);
               break;
             }
             case 'pose': setPose({ ...(msg.data as PoseData) }); poseRef.current = { ...(msg.data as PoseData) }; break;
