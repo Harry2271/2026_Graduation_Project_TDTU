@@ -355,14 +355,14 @@ export default function MapPage() {
     // ── Path A: server map ──────────────────────────────────────────
     if (mapDataRef.current) {
       const off = offscreenRef.current;
-      if (!off) { buildMapImage(); return; }
+      if (!off) {
+        buildMapImage();
+      }
+      if (!offscreenRef.current) return;
       const { width: gw, height: gh, resolution: res, origin_x, origin_y } = mapDataRef.current;
       const minScale = Math.min(W, H) * 0.75 / Math.max(gw, gh);
       const rawFit = Math.min(W / gw, H / gh) * zoom;
       const scale = Math.max(rawFit, minScale);
-      // Center: world (origin) maps to screen center; grid is drawn offset from there.
-      // origin_y in SLAM is typically negative (below robot), so -origin_y/res*scale pushes down.
-      // Fix: always center the grid so robot (world 0,0) = screen center.
       const mapX = W / 2 + origin_x / res * scale;
       const mapY = H / 2 + origin_y / res * scale;
 
@@ -372,69 +372,8 @@ export default function MapPage() {
         const cy2 = H / 2;
         ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
       }
-      ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
+      ctx.drawImage(offscreenRef.current, mapX, mapY, gw * scale, gh * scale);
 
-      // Overlay obstacle_layer (semi-transparent 2m awareness zone)
-      if (obstacleDataRef.current && obstacleOffscreenRef.current) {
-        ctx.globalAlpha = 0.45;
-        ctx.drawImage(obstacleOffscreenRef.current, mapX, mapY, gw * scale, gh * scale);
-        ctx.globalAlpha = 1.0;
-      }
-      ctx.restore();
-
-      const worldToScreen = (wx: number, wy: number) => {
-        let sx = W / 2 + wx * scale / res;
-        let sy = H / 2 - wy * scale / res;
-        if (p && isHU) {
-          const cx2 = W / 2;
-          const cy2 = H / 2;
-          const cos = Math.cos(-p.theta - Math.PI / 2); const sin = Math.sin(-p.theta - Math.PI / 2);
-          const dx = sx - cx2; const dy2 = sy - cy2;
-          sx = cx2 + cos * dx - sin * dy2; sy = cy2 + sin * dx + cos * dy2;
-        }
-        return { sx, sy };
-      };
-
-      const scan = scanDataRef.current;
-      if (p && scan?.points.length) {
-        ctx.beginPath();
-        for (let i = 0; i < scan.points.length; i++) {
-          const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
-          const sp = worldToScreen(wp.wx, wp.wy);
-          if (i === 0) ctx.moveTo(sp.sx, sp.sy); else ctx.lineTo(sp.sx, sp.sy);
-        }
-        ctx.strokeStyle = 'rgba(0,212,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
-        ctx.fillStyle = 'rgba(0,212,255,0.7)';
-        for (let i = 0; i < scan.points.length; i += 2) {
-          const wp = robotToWorld(scan.points[i].x, scan.points[i].y, p, lidarAxisRef.current);
-          const sp = worldToScreen(wp.wx, wp.wy);
-          ctx.beginPath(); ctx.arc(sp.sx, sp.sy, 1.5, 0, Math.PI * 2); ctx.fill();
-        }
-      }
-      if (p) { const rp = worldToScreen(p.x, p.y); drawRobot(ctx, rp.sx, rp.sy, zoom); }
-      return;
-    }
-
-    // ── Path B: occupancy grid ──────────────────────────────────────
-    if (occGridRef.current && occOffscreenRef.current) {
-      const off = occOffscreenRef.current;
-      const { width: gw, height: gh, resolution: res } = occGridRef.current;
-      const minScale = Math.min(W, H) * 0.75 / Math.max(gw, gh);
-      const rawFit = Math.min(W / gw, H / gh) * zoom;
-      const scale = Math.max(rawFit, minScale);
-      // Center the grid: grid covers [-half, +half] in world X and Y.
-      // Robot (world 0,0) maps to grid center (gw/2, gh/2).
-      // Screen center = (W/2, H/2). Grid top-left on screen:
-      const mapX = W / 2 - (gw / 2) * scale;
-      const mapY = H / 2 - (gh / 2) * scale;
-
-      ctx.save();
-      if (p && isHU) {
-        const cx2 = W / 2;
-        const cy2 = H / 2;
-        ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
-      }
-      ctx.drawImage(off, mapX, mapY, gw * scale, gh * scale);
       ctx.restore();
 
       const worldToScreen = (wx: number, wy: number) => {
@@ -454,7 +393,7 @@ export default function MapPage() {
       return;
     }
 
-    // ── Path C: scan-only ────────────────────────────────────────────
+    // ── Path B: scan-only (no server map) ──────────────────────────
     const scan = scanDataRef.current;
     const defaultRange = 6.0;
     const scale = Math.max(Math.min(W, H) / defaultRange * zoom, 60);
