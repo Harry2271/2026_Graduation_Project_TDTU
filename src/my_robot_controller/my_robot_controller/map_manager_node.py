@@ -345,8 +345,7 @@ class MapManager(Node):
         n_rays = len(valid_ranges)
         ray_idx = np.repeat(np.arange(n_rays, dtype=np.int32), max_steps)
         step_idx = np.tile(np.arange(max_steps, dtype=np.int32), n_rays)
-        flat = gys.ravel()[:, None] * GRID_SIZE + gxs.ravel()
-        flat = flat.ravel()
+        flat = gys.ravel() * GRID_SIZE + gxs.ravel()
         ok = (step_idx < hit_steps.ravel()[ray_idx]) & in_bounds.ravel()
         free_cells = flat[ok]
         if free_cells.size > 0:
