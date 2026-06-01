@@ -363,8 +363,10 @@ export default function MapPage() {
       const minScale = Math.min(W, H) * 0.75 / Math.max(gw, gh);
       const rawFit = Math.min(W / gw, H / gh) * zoom;
       const scale = Math.max(rawFit, minScale);
+      // OccupancyGrid origin is bottom-left; canvas origin is top-left.
+      // Grid row 0 = world top = origin_y + gh*res. In screen space (Y-down), world Y+ = screen Y−.
       const mapX = W / 2 + origin_x / res * scale;
-      const mapY = H / 2 + origin_y / res * scale;
+      const mapY = H / 2 - (origin_y + gh * res) / res * scale;
 
       ctx.save();
       if (p && isHU) {
@@ -506,6 +508,10 @@ export default function MapPage() {
       };
       ws.onmessage = (event) => {
         function dispatch(msg: { type: string; data?: unknown }) {
+          console.log('[WS] dispatch:', msg.type, msg.type === 'map_layer'
+            ? `${(msg.data as MapData)?.width}x${(msg.data as MapData)?.height} cells=${(msg.data as MapData)?.data?.length}`
+            : msg.type === 'pose' ? `x=${(msg.data as PoseData)?.x?.toFixed(2)} y=${(msg.data as PoseData)?.y?.toFixed(2)}`
+            : '');
           switch (msg.type) {
             case 'map':
             case 'map_layer': {
@@ -548,24 +554,27 @@ export default function MapPage() {
             case 'mode': setInfo(prev => ({ ...prev, mode: msg.data as string })); break;
           }
         }
-        function parse(data: ArrayBuffer | Blob | string) {
-          const bytes = data instanceof Blob ? null : (data instanceof ArrayBuffer ? new Uint8Array(data) : null);
-          const isGzip = bytes && bytes[0] === 0x1f && bytes[1] === 0x8b;
-          let text: string;
-          if (data instanceof Blob) {
-            data.arrayBuffer().then(buf => parse(buf));
-            return;
-          } else if (isGzip && bytes) {
-            const ds = new DecompressionStream('gzip');
-            const writer = ds.writable.getWriter();
-            writer.write(bytes);
-            writer.close();
-            new Response(ds.readable).text().then(t => { try { dispatch(JSON.parse(t)); } catch { /* ignore */ } });
-            return;
-          } else {
-            text = typeof data === 'string' ? data : new TextDecoder().decode(data as ArrayBuffer);
+        async function parse(data: ArrayBuffer | Blob | string) {
+          try {
+            const bytes = data instanceof Blob ? null : (data instanceof ArrayBuffer ? new Uint8Array(data) : null);
+            const isGzip = bytes && bytes[0] === 0x1f && bytes[1] === 0x8b;
+            let text: string;
+            if (data instanceof Blob) {
+              const buf = await data.arrayBuffer();
+              return parse(buf);
+            } else if (isGzip && bytes) {
+              const ds = new DecompressionStream('gzip');
+              const writer = ds.writable.getWriter();
+              writer.write(bytes);
+              await writer.close();
+              text = await new Response(ds.readable).text();
+            } else {
+              text = typeof data === 'string' ? data : new TextDecoder().decode(data as ArrayBuffer);
+            }
+            dispatch(JSON.parse(text));
+          } catch (err) {
+            console.warn('[WS] parse error:', err);
           }
-          try { dispatch(JSON.parse(text)); } catch { /* ignore */ }
         }
         parse(event.data);
       };
