@@ -67,6 +67,7 @@ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME
     apt-get install -y \
         ros-jazzy-ros-base \
         ros-jazzy-tf2-ros \
+        ros-jazzy-tf2-geometry-msgs \
         ros-jazzy-sensor-msgs \
         ros-jazzy-nav-msgs \
         ros-jazzy-geometry2 \
