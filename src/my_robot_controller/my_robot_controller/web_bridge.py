@@ -148,13 +148,21 @@ class WebBridge(Node):
 
     def _on_map_layer(self, msg: OccupancyGrid) -> None:
         self.map_seen = True
+        q = msg.info.origin.orientation
+        origin_theta = math.atan2(2 * (q.w * q.z + q.x * q.x),
+                                  1 - 2 * (q.y * q.y + q.z * q.z))
+        data_list = list(msg.data)
+        self.get_logger().debug(
+            f'map_layer: {msg.info.width}x{msg.info.height} '
+            f'res={msg.info.resolution} cells={len(data_list)}')
         self._emit({'type': 'map_layer', 'data': {
-            'width':       msg.info.width,
-            'height':      msg.info.height,
-            'resolution':  msg.info.resolution,
-            'origin_x':    msg.info.origin.position.x,
-            'origin_y':    msg.info.origin.position.y,
-            'data':        list(msg.data),
+            'width':        msg.info.width,
+            'height':       msg.info.height,
+            'resolution':   msg.info.resolution,
+            'origin_x':     msg.info.origin.position.x,
+            'origin_y':     msg.info.origin.position.y,
+            'origin_theta': round(origin_theta, 6),
+            'data':         data_list,
         }})
 
     # ── Obstacle awareness-zone layer ──────────────────────────────────────────
