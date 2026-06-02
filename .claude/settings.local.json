@@ -22,7 +22,14 @@
       "Bash(git ls-remote *)",
       "Bash(apt list *)",
       "Bash(xargs grep -l \"sllidar\")",
-      "Bash(apt-cache search *)"
+      "Bash(apt-cache search *)",
+      "Bash(git -C d:/taiLieuHoc/robot-for-nguyen status)",
+      "Bash(git -C \"d:/taiLieuHoc/robot-for-nguyen/robot-controller\" status)",
+      "Bash(git -C \"d:/taiLieuHoc/robot-for-nguyen/nguyen-web-app\" status)",
+      "Bash(git -C \"d:/taiLieuHoc/robot-for-nguyen/robot-controller\" diff src/my_robot_controller/my_robot_controller/web_bridge.py src/my_robot_controller/my_robot_controller/map_manager_node.py src/my_robot_controller/package.xml)",
+      "Bash(git -C \"d:/taiLieuHoc/robot-for-nguyen/nguyen-web-app\" diff src/app/map/page.tsx)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/my_robot_controller/my_robot_controller/web_bridge.py'\\).read\\(\\)\\); ast.parse\\(open\\('src/my_robot_controller/my_robot_controller/map_manager_node.py'\\).read\\(\\)\\); print\\('OK: both Python files parse'\\)\")",
+      "Bash(python -c ' *)"
     ]
   }
 }

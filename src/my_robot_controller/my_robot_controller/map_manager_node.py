@@ -159,18 +159,28 @@ class MapManager(Node):
 
     def _on_control(self, msg: String) -> None:
         cmd = msg.data.strip().lower()
-        self.get_logger().info(f'Control command: {cmd}')
+        self.get_logger().info(f'Control command: {cmd!r} (current state: {self.state})')
 
         if cmd == 'start':
             if self.state not in (STATE_MAPPING_IDLE, STATE_MAPPING_ACTIVE):
+                self.get_logger().info(f'Start: transitioning {self.state} → MAPPING_IDLE')
                 self._enter_mapping_idle()
+            else:
+                self.get_logger().warn(f'Start: ignored (already in {self.state})')
         elif cmd == 'stop':
             if self.state in (STATE_MAPPING_IDLE, STATE_MAPPING_ACTIVE):
+                self.get_logger().info(f'Stop: transitioning {self.state} → SCAN_OBSTACLE')
                 self._enter_scan_obstacle()
+            else:
+                self.get_logger().warn(f'Stop: ignored (not in mapping state, current={self.state})')
         elif cmd == 'idle':
+            self.get_logger().info(f'Idle: transitioning {self.state} → IDLE')
             self._enter_idle()
         elif cmd == 'reset':
+            self.get_logger().info(f'Reset: clearing obstacles and resetting slam_toolbox')
             self._reset_slam_and_obstacles()
+        else:
+            self.get_logger().warn(f'Unknown command: {cmd!r}')
 
     def _on_scan(self, msg: LaserScan) -> None:
         """Route scan to the appropriate handler based on state."""
@@ -214,7 +224,7 @@ class MapManager(Node):
             self.slam_reset_client.call_async(Empty.Request())
             self.get_logger().info('Sent reset to slam_toolbox')
         else:
-            self.get_logger().warn('slam_toolbox reset service not available')
+            self.get_logger().error('slam_toolbox reset service not available')
 
         self._enter_idle()
 

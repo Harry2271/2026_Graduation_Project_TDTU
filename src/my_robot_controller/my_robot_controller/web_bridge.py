@@ -214,9 +214,11 @@ class WebBridge(Node):
             try:
                 cmd = self.cmd_q.get_nowait()
                 self.cmd_pub.publish(String(data=cmd))
-                self.get_logger().info(f'Command sent: {cmd}')
+                self.get_logger().info(f'Command sent to /mapping/control: {cmd}')
             except queue.Empty:
                 break
+            except Exception as e:
+                self.get_logger().error(f'Failed to publish command {cmd!r}: {e}')
 
 
 class WSServer:
