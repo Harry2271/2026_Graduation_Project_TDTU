@@ -16,7 +16,8 @@
     "dev:web": "turbo run dev --filter=@robot-for-nguyen/web",
     "dev:mobile": "turbo run dev --filter=@robot-for-nguyen/mobile",
     "deploy": "turbo run deploy",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "postinstall": "node scripts/postinstall-hoist-next.js"
   },
   "devDependencies": {
     "turbo": "^2.5.0"
