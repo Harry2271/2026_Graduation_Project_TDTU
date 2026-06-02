@@ -1,8 +1,8 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleInit, forwardRef } from '@nestjs/common';
+import { BadRequestException, forwardRef,Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Types } from 'mongoose';
 
-import { PackageService } from '../package/package-service';
 import { EventsGateway } from '../../gateway/events-gateway';
+import { PackageService } from '../package/package-service';
 import { IShelfRepository } from './interfaces/shelf-repository.interface';
 import { IShelfService } from './interfaces/shelf-service.interface';
 import { Shelf } from './schemas/shelf.schema';

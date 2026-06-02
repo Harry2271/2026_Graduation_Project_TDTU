@@ -1,11 +1,11 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { forwardRef,Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
+import { ShelfModule } from '../shelf/shelf.module';
 import { PackageController } from './package-controller';
 import { PackageRepositoryProvider } from './package-repository';
 import { PackageService } from './package-service';
 import { Package, PackageSchema } from './schemas/package.schema';
-import { ShelfModule } from '../shelf/shelf.module';
 
 @Module({
   imports: [
