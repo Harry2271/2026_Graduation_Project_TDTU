@@ -1,0 +1,28 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run deploy script
+        env:
+          PORT: ${{ vars.PORT }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
+        run: |
+          # Nạp môi trường Node/Yarn trên Pi
+          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
+          
+          # Dọn dẹp ký tự Windows và cấp quyền
+          sed -i 's/\r$//' ./deploy.sh
+          chmod +x ./deploy.sh
+          
+          # Chạy build và deploy trực tiếp
+          ./deploy.sh

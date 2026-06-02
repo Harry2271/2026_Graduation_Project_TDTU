@@ -1,0 +1,605 @@
+{
+    "openapi": "3.0.0",
+    "paths": {
+        "/": {
+            "get": {
+                "operationId": "AppController_getHello",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                },
+                "tags": [
+                    "App"
+                ]
+            }
+        },
+        "/packages": {
+            "post": {
+                "operationId": "PackageController_create",
+                "parameters": [],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreatePackageDto"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Package created successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Package"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed"
+                    }
+                },
+                "summary": "Create a new package",
+                "tags": [
+                    "packages"
+                ]
+            },
+            "get": {
+                "operationId": "PackageController_findAll",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "required": false,
+                        "in": "query",
+                        "description": "Page number (1-based)",
+                        "schema": {
+                            "default": 1,
+                            "example": 1,
+                            "type": "number"
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "required": false,
+                        "in": "query",
+                        "description": "Items per page",
+                        "schema": {
+                            "default": 10,
+                            "example": 10,
+                            "type": "number"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated list of packages",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PackagePaginatedResponseDto"
+                                }
+                            }
+                        }
+                    }
+                },
+                "summary": "Get all packages with pagination",
+                "tags": [
+                    "packages"
+                ]
+            }
+        },
+        "/packages/{id}": {
+            "get": {
+                "operationId": "PackageController_findById",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "required": true,
+                        "in": "path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Package details",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Package"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Package not found"
+                    }
+                },
+                "summary": "Get a package by ID",
+                "tags": [
+                    "packages"
+                ]
+            },
+            "put": {
+                "operationId": "PackageController_update",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "required": true,
+                        "in": "path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdatePackageDto"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Package updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Package"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Package not found"
+                    }
+                },
+                "summary": "Update a package by ID",
+                "tags": [
+                    "packages"
+                ]
+            },
+            "delete": {
+                "operationId": "PackageController_remove",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "required": true,
+                        "in": "path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Package deleted"
+                    },
+                    "404": {
+                        "description": "Package not found"
+                    }
+                },
+                "summary": "Delete a package by ID",
+                "tags": [
+                    "packages"
+                ]
+            }
+        },
+        "/shelves": {
+            "get": {
+                "operationId": "ShelfController_findAllShelves",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "List of shelves",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Shelf"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "summary": "Get all shelves",
+                "tags": [
+                    "shelves"
+                ]
+            }
+        },
+        "/shelves/slots": {
+            "get": {
+                "operationId": "ShelfController_findAllSlots",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "All slots",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ShelfSlot"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "summary": "Get all slots across all shelves",
+                "tags": [
+                    "shelves"
+                ]
+            }
+        },
+        "/shelves/{shelfCode}/slots": {
+            "get": {
+                "operationId": "ShelfController_findSlotsByShelf",
+                "parameters": [
+                    {
+                        "name": "shelfCode",
+                        "required": true,
+                        "in": "path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Slots for the specified shelf",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ShelfSlot"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "summary": "Get slots by shelf code (A, B, C, D)",
+                "tags": [
+                    "shelves"
+                ]
+            }
+        },
+        "/shelves/{slotCode}/package": {
+            "post": {
+                "operationId": "ShelfController_assignPackage",
+                "parameters": [
+                    {
+                        "name": "slotCode",
+                        "required": true,
+                        "in": "path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AssignPackageDto"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Package assigned to slot",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ShelfSlot"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Slot is not available or package already assigned elsewhere"
+                    },
+                    "404": {
+                        "description": "Slot or package not found"
+                    }
+                },
+                "summary": "Add a package to a slot (slot must be empty and available)",
+                "tags": [
+                    "shelves"
+                ]
+            },
+            "put": {
+                "operationId": "ShelfController_movePackage",
+                "parameters": [
+                    {
+                        "name": "slotCode",
+                        "required": true,
+                        "in": "path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/MovePackageDto"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Package moved to new slot",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ShelfSlot"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Source slot is empty or target slot is occupied"
+                    },
+                    "404": {
+                        "description": "Slot not found"
+                    }
+                },
+                "summary": "Move a package from one slot to another (target must be empty)",
+                "tags": [
+                    "shelves"
+                ]
+            },
+            "delete": {
+                "operationId": "ShelfController_removePackage",
+                "parameters": [
+                    {
+                        "name": "slotCode",
+                        "required": true,
+                        "in": "path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Package removed from slot"
+                    },
+                    "400": {
+                        "description": "Slot is already empty"
+                    },
+                    "404": {
+                        "description": "Slot not found"
+                    }
+                },
+                "summary": "Remove a package from a slot",
+                "tags": [
+                    "shelves"
+                ]
+            }
+        }
+    },
+    "info": {
+        "title": "Park Smart API",
+        "description": "API documentation for Park Smart",
+        "version": "1.0",
+        "contact": {}
+    },
+    "tags": [],
+    "servers": [],
+    "components": {
+        "schemas": {
+            "CreatePackageDto": {
+                "type": "object",
+                "properties": {
+                    "packageName": {
+                        "type": "string",
+                        "description": "Name of the package",
+                        "example": "Basic Parking Package"
+                    }
+                },
+                "required": [
+                    "packageName"
+                ]
+            },
+            "Package": {
+                "type": "object",
+                "properties": {
+                    "_id": {
+                        "type": "string",
+                        "description": "Auto-generated MongoDB ID",
+                        "example": "6771a2b3c4d5e6f7a8b9c0d1"
+                    },
+                    "packageName": {
+                        "type": "string",
+                        "description": "Name of the package",
+                        "example": "Basic Parking Package"
+                    }
+                },
+                "required": [
+                    "_id",
+                    "packageName"
+                ]
+            },
+            "PaginationMeta": {
+                "type": "object",
+                "properties": {
+                    "total": {
+                        "type": "number",
+                        "example": 25
+                    },
+                    "page": {
+                        "type": "number",
+                        "example": 1
+                    },
+                    "limit": {
+                        "type": "number",
+                        "example": 10
+                    },
+                    "hasNext": {
+                        "type": "boolean",
+                        "example": false
+                    }
+                },
+                "required": [
+                    "total",
+                    "page",
+                    "limit",
+                    "hasNext"
+                ]
+            },
+            "PackagePaginatedResponseDto": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Package"
+                        }
+                    },
+                    "meta": {
+                        "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                },
+                "required": [
+                    "items",
+                    "meta"
+                ]
+            },
+            "UpdatePackageDto": {
+                "type": "object",
+                "properties": {
+                    "packageName": {
+                        "type": "string",
+                        "description": "Updated name of the package",
+                        "example": "Premium Parking Package"
+                    }
+                }
+            },
+            "Shelf": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Shelf identifier (S1, S2, S3, S4)",
+                        "example": "S1"
+                    },
+                    "rows": {
+                        "type": "number",
+                        "description": "Number of rows per shelf",
+                        "example": 4
+                    },
+                    "columns": {
+                        "type": "number",
+                        "description": "Number of columns per shelf",
+                        "example": 4
+                    },
+                    "totalSlots": {
+                        "type": "number",
+                        "description": "Total slots in this shelf",
+                        "example": 16
+                    }
+                },
+                "required": [
+                    "code",
+                    "rows",
+                    "columns",
+                    "totalSlots"
+                ]
+            },
+            "ShelfSlot": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Slot code, e.g. S1A1 (shelf=S1, row=A, column=1)",
+                        "example": "S1A1"
+                    },
+                    "shelf": {
+                        "type": "string",
+                        "description": "Shelf identifier (S1, S2, S3, S4)",
+                        "example": "S1"
+                    },
+                    "row": {
+                        "type": "string",
+                        "description": "Row letter (A-D)",
+                        "example": "A"
+                    },
+                    "column": {
+                        "type": "number",
+                        "description": "Column number (1-4)",
+                        "example": 1
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "AVAILABLE",
+                            "OCCUPIED"
+                        ],
+                        "description": "Slot availability status",
+                        "example": "AVAILABLE"
+                    },
+                    "packageId": {
+                        "type": "object",
+                        "description": "ID of the package occupying this slot",
+                        "example": "6771a2b3c4d5e6f7a8b9c0d1",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "code",
+                    "shelf",
+                    "row",
+                    "column",
+                    "status"
+                ]
+            },
+            "AssignPackageDto": {
+                "type": "object",
+                "properties": {
+                    "packageId": {
+                        "type": "string",
+                        "description": "ID of the package to assign",
+                        "example": "6771a2b3c4d5e6f7a8b9c0d1"
+                    }
+                },
+                "required": [
+                    "packageId"
+                ]
+            },
+            "MovePackageDto": {
+                "type": "object",
+                "properties": {
+                    "targetSlotCode": {
+                        "type": "string",
+                        "description": "Slot code to move the package to",
+                        "example": "B23"
+                    }
+                },
+                "required": [
+                    "targetSlotCode"
+                ]
+            }
+        }
+    }
+}
