@@ -1,0 +1,58 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'yarn'
+
+      - name: Install deps & lint
+        run: |
+          yarn install --frozen-lockfile
+          yarn lint
+
+      - name: Build
+        run: yarn build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          path: |
+            dist/
+            package.json
+            yarn.lock
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dist
+          path: .
+
+      - name: Run deploy script
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+        run: |
+          chmod +x ./deploy.sh
+          ./deploy.sh
+
+      - name: Health check
+        run: |
+          sleep 3
+          curl -sf http://localhost:5000/ || (echo "Health check failed"; exit 1)
