@@ -13,11 +13,12 @@ This is a **Turborepo + yarn-workspaces** monorepo containing the full-stack Par
 | `apps/api/` | Backend API | NestJS 11 | `5000` | ✅ path-filtered |
 | `apps/web/` | Web Frontend | Next.js 16 | `3000` | ✅ path-filtered |
 | `apps/mobile/` | Mobile App | Expo 55 (Router) | — | ❌ none (per project decision) |
-| `services/robot/` | Robot Bridge | Python / ROS 2 | `9091` (WS) | ✅ path-filtered |
+| `services/robot/` | Robot Bridge (Pi 5) | Python / ROS 2 | `9091` (WS) | ✅ path-filtered |
+| `firmware/` | ESP32-S3 real-time motor controller | PlatformIO / Arduino | UART `115200` | ❌ local flash (no CI/CD) |
 | `tools/deploy/` | Manual SSH deploy toolkit | bash | — | — |
 | `packages/` | Shared libraries (future) | — | — | — |
 
-Per-app `CLAUDE.md` files: `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`, `apps/mobile/CLAUDE.md`, `services/robot/CLAUDE.md`.
+Per-app `CLAUDE.md` files: `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`, `apps/mobile/CLAUDE.md`, `services/robot/CLAUDE.md`, `firmware/CLAUDE.md`.
 
 ---
 
@@ -84,7 +85,7 @@ The four layers map onto the monorepo:
 |---|---|
 | Sensing (LiDAR + SLAM) | `services/robot/src/web_bridge.py` |
 | Gateway (robot manager) | `services/robot/src/my_robot_controller/` (Python nodes) |
-| Control (ESP32 firmware) | outside this monorepo (separate firmware repo) — but the protocol is enforced by `services/robot/src/my_robot_controller/` |
+| Control (ESP32 firmware) | `firmware/` (PlatformIO, Arduino framework) |
 | Interface (backend) | `apps/api/` |
 
 ### 4. Technical Specifications & Formulas
@@ -102,15 +103,48 @@ v_rr = Vx − Vy + ω(L + W)
 
 #### 4.2. Communication Protocol (Pi ↔ ESP32)
 
-- **Baudrate:** 115200.
-- **Commands (Pi → ESP32):**
-  - `M:v1,v2,v3,v4$` — Move (4 wheel PWM/direction values)
-  - `A:g1,g2,g3,g4,g5,g6$` — Arm (6 servo angle values)
-- **Feedback (ESP32 → Pi):**
-  - `O:x,y,theta$` — Odometry
-  - `S:ir1,ir2,ir3,ir4$` — IR sensor readings
+The contract between `services/robot/` and `firmware/`. Both sides must agree byte-for-byte; changes here require a coordinated update in `firmware/src/modules/CommandParser.cpp` and the corresponding Python serial handler in `services/robot/`.
 
-Any change to the protocol must be reflected in both `services/robot/` (Pi side) and the ESP32 firmware (outside this repo).
+- **Physical:** UART2 on ESP32-S3 (GPIO 43 TX / GPIO 44 RX) ↔ Pi 5 UART. **Baud:** 115200, 8N1, newline-terminated.
+- **Framing:** JSON preferred, with an ASCII fallback for debugging and the web UI.
+
+**JSON commands (Pi → ESP32):**
+
+| JSON | Purpose |
+|---|---|
+| `{"cmd":"move","vx":100,"vy":0,"omega":0}` | Mecanum velocity (vx,vy in PWM units, omega scaled) |
+| `{"cmd":"individual","speeds":[fl,fr,rl,rr]}` | Direct per-wheel speeds (-255..255) |
+| `{"cmd":"set_speed","motor_id":0,"speed":150}` | Single motor speed |
+| `{"cmd":"set_all_speed","speeds":[100,100,100,100]}` | All 4 motors at once |
+| `{"cmd":"stop"}` / `{"cmd":"e_stop"}` | Brake / hard disable |
+| `{"cmd":"get_encoder"}` / `{"cmd":"reset_encoder"}` | Encoder query / zero |
+| `{"cmd":"set_pid","motor_id":0,"kp":1.0,"ki":0.1,"kd":0.01}` | PID gain update |
+| `{"cmd":"heartbeat"}` | Reset watchdog (Pi must send within `HEARTBEAT_TIMEOUT_MS`, default 2000) |
+| `{"cmd":"obstacle_left"\|"obstacle_right"\|"obstacle_front"\|"obstacle_clear"}` | Reactive obstacle events (see `ObstacleAvoidance` module) |
+
+**JSON responses (ESP32 → Pi):**
+
+| Type | Payload |
+|---|---|
+| `128` | `{"type":128,"data":{...}}` — command ACK |
+| `129` | `{"type":129,"data":{"error":"..."}}` — error |
+| `130` | `{"type":130,"data":{"motors":[{id,name,count,rpm},...]}}` — encoder snapshot |
+| `131` | `{"type":131,"data":{uptime_ms,mode,e_stop,pid,max_pct,motors:[...]}}` — status |
+
+**ASCII fallback (one command per line, useful for `pio device monitor` and the web UI):**
+
+```
+F 150   forward            S        stop (brake)
+B 100   backward           D / K    e-stop / clear e-stop
+L 80    strafe left        M fl fr rl rr   manual motors
+R 80    strafe right       Z        heartbeat
+Q 60    rotate CCW         V        status JSON
+E 60    rotate CW          P kp ki kd      set PID
+T       test sequence      X 75     max speed %
+?       help
+```
+
+See `firmware/CLAUDE.md` for the full command reference and `firmware/MODULES.md` for the module breakdown.
 
 ### 5. Development Notes
 
@@ -269,3 +303,5 @@ If you need to pull new commits from an old repo into the monorepo later, use `g
 | `.github/workflows/ci.yml` | Affected build + lint |
 | `.github/workflows/deploy.yml` | Path-filtered deploy |
 | `tools/deploy/` | Manual SSH toolkit (deploy-all.sh, install-pi.sh, etc.) |
+| `firmware/` | ESP32-S3 PlatformIO project (see `firmware/CLAUDE.md` + `firmware/MODULES.md`) — flashed via `pio run --target upload`, no CI/CD |
+| `packages/` | Reserved for future shared types / utils (currently empty) |
