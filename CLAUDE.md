@@ -21,6 +21,105 @@ Per-app `CLAUDE.md` files: `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`, `apps/mob
 
 ---
 
+## Project Context — AIoT Autonomous Logistics Robot
+
+This section documents the physical robot and the firmware/software contract that the apps in this monorepo coordinate around. Read this before working on anything in `services/robot/` or any feature that touches motor control, SLAM, or the warehouse robot hardware.
+
+### 1. Project Overview
+
+- **Name:** AIoT Autonomous Logistics Robot.
+- **Goal:** SLAM mapping, autonomous navigation, and logistics handling.
+- **Core Strategy:** Raspberry Pi 5 làm bộ não xử lý cấp cao + ESP32-S3 làm hệ điều hành thời gian thực (Pi 5 = high-level brain, ESP32-S3 = real-time RTOS-style control).
+
+### 2. Hardware Architecture
+
+#### 2.1. Computing Units
+- **Raspberry Pi 5 (8GB):** runs ROS 2 (slam_toolbox), Python bridge (`web_bridge.py`, robot manager), and the NestJS backend (`apps/api`).
+- **ESP32-S3 WeAct (N16R8):** motor control, encoder reading, IMU + proximity sensor handling, hard-stop logic.
+
+#### 2.2. Locomotion & Actuators
+- **Wheels:** 4× Mecanum 97mm (omnidirectional motion).
+- **Motors:** 4× JGB37-520 DC servo (12V, 333RPM, 330 pulses/rev on the main shaft encoder).
+- **Drivers:** 4× BTS7960 43A (PWM + direction control).
+- **Robotic Arm:** 5 degrees of freedom (6 servos: 3× MG966R + 3× SG90).
+
+#### 2.3. Sensors & Perception
+- **LiDAR:** RPLIDAR A1M8-R6 (12m range, 360°). Connected to Pi 5.
+- **IMU:** BNO055 or MPU6050 — I2C to ESP32. **Required** to stabilize the SLAM yaw (corrects mecanum wheel slip).
+- **IR Sensors:** 4× E18-D80NK (~20cm range). Connected to ESP32 for emergency stop.
+- **Vision:** Logitech BRIO 100 FullHD.
+
+### 3. Software Architecture
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Sensing Layer (SLAM source — Python)                      │
+│  web_bridge.py → LiDAR + WebSocket (port 9091)             │
+│  TF → pose (map → base_footprint)                          │
+└────────────────┬───────────────────────────────────────────┘
+                 │ ROS 2 topics + serial
+┌────────────────▼───────────────────────────────────────────┐
+│  Gateway Layer (Robot Manager — Python bridge)             │
+│  • Serial to ESP32                                          │
+│  • Mecanum kinematics                                       │
+│  • Encoder + IMU → ROS 2 Odometry                          │
+└────────────────┬───────────────────────────────────────────┘
+                 │ Serial (115200 baud)
+┌────────────────▼───────────────────────────────────────────┐
+│  Control Layer (ESP32-S3 firmware)                          │
+│  • PID loop on 4 motors                                     │
+│  • IR hard-stop interrupt (distance < 20cm)                 │
+│  • IMU read + telemetry up to Pi 5                          │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│  Interface Layer (NestJS Backend — apps/api)                │
+│  Web + Mobile frontends, MongoDB persistence.               │
+└────────────────────────────────────────────────────────────┘
+```
+
+The four layers map onto the monorepo:
+
+| Layer | Lives in |
+|---|---|
+| Sensing (LiDAR + SLAM) | `services/robot/src/web_bridge.py` |
+| Gateway (robot manager) | `services/robot/src/my_robot_controller/` (Python nodes) |
+| Control (ESP32 firmware) | outside this monorepo (separate firmware repo) — but the protocol is enforced by `services/robot/src/my_robot_controller/` |
+| Interface (backend) | `apps/api/` |
+
+### 4. Technical Specifications & Formulas
+
+#### 4.1. Mecanum Kinematics
+
+Wheel velocities ($v_n$) from chassis velocities ($V_x, V_y, \omega$) where $L$ and $W$ are the half-axle distances:
+
+```
+v_fl = Vx − Vy − ω(L + W)
+v_fr = Vx + Vy + ω(L + W)
+v_rl = Vx + Vy − ω(L + W)
+v_rr = Vx − Vy + ω(L + W)
+```
+
+#### 4.2. Communication Protocol (Pi ↔ ESP32)
+
+- **Baudrate:** 115200.
+- **Commands (Pi → ESP32):**
+  - `M:v1,v2,v3,v4$` — Move (4 wheel PWM/direction values)
+  - `A:g1,g2,g3,g4,g5,g6$` — Arm (6 servo angle values)
+- **Feedback (ESP32 → Pi):**
+  - `O:x,y,theta$` — Odometry
+  - `S:ir1,ir2,ir3,ir4$` — IR sensor readings
+
+Any change to the protocol must be reflected in both `services/robot/` (Pi side) and the ESP32 firmware (outside this repo).
+
+### 5. Development Notes
+
+- **Priority:** Coordinate accuracy for SLAM is the top concern.
+- **Strategy:** Use IMU to compensate for mecanum wheel slip — do **not** introduce a loadcell.
+- **Safety:** IR sensors are handled directly on the ESP32 to guarantee minimum latency. Do not move that logic to the Pi.
+
+---
+
 ## System Architecture
 
 ```
