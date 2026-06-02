@@ -16,7 +16,11 @@
       "mcp__Puppeteer__puppeteer_navigate",
       "mcp__Puppeteer__puppeteer_screenshot",
       "mcp__Puppeteer__puppeteer_click",
-      "mcp__Puppeteer__puppeteer_evaluate"
+      "mcp__Puppeteer__puppeteer_evaluate",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_wait_for",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot"
     ]
   },
   "enableAllProjectMcpServers": true,

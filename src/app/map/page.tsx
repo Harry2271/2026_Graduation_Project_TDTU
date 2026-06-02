@@ -15,24 +15,6 @@ interface PoseData { x: number; y: number; theta: number; }
 interface InfoData { lidar: boolean; map: boolean; pose: boolean; mode: string; coverage_pct?: number; }
 
 // ── Shared canvas helpers ─────────────────────────────────────────────────────
-function drawGridToOffscreen(grid: MapData, canvas: HTMLCanvasElement) {
-  const { width: gw, height: gh, data } = grid;
-  if (canvas.width !== gw || canvas.height !== gh) {
-    canvas.width = gw; canvas.height = gh;
-  }
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const imgData = ctx.createImageData(gw, gh);
-  const buf = imgData.data;
-  for (let i = 0; i < data.length; i++) {
-    const j = i * 4;
-    const v = data[i];
-    if (v === 100) { buf[j]=0; buf[j+1]=0; buf[j+2]=0; buf[j+3]=255; }
-    else if (v === 0) { buf[j]=255; buf[j+1]=255; buf[j+2]=255; buf[j+3]=255; }
-    else { buf[j]=128; buf[j+1]=128; buf[j+2]=128; buf[j+3]=255; }
-  }
-  ctx.putImageData(imgData, 0, 0);
-}
 
 function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number): { wx: number; wy: number } {
   const c = Math.cos(pose.theta);
@@ -52,7 +34,7 @@ function robotToWorld(rx: number, ry: number, pose: PoseData, lidarAxis: number)
 const MINI_SIZE = 320;
 const MINI_RANGE = 3.0; // metres visible in minimap
 
-function drawMinimap(ctx: CanvasRenderingContext2D, scan: ScanData | null, pose: PoseData | null) {
+function drawMinimap(ctx: CanvasRenderingContext2D, scan: ScanData | null, pose: PoseData | null, lidarAxis: number) {
   const W = MINI_SIZE, H = MINI_SIZE;
   ctx.clearRect(0, 0, W, H);
 
@@ -77,17 +59,20 @@ function drawMinimap(ctx: CanvasRenderingContext2D, scan: ScanData | null, pose:
   ctx.beginPath(); ctx.moveTo(cx, 4); ctx.lineTo(cx, H - 4); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(4, cy); ctx.lineTo(W - 4, cy); ctx.stroke();
 
-  // Scan points in robot-local frame
-  if (scan?.points.length && pose) {
+  // Scan points — always draw if scan data exists.
+  // When pose is null, render in robot-local frame (centered on radar).
+  // Use the supplied lidarAxis so axis selector takes effect.
+  if (scan?.points.length) {
     const points = scan.points.length > 300 ? scan.points.filter((_, i) => i % 3 === 0) : scan.points;
-    ctx.fillStyle = 'rgba(0,212,255,0.7)';
+    const effPose: PoseData = pose ?? { x: 0, y: 0, theta: 0 };
+    ctx.fillStyle = 'rgba(0,212,255,0.85)';
     for (const pt of points) {
-      const wp = robotToWorld(pt.x, pt.y, pose, 1);
+      const wp = robotToWorld(pt.x, pt.y, effPose, lidarAxis);
       const sx = cx + wp.wx * scale;
       const sy = cy - wp.wy * scale;
       if (sx < 0 || sx > W || sy < 0 || sy > H) continue;
       ctx.beginPath();
-      ctx.arc(sx, sy, 1.2, 0, Math.PI * 2);
+      ctx.arc(sx, sy, 1.4, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -160,19 +145,10 @@ export default function MapPage() {
   const occSizeRef = useRef<number>(500);
   const scanBoundsRef = useRef<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
-  const prevMapDataRef = useRef<number[] | null>(null);
   const occOffscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const obstacleOffscreenRef = useRef<HTMLCanvasElement | null>(null);
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [scanCount, setScanCount] = useState(0);
-  // Tracks accumulated server map across MAPPING states.
-  const serverMapRef = useRef<MapData | null>(null);
-  // Mode ref — kept in sync with React state; used inside WebSocket handler (stale closure).
-  const infoModeRef = useRef('live');
-  // Incremented to force animation loop to redraw (e.g. after clearing).
-  const redrawTriggerRef = useRef(0);
-  // Obstacle layer overlay
-  const obstacleDataRef = useRef<MapData | null>(null);
-  const obstacleOffscreenRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
   useEffect(() => { poseRef.current = pose; }, [pose]);
@@ -180,8 +156,6 @@ export default function MapPage() {
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { headingUpRef.current = isHeadingUp; }, [isHeadingUp]);
   useEffect(() => { lidarAxisRef.current = lidarAxis; }, [lidarAxis]);
-  // Keep mode ref in sync — WebSocket handler uses this ref (not stale React state).
-  useEffect(() => { infoModeRef.current = info.mode; }, [info.mode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -222,7 +196,6 @@ export default function MapPage() {
     if (!map) return;
     if (!offscreenRef.current) offscreenRef.current = document.createElement('canvas');
     drawGridToCanvas(map, offscreenRef.current);
-    prevMapDataRef.current = [...map.data];
   }
 
   function buildOccupancyGrid(scan: ScanData) {
@@ -375,7 +348,6 @@ export default function MapPage() {
         ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
       }
       ctx.drawImage(offscreenRef.current, mapX, mapY, gw * scale, gh * scale);
-
       ctx.restore();
 
       const worldToScreen = (wx: number, wy: number) => {
@@ -390,6 +362,73 @@ export default function MapPage() {
         }
         return { sx, sy };
       };
+
+      // ── Overlay: locally-built occupancy grid (if any) ────────────
+      if (occOffscreenRef.current && occGridRef.current) {
+        const og = occGridRef.current;
+        const oRes = og.resolution;
+        const oHalf = (og.width * oRes) / 2;
+        const oMinScale = Math.min(W, H) * 0.75 / Math.max(og.width, og.height);
+        const oRawFit = Math.min(W / og.width, H / og.height) * zoom;
+        const oScale = Math.max(oRawFit, oMinScale);
+        // Local occ grid is centered on world (0,0) → screen center.
+        const oMapX = W / 2 + og.origin_x / oRes * oScale;
+        const oMapY = H / 2 - (og.origin_y + og.height * oRes) / oRes * oScale;
+        ctx.save();
+        if (p && isHU) {
+          const cx2 = W / 2, cy2 = H / 2;
+          ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
+        }
+        ctx.globalAlpha = 0.7;
+        ctx.drawImage(occOffscreenRef.current, oMapX, oMapY, og.width * oScale, og.height * oScale);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        // Suppress unused-variable lint
+        void oHalf;
+      }
+
+      // ── Overlay: obstacle layer (if any) ──────────────────────────
+      if (obstacleOffscreenRef.current && obstacleOffscreenRef.current.width > 0) {
+        const odW = obstacleOffscreenRef.current.width;
+        const odH = obstacleOffscreenRef.current.height;
+        const oRes = mapDataRef.current.resolution;
+        const oMinScale = Math.min(W, H) * 0.75 / Math.max(odW, odH);
+        const oRawFit = Math.min(W / odW, H / odH) * zoom;
+        const oScale = Math.max(oRawFit, oMinScale);
+        // Use the same map coords as the server map (assume same origin family).
+        const oMapX = W / 2 + origin_x / oRes * oScale;
+        const oMapY = H / 2 - (origin_y + odH * oRes) / oRes * oScale;
+        ctx.save();
+        if (p && isHU) {
+          const cx2 = W / 2, cy2 = H / 2;
+          ctx.translate(cx2, cy2); ctx.rotate(-p.theta - Math.PI / 2); ctx.translate(-cx2, -cy2);
+        }
+        // Tint obstacle layer red so it's distinct from the base map.
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(obstacleOffscreenRef.current, oMapX, oMapY, odW * oScale, odH * oScale);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+
+      // ── Live scan points projected into world coords ──────────────
+      const scanA = scanDataRef.current;
+      if (p && scanA?.points.length) {
+        const axis = lidarAxisRef.current;
+        ctx.beginPath();
+        for (let i = 0; i < scanA.points.length; i++) {
+          const wp = robotToWorld(scanA.points[i].x, scanA.points[i].y, p, axis);
+          const sp = worldToScreen(wp.wx, wp.wy);
+          if (i === 0) ctx.moveTo(sp.sx, sp.sy); else ctx.lineTo(sp.sx, sp.sy);
+        }
+        ctx.strokeStyle = 'rgba(0,212,255,0.25)'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = 'rgba(0,212,255,0.85)';
+        for (let i = 0; i < scanA.points.length; i += 2) {
+          const wp = robotToWorld(scanA.points[i].x, scanA.points[i].y, p, axis);
+          const sp = worldToScreen(wp.wx, wp.wy);
+          ctx.beginPath(); ctx.arc(sp.sx, sp.sy, 1.8, 0, Math.PI * 2); ctx.fill();
+        }
+      }
 
       if (p) { const rp = worldToScreen(p.x, p.y); drawRobot(ctx, rp.sx, rp.sy, zoom); }
       return;
@@ -413,18 +452,39 @@ export default function MapPage() {
     drawRobot(ctx, robotScreenX, robotScreenY, zoom);
 
     if (scan?.points.length) {
+      const axis = lidarAxisRef.current;
+      // Apply lidarAxis transform in robot-local frame.
+      const lx = (pt: { x: number; y: number }) => {
+        switch (axis) {
+          case 0: return  pt.x;
+          case 1: return  pt.y;
+          case 2: return -pt.x;
+          case 3: return -pt.y;
+          default: return pt.x;
+        }
+      };
+      const ly = (pt: { x: number; y: number }) => {
+        switch (axis) {
+          case 0: return  pt.y;
+          case 1: return -pt.x;
+          case 2: return -pt.y;
+          case 3: return  pt.x;
+          default: return pt.y;
+        }
+      };
+
       ctx.beginPath();
       for (let i = 0; i < scan.points.length; i++) {
-        const sx = robotScreenX + scan.points[i].x * scale;
-        const sy = robotScreenY - scan.points[i].y * scale;
+        const sx = robotScreenX + lx(scan.points[i]) * scale;
+        const sy = robotScreenY - ly(scan.points[i]) * scale;
         if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
       }
       ctx.strokeStyle = 'rgba(0,212,255,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
 
       ctx.fillStyle = 'rgba(0,212,255,0.9)';
       for (let i = 0; i < scan.points.length; i += 2) {
-        const sx = robotScreenX + scan.points[i].x * scale;
-        const sy = robotScreenY - scan.points[i].y * scale;
+        const sx = robotScreenX + lx(scan.points[i]) * scale;
+        const sy = robotScreenY - ly(scan.points[i]) * scale;
         ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, Math.PI * 2); ctx.fill();
       }
     }
@@ -482,7 +542,7 @@ export default function MapPage() {
         frameCount++;
         if (frameCount % 2 === 0 && miniCanvasRef.current) {
           const mctx = miniCanvasRef.current.getContext('2d');
-          if (mctx) drawMinimap(mctx, scanDataRef.current, poseRef.current);
+          if (mctx) drawMinimap(mctx, scanDataRef.current, poseRef.current, lidarAxisRef.current);
         }
         lastTs = ts;
       }
@@ -516,19 +576,12 @@ export default function MapPage() {
             case 'map':
             case 'map_layer': {
               const incoming = msg.data as MapData;
-              // Accumulate: keep the largest non-trivial map as the persistent map.
-              const prev = serverMapRef.current;
-              if (!prev || incoming.data.length > prev.data.length) {
-                serverMapRef.current = incoming;
-              }
               setMapData(incoming);
               mapDataRef.current = incoming;
               break;
             }
             case 'obstacle_layer': {
               const od = msg.data as MapData;
-              obstacleDataRef.current = od;
-              // Build offscreen canvas for obstacle overlay
               if (!obstacleOffscreenRef.current) obstacleOffscreenRef.current = document.createElement('canvas');
               drawGridToCanvas(od, obstacleOffscreenRef.current);
               break;
