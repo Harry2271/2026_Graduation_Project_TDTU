@@ -1,0 +1,40 @@
+slam_toolbox:
+  ros__parameters:
+    # ── Frame configuration ──────────────────────────────────────────
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: /scan
+
+    # ── Mode ─────────────────────────────────────────────────────────
+    # online_async: non-blocking, better loop closure than online
+    mode: online_async
+    use_map_saver: false        # map_manager controls what gets published
+
+    # ── Scan matching ────────────────────────────────────────────────
+    use_scan_barycenter: true
+    minimum_time_interval: 0.1
+    scan_match_probability: 0.9
+
+    # ── Map parameters ───────────────────────────────────────────────
+    map_update_interval: 0.5    # faster refresh for live frontend feedback
+
+    # ── Travel thresholds (tuned for manual push — no wheel encoders) ─
+    minimum_travel_distance: 0.05   # 5cm — manual push moves slowly
+    minimum_travel_heading: 0.087   # 5 degrees (was 15°)
+    max_laser_range: 12.0
+    transform_timeout: 0.2
+
+    # ── Solver ───────────────────────────────────────────────────────
+    ceres_solver:
+      type: G2O_CERES
+      max_iterations: 50
+      num_threads: 2
+
+    # ── Loop closure ─────────────────────────────────────────────────
+    enable_interactive_mode: false   # no GUI on Raspberry Pi
+    enable_dynamic_orientation: false
+
+    # ── Buffer (Pi 5 memory-friendly) ────────────────────────────────
+    scan_buffer_size: 10
+    scan_maximum_interval: 3.0
