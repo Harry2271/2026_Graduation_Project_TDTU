@@ -1,0 +1,125 @@
+# =============================================================================
+# Root .gitignore — robot-for-nguyen monorepo
+# Each app's .gitignore remains in place for app-local patterns.
+# This file covers the monorepo-level patterns.
+# =============================================================================
+
+# Dependencies (yarn workspaces hoists to root /node_modules)
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Build outputs
+dist/
+build/
+out/
+.turbo/
+.tsbuildinfo
+*.tsbuildinfo
+
+# Next.js (also ignored per-app)
+.next/
+
+# Expo
+.expo/
+web-build/
+expo-env.d.ts
+
+# Native (Expo)
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+/ios
+/android
+app-example
+
+# Metro
+.metro-health-check*
+
+# Tests / coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Env files (commit .env.example only)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+
+# Diagnostic / crash dumps
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+*.stackdump
+bash.exe.stackdump
+core
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Editor / IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# Runtime / process
+pids
+*.pid
+*.seed
+*.pid.lock
+.tmp/
+.temp/
+
+# Tooling caches
+.eslintcache
+.cache/
+.parcel-cache/
+.next/cache/
+
+# Playwright MCP (kept per-app; ignore here)
+.playwright-mcp/
+
+# Playwright / e2e artifacts
+playwright-report/
+test-results/
+
+# Docker / vercel
+.vercel
+
+# Misc
+*.pem
+*.tar
+*.tgz
+
+# Claude Code local session folders (per-project; ignored here too)
+.claude/
+.remember/

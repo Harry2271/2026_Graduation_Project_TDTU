@@ -1,8 +1,10 @@
 {
-  "name": "nguyen-mobile-app",
+  "name": "@robot-for-nguyen/mobile",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "private": true,
   "scripts": {
+    "dev": "expo start",
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",

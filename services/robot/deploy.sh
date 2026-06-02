@@ -1,16 +1,21 @@
 #!/bin/bash
 # =============================================================================
-# deploy.sh — ROS 2 Robot Controller (Fix: Sudo & Path issues)
+# deploy.sh — ROS 2 Robot Controller (services/robot)
 # =============================================================================
 
 set -e
 
-WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$SCRIPT_DIR"
+MONOREPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
+
 ROS_WS="$HOME/robot_ws"
 LIDAR_MODEL="${LIDAR_MODEL:-a1}"
 SERVICE_NAME_PREFIX="nexus-robot"
 
 echo "=== 🤖 STARTING DEPLOYMENT: ROBOT CONTROLLER ==="
+echo "  App dir:  $APP_DIR"
+echo "  Monorepo: $MONOREPO_ROOT"
 
 # --- [BƯỚC 1] Setup Môi trường & Quyền Serial ---
 source "/opt/ros/jazzy/setup.bash"
@@ -24,16 +29,14 @@ find_lidar_port() {
 LIDAR_PORT=$(find_lidar_port)
 echo "📍 Lidar Port: $LIDAR_PORT"
 
-# FIX: Cấp quyền không cần pass (đã dặn ông chạy visudo ở dưới)
 sudo chmod 666 "$LIDAR_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $LIDAR_PORT"
 
 # --- [BƯỚC 2] Sửa cấu trúc Folder & Build ---
 mkdir -p "$ROS_WS/src"
 
-# FIX: Copy the entire package directory from Workspace to ROS Workspace
 echo "📂 Reorganizing files for colcon build..."
 rm -rf "$ROS_WS/src/my_robot_controller"
-cp -r "$WORKSPACE/src/my_robot_controller" "$ROS_WS/src/"
+cp -r "$APP_DIR/src/my_robot_controller" "$ROS_WS/src/"
 
 cd "$ROS_WS"
 echo "🏗️ Building workspace..."

@@ -1,0 +1,28 @@
+{
+  "name": "robot-for-nguyen",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo for the Park Smart warehouse + robot control system: NestJS API, Next.js web app, Expo mobile app, and Python/ROS 2 robot controller.",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "dev": "turbo run dev",
+    "dev:api": "turbo run dev --filter=@robot-for-nguyen/api",
+    "dev:web": "turbo run dev --filter=@robot-for-nguyen/web",
+    "dev:mobile": "turbo run dev --filter=@robot-for-nguyen/mobile",
+    "deploy": "turbo run deploy",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "yarn@1.22.22"
+}

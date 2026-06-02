@@ -1,0 +1,60 @@
+# =============================================================================
+# ci.yml — Affected build + lint for the robot-for-nguyen monorepo
+#
+# Triggers on push to master and on pull_request.
+# Uses Turborepo's affected filter so only changed apps are linted/built.
+# Mobile app is intentionally skipped (no CI/CD per project decision).
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Cancel previous runs for the same branch on new pushes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TURBO_TELEMETRY_DISABLED: 1
+
+jobs:
+  build:
+    name: Lint + Build (affected)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so turbo can compute the affected graph.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Lint + build (affected only)
+        # Filter to the three deployable apps; mobile is excluded by design.
+        run: yarn turbo run lint build --filter=@robot-for-nguyen/api --filter=@robot-for-nguyen/web --filter=@robot-for-nguyen/mobile
+
+      - name: Upload API build artifact
+        if: hashFiles('apps/api/dist/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-dist
+          path: |
+            apps/api/dist
+            apps/api/package.json
+            apps/api/yarn.lock
+          retention-days: 7

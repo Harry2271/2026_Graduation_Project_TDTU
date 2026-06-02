@@ -1,62 +1,23 @@
-# CLAUDE.md — Robot for Nguyen (Multi-Project Workspace)
+# CLAUDE.md — Robot for Nguyen (Monorepo)
 
-This workspace contains 4 projects that work together as a full-stack warehouse management + robot control system. Read the appropriate sub-project `CLAUDE.md` before working in any project directory.
+This is a **Turborepo + yarn-workspaces** monorepo containing the full-stack Park Smart warehouse + robot control system. Four projects that used to be separate git repos now live in one repo with path-filtered CI/CD.
+
+**Read the per-app `CLAUDE.md` before working in that app** — they carry the project-specific rules. This file covers the monorepo-level conventions and cross-cutting concerns.
 
 ---
 
 ## Projects Overview
 
-| Directory | Role | Framework | Key Responsibility |
-|---|---|---|---|
-| `nguyen-tdtu/` | **Backend API** | NestJS | REST + WebSocket server. Manages packages, shelves, slots. |
-| `nguyen-web-app/` | **Web Frontend** | Next.js (App Router) | Warehouse dashboard, SLAM map viewer, real-time UI. |
-| `nguyen-mobile-app/` | **Mobile App** | Expo React Native | On-the-go warehouse operations, QR scanning, camera stream. |
-| `robot-controller/` | **Robot Bridge** | Python / ROS 2 | WebSocket bridge for SLAM map, lidar, and pose data from the robot. |
+| Directory | Role | Framework | Port | CI/CD |
+|---|---|---|---|---|
+| `apps/api/` | Backend API | NestJS 11 | `5000` | ✅ path-filtered |
+| `apps/web/` | Web Frontend | Next.js 16 | `3000` | ✅ path-filtered |
+| `apps/mobile/` | Mobile App | Expo 55 (Router) | — | ❌ none (per project decision) |
+| `services/robot/` | Robot Bridge | Python / ROS 2 | `9091` (WS) | ✅ path-filtered |
+| `tools/deploy/` | Manual SSH deploy toolkit | bash | — | — |
+| `packages/` | Shared libraries (future) | — | — | — |
 
----
-
-## How This Workspace Is Organized
-
-```
-D:\taiLieuHoc\robot-for-nguyen\
-├── CLAUDE.md                    ← You are here (multi-project index)
-├── nguyen-tdtu/
-│   ├── CLAUDE.md                ← NestJS backend details
-│   ├── src/
-│   │   ├── main.ts
-│   │   ├── app.module.ts
-│   │   ├── config/
-│   │   ├── gateway/             ← Socket.io real-time events
-│   │   └── modules/
-│   │       ├── package/         ← Package CRUD
-│   │       └── shelf/          ← Shelf/slot management
-│   └── ...
-├── nguyen-web-app/
-│   ├── CLAUDE.md                ← Next.js frontend details
-│   ├── src/
-│   │   ├── app/                ← App Router pages
-│   │   │   ├── inventory/      ← Shelf grid + package management
-│   │   │   ├── map/            ← SLAM map viewer (WebSocket)
-│   │   │   └── camera/         ← Robot camera feed
-│   │   ├── components/
-│   │   └── store/              ← Redux Toolkit + RTK Query
-│   └── ...
-├── nguyen-mobile-app/
-│   ├── CLAUDE.md                ← Expo React Native details
-│   ├── app/                    ← Expo Router pages
-│   └── src/
-│       ├── api/                ← Axios API client
-│       ├── store/              ← Zustand state management
-│       └── components/
-├── robot-controller/
-│   ├── CLAUDE.md                ← WebSocket robot bridge details
-│   ├── docker-compose.yml
-│   └── src/
-│       ├── map_manager_node.py  ← ROS 2 map builder
-│       └── web_bridge.py        ← WebSocket server (port 9091)
-└── .github/workflows/
-    └── deploy.yml              ← CI/CD pipeline
-```
+Per-app `CLAUDE.md` files: `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`, `apps/mobile/CLAUDE.md`, `services/robot/CLAUDE.md`.
 
 ---
 
@@ -65,151 +26,147 @@ D:\taiLieuHoc\robot-for-nguyen\
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Robot Hardware (Raspberry Pi 5 + Slamtec A1M8 Lidar)      │
-│  ROS 2: map_manager_node.py + web_bridge.py               │
+│  ROS 2 + web_bridge.py                                     │
 └────────────────┬────────────────────────────────────────────┘
                  │ WebSocket (ws://robot-ip:9091)
-                 │ Map data, lidar points, pose, status
                  ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  nguyen-tdtu (NestJS)          nguyen-web-app (Next.js)    │
-│  Port 5000                     Port 3000                    │
+│  apps/api (NestJS)          apps/web (Next.js)              │
+│  Port 5000                  Port 3000                       │
 │  • REST API (packages, shelves)  • Warehouse dashboard      │
 │  • Socket.io (real-time)         • SLAM map viewer          │
-│  • MongoDB                       • Real-time sync via       │
-│                                   Socket.io events          │
+│  • MongoDB                       • Real-time sync           │
 └────────────────┬────────────────────────────────────────────┘
-                 │ REST API calls
+                 │ REST API
                  ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  nguyen-mobile-app (Expo React Native)                      │
-│  • Warehouse operations on the go                          │
-│  • QR code scanning for packages                           │
-│  • Camera stream from robot                                │
+│  apps/mobile (Expo React Native)                            │
+│  • On-the-go warehouse ops, QR scanning, camera stream     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Cross-Project Dependencies
+## Monorepo Commands
 
-### Shared Types Between Backend and Frontends
+All commands run from the repo root.
 
-Package, Shelf, ShelfSlot, and SelectedCell types must be kept in sync across:
-- `nguyen-tdtu/src/modules/` (backend — source of truth)
-- `nguyen-web-app/src/types/` (web app)
-- `nguyen-mobile-app/src/types/` (mobile app)
-
-### Shared API Endpoints
-
-All frontends consume the same REST API from `nguyen-tdtu`:
-
-| Endpoint Group | Base URL |
-|---|---|
-| Packages CRUD | `http://localhost:5000/packages` |
-| Shelves & Slots | `http://localhost:5000/shelves` |
-| WebSocket Events | `http://localhost:5000` (Socket.io) |
-
-### Real-Time Sync
-
-`nguyen-tdtu` emits Socket.io events that both frontends subscribe to:
-
-| Event | Effect |
-|---|---|
-| `package:created` | UI adds new package |
-| `package:updated` | UI updates package |
-| `package:deleted` | UI removes package |
-| `shelf:updated` | UI updates slot status |
-
----
-
-## Working Across Projects
-
-When asked to work on a specific project, Claude Code will automatically:
-1. Detect which subdirectory you're in
-2. Read that project's `CLAUDE.md` for project-specific rules
-3. Apply those rules while working
-
-**If you're not sure which project to work on**, use the following guide:
-
-| Task | Project |
-|---|---|
-| Add/fix REST API endpoint | `nguyen-tdtu/` |
-| Add/fix web UI page or component | `nguyen-web-app/` |
-| Add/fix mobile screen or feature | `nguyen-mobile-app/` |
-| Fix robot map/lidar/pose WebSocket | `robot-controller/` |
-| Add a feature spanning backend + frontend | Both — start with the backend first |
-
----
-
-## Environment Variables Reference
-
-### nguyen-tdtu (Backend)
-```
-MONGO_URI=mongodb://...        # Required — MongoDB connection
-PORT=5000                      # Optional — default 5000
-```
-
-### nguyen-web-app (Frontend)
-```
-NEXT_PUBLIC_API_BASE_URL=http://localhost:5000   # Backend API
-NEXT_PUBLIC_WS_URL=ws://robot-ip:9091           # Robot WebSocket
-```
-
-### nguyen-mobile-app (Mobile)
-```
-EXPO_PUBLIC_API_BASE_URL=http://localhost:5000  # Backend API
-EXPO_PUBLIC_CAMERA_STREAM_URL=http://raspberry-pi:8000/stream  # Robot camera
-```
-
-### robot-controller
-Configured via `docker-compose.yml` and environment variables inside the container.
-
----
-
-## Common Commands
-
-### nguyen-tdtu
 ```bash
-cd nguyen-tdtu
+# Install (hoists to root /node_modules)
 yarn install
-yarn start:dev     # Development
-yarn build         # Production build
-yarn lint
-yarn test
-```
 
-### nguyen-web-app
-```bash
-cd nguyen-web-app
-yarn install
-yarn dev           # Development on port 3000
+# Build / lint all affected apps
 yarn build
 yarn lint
+
+# Run a specific app's dev server
+yarn dev:api       # NestJS on :5000
+yarn dev:web       # Next.js on :3000
+yarn dev:mobile    # Expo dev server
+
+# Turborepo (advanced)
+yarn turbo run build --filter=@robot-for-nguyen/api
+yarn turbo run lint --filter=...[origin/master]   # only affected
 ```
 
-### nguyen-mobile-app
-```bash
-cd nguyen-mobile-app
-yarn install
-yarn start         # Expo dev server
-yarn android       # Android emulator
-yarn ios           # iOS simulator
-```
-
-### robot-controller
-```bash
-cd robot-controller
-docker compose up --build   # Start ROS 2 + WebSocket bridge
-```
+The per-app dev workflow hasn't changed — `yarn start:dev` in `apps/api/`, `yarn dev` in `apps/web/`, `yarn start` in `apps/mobile/`. Yarn workspaces resolves dependencies from the hoisted `node_modules/` at the root.
 
 ---
 
-## Key Decisions to Know
+## CI/CD
 
-- **Package manager:** All projects use **Yarn**. Do NOT use npm or pnpm.
-- **Language:** All TypeScript projects use **strict mode**. No `any`.
-- **State management:** `nguyen-tdtu` uses NestJS DI; `nguyen-web-app` uses Redux Toolkit + RTK Query; `nguyen-mobile-app` uses Zustand.
-- **UI language:** All user-facing text is in **Vietnamese**.
-- **Database:** Only `nguyen-tdtu` has a database (MongoDB via Mongoose). Web and mobile apps are clients only.
-- **Testing:** No testing frameworks are installed in any project. Do not add tests unless explicitly requested.
-- **Circular dependency:** `PackageModule` and `ShelfModule` in `nguyen-tdtu` have a circular dependency, resolved with `forwardRef`.
+**Two workflows, both at `.github/workflows/`:**
+
+### `ci.yml` — Affected build
+- Triggers: push to `master`, PR.
+- Runs on `ubuntu-latest`.
+- Uses `yarn turbo run lint build --filter=...` to build only changed apps.
+- Uploads `api-dist` artifact for use by `deploy.yml`.
+
+### `deploy.yml` — Path-filtered deploy
+- Triggers: push to `master`, manual dispatch.
+- Uses `dorny/paths-filter@v3` to detect which app(s) changed.
+- Three jobs: `deploy-api`, `deploy-web`, `deploy-robot`. Each is gated on its own filter and runs on `self-hosted` (the Pi).
+- Path filters:
+  - `api` → `apps/api/**` (also `tools/deploy/**`)
+  - `web` → `apps/web/**` (also `tools/deploy/**`)
+  - `robot` → `services/robot/**` (also `tools/deploy/**`)
+- **Mobile is intentionally not in any filter** — there is no CI/CD for it. Build via `eas build` (cloud) or `expo start` (local) using your EAS account.
+
+**Path change examples:**
+
+| Changed path | Jobs that run |
+|---|---|
+| `apps/api/src/...` | `detect` + `deploy-api` |
+| `apps/web/src/...` | `detect` + `deploy-web` |
+| `services/robot/src/...` | `detect` + `deploy-robot` |
+| `tools/deploy/...` | `detect` + all 3 deploy jobs |
+| `apps/mobile/...` | `detect` only (no deploy job gated on it) |
+| `apps/web/.env` | `detect` only (env files are gitignored, this is illustrative) |
+
+---
+
+## Deploy Scripts
+
+Each app has a `deploy.sh` in its own folder. The Pi's self-hosted runner is checked out at the monorepo root, then `cd`s into the app folder and runs `./deploy.sh`. The script resolves its own path with `BASH_SOURCE[0]` so it works from any invocation context.
+
+| App | Script | What it does |
+|---|---|---|
+| `apps/api` | `apps/api/deploy.sh` | `yarn install --production`, write `.env` from secrets, `pm2 start ecosystem.json` |
+| `apps/web` | `apps/web/deploy.sh` | `yarn install`, `yarn build` (in app), `pm2 start ecosystem.json` |
+| `services/robot` | `services/robot/deploy.sh` | colcon build, PM2-managed ROS 2 nodes |
+
+The legacy `tools/deploy/` folder keeps the manual SSH toolkit (`deploy-all.sh`, `stop-all.sh`, `install-pi.sh`, etc.) for deploys from a dev machine. These still reference the new monorepo paths.
+
+---
+
+## Cross-Project Conventions
+
+These apply everywhere in the monorepo. Per-app `CLAUDE.md` files add project-specific rules on top.
+
+- **Package manager:** Yarn (classic, 1.22.22). No npm, no pnpm.
+- **Language:** TypeScript with strict mode in all Node projects. No `any`.
+- **UI language:** All user-facing text is **Vietnamese** (apps/web and apps/mobile).
+- **Testing:** No testing framework installed. Do not add tests unless explicitly requested.
+- **Cross-project types:** `Package`, `Shelf`, `ShelfSlot`, `SelectedCell` are duplicated across apps today. A future `packages/shared-types/` is reserved for these.
+- **State management:**
+  - `apps/api` — NestJS DI (no frontend state)
+  - `apps/web` — Redux Toolkit + RTK Query
+  - `apps/mobile` — Zustand (NOT Redux)
+- **Backend circular dependency:** `PackageModule` and `ShelfModule` use `forwardRef` — keep this pattern.
+
+---
+
+## Environment Variables
+
+| Where | Variable | Notes |
+|---|---|---|
+| `apps/api/.env` | `MONGO_URI`, `PORT` | written by deploy from GitHub secrets |
+| `apps/web/.env.local` | `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_WS_URL` | set at build time, baked into the bundle |
+| `apps/mobile/.env` | `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_CAMERA_STREAM_URL` | set at build time, baked into the bundle |
+| `services/robot` env | `LIDAR_MODEL` (e.g. `a1`) | set in `deploy.sh` |
+
+`.env` files are gitignored. Per-app `.env.example` files are checked in (when present) and copied to `.env` by the deploy script.
+
+---
+
+## Migrating from the old polyrepo
+
+The four old repos (`nguyen-tdtu`, `nguyen-web-app`, `nguyen-mobile-app`, `robot-controller`) were merged into this monorepo via `git subtree add`. The original git histories are preserved in the merge commits. The old repos can be archived once the team is comfortable with the monorepo.
+
+If you need to pull new commits from an old repo into the monorepo later, use `git subtree pull --prefix=apps/api <old-repo-url-or-path> master`.
+
+---
+
+## File Index (monorepo-level)
+
+| File | Purpose |
+|---|---|
+| `package.json` | Root — yarn workspaces, turbo scripts |
+| `turbo.json` | Turborepo task graph |
+| `.gitignore` | Monorepo-level ignore patterns (per-app `.gitignore` files remain) |
+| `CLAUDE.md` | This file |
+| `docs/superpowers/specs/2026-06-02-monorepo-restructure-design.md` | The design doc that drove this restructure |
+| `.github/workflows/ci.yml` | Affected build + lint |
+| `.github/workflows/deploy.yml` | Path-filtered deploy |
+| `tools/deploy/` | Manual SSH toolkit (deploy-all.sh, install-pi.sh, etc.) |
