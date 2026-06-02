@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity } from 'lucide-react';
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power } from 'lucide-react';
 import { Button, App, Tooltip } from 'antd';
 
 const WS_URL =
@@ -662,13 +662,15 @@ export default function MapPage() {
   const [isStopping, setIsStopping] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [isClearingLidar, setIsClearingLidar] = useState(false);
+  const [isIdling, setIsIdling] = useState(false);
 
   const sendCmd = useCallback((command: string, label: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       notification.warning({ title: 'Mất kết nối', description: 'Không thể gửi lệnh. Đang thử kết nối lại...', placement: 'topRight' });
       connectWsRef.current(); return;
     }
-    wsRef.current.send(JSON.stringify({ type: 'cmd', action: 'mapping', command }));
+    wsRef.current.send(JSON.stringify({ type: 'cmd', command }));
+    console.log('[WS] → cmd:', command);
     notification.success({ title: 'Thành công', description: `Đã gửi lệnh ${label}`, placement: 'topRight' });
   }, [notification]);
 
@@ -691,6 +693,10 @@ export default function MapPage() {
     occGridRef.current = null; occOffscreenRef.current = null; scanBoundsRef.current = null;
     setScanCount(0);
     setTimeout(() => setIsClearingLidar(false), 1500);
+  };
+  const handleIdle = () => {
+    setIsIdling(true); sendCmd('idle', 'chuyển về IDLE');
+    setTimeout(() => setIsIdling(false), 1500);
   };
   const confirmReset = () => {
     modal.confirm({
@@ -938,6 +944,28 @@ export default function MapPage() {
                 }}
               >
                 LIDAR CLR
+              </Button>
+            </Tooltip>
+
+            <Tooltip title="Chuyển về trạng thái IDLE (hủy mapping hiện tại)">
+              <Button
+                size="large"
+                icon={<Power size={15} />}
+                loading={isIdling}
+                onClick={handleIdle}
+                disabled={info.mode === 'idle'}
+                style={{
+                  borderRadius: '10px',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 600,
+                  fontSize: '12px',
+                  background: 'rgba(156,163,175,0.1)',
+                  border: '1px solid rgba(156,163,175,0.3)',
+                  color: 'var(--text-secondary)',
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                }}
+              >
+                IDLE
               </Button>
             </Tooltip>
           </div>
