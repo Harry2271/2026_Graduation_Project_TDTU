@@ -69,11 +69,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install + build API
+        run: |
+          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
+          yarn install --frozen-lockfile
+          yarn workspace @robot-for-nguyen/api build
+
       - name: Run API deploy
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           PORT: ${{ vars.API_PORT }}
         run: |
+          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
           cd apps/api
           chmod +x ./deploy.sh
           sed -i 's/\r$//' ./deploy.sh
