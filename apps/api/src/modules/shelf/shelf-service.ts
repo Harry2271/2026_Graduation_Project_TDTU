@@ -136,7 +136,18 @@ export class ShelfService implements IShelfService, OnModuleInit {
     if (slot.status === SlotStatus.AVAILABLE) {
       throw new BadRequestException(`Vị trí "${slotCode}" đang trống`);
     }
+
+    const packageId = slot.packageId?.toString() ?? null;
     await this.shelfRepository.clearSlot(slotCode);
+
+    if (packageId) {
+      try {
+        await this.packageService.markFinished(packageId);
+      } catch (err) {
+        console.error(`Không thể cập nhật package ${packageId} sang FINISHED sau khi gỡ khỏi kệ ${slotCode}`, err);
+      }
+    }
+
     this.eventsGateway.emitShelfUpdated({ code: slotCode, status: SlotStatus.AVAILABLE, packageId: null });
   }
 

@@ -9,25 +9,62 @@ import {
   Form,
   Input,
   Modal,
-App,
+  App,
   Skeleton,
   Tooltip,
   ConfigProvider,
-  theme
+  Tag,
+  theme,
 } from "antd";
 import {
   ArrowLeftOutlined,
   SaveOutlined,
   PrinterOutlined,
+  CheckCircleOutlined,
 } from "@ant-design/icons";
 import { Edit3, QrCode, Package as PackageIcon } from "lucide-react";
 import {
   useGetPackageByIdQuery,
+  usePatchPackageStatusMutation,
   useUpdatePackageMutation,
 } from "@/store/services/inventoryApi";
 import { QRCodeSVG } from "qrcode.react";
 
+import AprilTag from "@/components/AprilTag";
+import { aprilTagToSvgString } from "@/lib/aprilTag";
+import type { PackageStatus } from "@/types/inventory";
+
 const { Content } = Layout;
+
+const LABEL_SIZE = 300;
+const APRIL_TAG_SIZE = 200;
+const QR_SIZE = 100;
+
+const STATUS_PALETTE: Record<PackageStatus, { bg: string; border: string; text: string; label: string }> = {
+  CREATED: { bg: "rgba(0,212,255,0.10)", border: "rgba(0,212,255,0.30)", text: "var(--accent)", label: "Đã tạo" },
+  IN_PROGRESS: { bg: "rgba(255,184,0,0.10)", border: "rgba(255,184,0,0.30)", text: "var(--warning)", label: "Đang xử lý" },
+  FINISHED: { bg: "rgba(0,255,170,0.08)", border: "rgba(0,255,170,0.25)", text: "var(--success)", label: "Hoàn thành" },
+};
+
+function StatusTag({ status }: { status: PackageStatus }) {
+  const c = STATUS_PALETTE[status] ?? STATUS_PALETTE.CREATED;
+  return (
+    <Tag
+      style={{
+        borderRadius: "8px",
+        background: c.bg,
+        border: `1px solid ${c.border}`,
+        color: c.text,
+        fontFamily: "'JetBrains Mono', monospace",
+        fontWeight: 700,
+        fontSize: "12px",
+        padding: "2px 10px",
+      }}
+    >
+      {c.label}
+    </Tag>
+  );
+}
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -71,6 +108,7 @@ export default function ProductDetailPage({
 
   const { data: pkg, isLoading, error } = useGetPackageByIdQuery(id);
   const [updatePackage, { isLoading: isUpdating }] = useUpdatePackageMutation();
+  const [patchStatus, { isLoading: isPatching }] = usePatchPackageStatusMutation();
 
   const qrPayload = JSON.stringify({ _id: id });
 
@@ -117,9 +155,29 @@ export default function ProductDetailPage({
     }
   };
 
+  // ── Finish Modal ──────────────────────────────────────────────────
+  const [isFinishConfirmOpen, setIsFinishConfirmOpen] = useState(false);
+  const handleFinishClick = () => setIsFinishConfirmOpen(true);
+  const handleConfirmFinish = async () => {
+    try {
+      await patchStatus({ id, status: "FINISHED" }).unwrap();
+      notification.success({
+        title: "Đã hoàn thành",
+        description: "Mã AprilTag đã được giải phóng về pool.",
+        placement: "topRight",
+      });
+      setIsFinishConfirmOpen(false);
+    } catch (err: unknown) {
+      const errMsg =
+        (err as { data?: { message?: string } })?.data?.message ||
+        (err as { error?: string })?.error ||
+        "Không thể cập nhật trạng thái.";
+      notification.error({ title: "Thất bại", description: errMsg, placement: "topRight" });
+    }
+  };
+
   // ── Print Modal ─────────────────────────────────────────────────────
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
-  const printRef = useRef<HTMLDivElement>(null);
 
   const autoPrintOpenedRef = useRef(false);
   useEffect(() => {
@@ -132,8 +190,18 @@ export default function ProductDetailPage({
   const handlePrint = () => setIsPrintModalOpen(true);
 
   const executePrint = () => {
-    const printContent = printRef.current;
-    if (!printContent) return;
+    if (!pkg) return;
+
+    const safeName = (pkg.packageName ?? "").replace(/[<>"]/g, (c: string) =>
+      ({ "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c,
+    );
+    const tagId = pkg.tagId;
+    const hasTag = typeof tagId === "number";
+    const statusLabel = STATUS_PALETTE[pkg.status]?.label ?? pkg.status;
+    const hiddenQr = document.querySelector("[data-print-qr]")?.innerHTML ?? "";
+    const aprilTagMarkup = hasTag
+      ? aprilTagToSvgString(tagId as number, APRIL_TAG_SIZE)
+      : `<div style="width:${String(APRIL_TAG_SIZE)}px;height:${String(APRIL_TAG_SIZE)}px;display:flex;align-items:center;justify-content:center;border:2px dashed #d1d5db;border-radius:12px;color:#9ca3af;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:center;padding:1rem">Chưa có mã AprilTag</div>`;
 
     const win = window.open("", "_blank", "width=420,height=560");
     if (!win) {
@@ -141,32 +209,26 @@ export default function ProductDetailPage({
       return;
     }
 
-    win.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>In mã QR - ${pkg?.packageName ?? id}</title>
-          <style>
-            @page { size: B5 portrait; margin: 0; }
-            * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 1.5rem; background: #fff; }
-            .label { text-align: center; margin-bottom: 1.2rem; }
-            .label h2 { font-size: 1rem; font-weight: 700; color: #111827; margin-bottom: 0.2rem; }
-            .qr-container { border: 2px solid #d1d5db; border-radius: 10px; padding: 1.2rem; display: flex; align-items: center; justify-content: center; background: #fff; }
-            @media print { body { padding: 0.8rem; } .no-print { display: none !important; } .qr-container { border: 2px solid #000; } }
-          </style>
-        </head>
-        <body>
-          <div class="label"><h2>${pkg?.packageName ?? ""}</h2></div>
-          <div class="qr-container">${printContent.innerHTML}</div>
-          <br />
-          <div class="no-print" style="display:flex;flex-direction:column;align-items:center;gap:0.5rem">
-            <button onclick="window.print()" style="padding:9px 22px;font-size:13px;border-radius:7px;border:1px solid #d1d5db;background:#f9fafb;cursor:pointer">In mã QR</button>
-            <button onclick="window.close()" style="padding:9px 22px;font-size:13px;border-radius:7px;border:none;background:#2563eb;color:#fff;cursor:pointer">Đóng</button>
-          </div>
-        </body>
-      </html>
-    `);
+    const html = `<!DOCTYPE html><html><head><title>In tem kiện hàng - ${safeName}</title><style>` +
+      `@page { size: B5 portrait; margin: 0; }` +
+      `* { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }` +
+      `body { font-family: 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 1.5rem; background: #fff; }` +
+      `.label { text-align: center; margin-bottom: 0.8rem; width: ${String(LABEL_SIZE)}px; }` +
+      `.label h2 { font-size: 1rem; font-weight: 700; color: #111827; margin-bottom: 0.2rem; }` +
+      `.label .meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6b7280; }` +
+      `.label-stack { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem; padding: 1rem; border: 2px solid #d1d5db; border-radius: 16px; background: #fff; width: ${String(LABEL_SIZE)}px; height: ${String(LABEL_SIZE)}px; box-sizing: border-box; }` +
+      `.label-stack .caption { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #9ca3af; }` +
+      `@media print { body { padding: 0.8rem; } .no-print { display: none !important; } .label-stack { border: 2px solid #000; } }` +
+      `</style></head><body>` +
+      `<div class="label"><h2>${safeName}</h2><div class="meta">AprilTag: ${hasTag ? '#' + String(tagId) : '—'} · Trạng thái: ${statusLabel}</div></div>` +
+      `<div class="label-stack">${aprilTagMarkup}<div class="caption">AprilTag (2/3)</div>${hiddenQr}<div class="caption">QR · mongoId (1/3)</div></div>` +
+      `<br /><div class="no-print" style="display:flex;flex-direction:column;align-items:center;gap:0.5rem">` +
+      `<button onclick="window.print()" style="padding:9px 22px;font-size:13px;border-radius:7px;border:1px solid #d1d5db;background:#f9fafb;cursor:pointer">In tem</button>` +
+      `<button onclick="window.close()" style="padding:9px 22px;font-size:13px;border-radius:7px;border:none;background:#2563eb;color:#fff;cursor:pointer">Đóng</button>` +
+      `</div></body></html>`;
+
+    win.document.open();
+    win.document.write(html);
     win.document.close();
   };
 
@@ -281,17 +343,26 @@ export default function ProductDetailPage({
                     </h2>
                   </div>
 
-                  <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+                  <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0, flexWrap: "wrap" }}>
                     <Button icon={<Edit3 size={14} />} onClick={handleOpenEdit} style={{ borderRadius: 8 }}>
                       Sửa tên
+                    </Button>
+                    <Button
+                      icon={<CheckCircleOutlined />}
+                      onClick={handleFinishClick}
+                      disabled={pkg.status === "FINISHED"}
+                      style={{ borderRadius: 8 }}
+                    >
+                      Hoàn thành
                     </Button>
                     <Button
                       type="primary"
                       icon={<QrCode size={14} />}
                       onClick={handlePrint}
+                      disabled={pkg.tagId === null || pkg.tagId === undefined}
                       style={{ background: "#2563eb", borderRadius: 8, display: "flex", alignItems: "center", gap: "4px" }}
                     >
-                      In mã QR
+                      In tem
                     </Button>
                   </div>
                 </div>
@@ -300,6 +371,19 @@ export default function ProductDetailPage({
                   <InfoRow
                     label="Tên kiện hàng:"
                     value={<span style={{ fontWeight: 700 }}>{pkg.packageName}</span>}
+                  />
+                  <InfoRow label="Trạng thái:" value={<StatusTag status={pkg.status} />} />
+                  <InfoRow
+                    label="Mã AprilTag:"
+                    value={
+                      pkg.tagId === null || pkg.tagId === undefined ? (
+                        <span style={{ color: "#9ca3af" }}>—</span>
+                      ) : (
+                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
+                          #{pkg.tagId}
+                        </span>
+                      )
+                    }
                   />
                   {pkg.createdAt && (
                     <InfoRow
@@ -370,6 +454,11 @@ export default function ProductDetailPage({
                     </p>
                   </Tooltip>
                 </Card>
+
+                {/* Hidden QR for the print popup to read via [data-print-qr] */}
+                <div data-print-qr style={{ display: "none" }}>
+                  <QRCodeSVG value={qrPayload} size={QR_SIZE} level="M" includeMargin />
+                </div>
               </>
             )}
           </Card>
@@ -475,13 +564,13 @@ export default function ProductDetailPage({
         title={
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
             <PrinterOutlined style={{ color: "#2563eb" }} />
-            In mã QR
+            In tem kiện hàng
           </div>
         }
         open={isPrintModalOpen}
         onCancel={() => setIsPrintModalOpen(false)}
         centered
-        width={400}
+        width={420}
         footer={
           <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
             <Button size="large" onClick={() => setIsPrintModalOpen(false)} style={{ borderRadius: 10 }}>
@@ -492,32 +581,16 @@ export default function ProductDetailPage({
               size="large"
               icon={<PrinterOutlined />}
               onClick={executePrint}
+              disabled={pkg?.tagId === null || pkg?.tagId === undefined}
               style={{ background: "#2563eb", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}
             >
-              In QR Code
+              In tem
             </Button>
           </div>
         }
       >
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "0.5rem 0" }}>
-          {/* Hidden QR for print export */}
-          <div ref={printRef} style={{ display: "none" }}>
-            <QRCodeSVG value={qrPayload} size={200} level="M" includeMargin />
-          </div>
-
-          {/* Visible preview */}
-          <div
-            style={{
-              border: "2px dashed #d1d5db",
-              borderRadius: 16,
-              padding: "1.25rem",
-              background: "#fff",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "0.75rem",
-            }}
-          >
+        {pkg && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "0.5rem 0" }}>
             <p
               style={{
                 fontSize: "13px",
@@ -525,30 +598,108 @@ export default function ProductDetailPage({
                 fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
+                marginBottom: "0.5rem",
               }}
             >
-              {pkg?.packageName}
+              {pkg.packageName}
             </p>
-            <QRCodeSVG value={qrPayload} size={200} level="M" includeMargin bgColor="#ffffff" fgColor="#1f2937" />
-            <p
+
+            <div
               style={{
-                fontSize: "11px",
-                color: "#9ca3af",
-                fontFamily: "monospace",
-                wordBreak: "break-all",
-                textAlign: "center",
-                maxWidth: 200,
+                width: LABEL_SIZE,
+                height: LABEL_SIZE,
+                border: "2px dashed #d1d5db",
+                borderRadius: 16,
+                background: "#fff",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "0.5rem",
+                padding: "1rem",
+                boxSizing: "border-box",
               }}
             >
-              {qrPayload}
+              {pkg.tagId !== null && pkg.tagId !== undefined ? (
+                <AprilTag id={pkg.tagId} sizePx={APRIL_TAG_SIZE} />
+              ) : (
+                <div style={{ width: APRIL_TAG_SIZE, height: APRIL_TAG_SIZE, color: "#9ca3af", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  Chưa có mã AprilTag
+                </div>
+              )}
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#9ca3af" }}>
+                AprilTag #{pkg.tagId ?? "—"} (2/3)
+              </div>
+              <QRCodeSVG value={qrPayload} size={QR_SIZE} level="M" includeMargin bgColor="#ffffff" fgColor="#1f2937" />
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#9ca3af" }}>
+                QR · mongoId (1/3)
+              </div>
+            </div>
+
+            <p style={{ fontSize: "12px", color: "#9ca3af", textAlign: "center", marginTop: "0.75rem" }}>
+              Tem gồm AprilTag (mã số #{pkg.tagId ?? "—"}) cho robot vision và QR (mongoId) cho máy quét cầm tay.
             </p>
           </div>
+        )}
+      </Modal>
 
-          <p style={{ fontSize: "12px", color: "#9ca3af", textAlign: "center", marginTop: "0.75rem" }}>
-            Mã QR chứa <code style={{ background: "#f3f4f6", padding: "1px 4px", borderRadius: 4 }}>{"{ \"_id\": \"...\" }"}</code>{" "}
-            — dán vào scanner trên robot để nhận diện kiện hàng.
-          </p>
-        </div>
+      {/* Finish confirm modal */}
+      <Modal
+        title={
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
+            <CheckCircleOutlined style={{ color: "var(--success)" }} />
+            Đánh dấu hoàn thành?
+          </div>
+        }
+        open={isFinishConfirmOpen}
+        onCancel={() => setIsFinishConfirmOpen(false)}
+        centered
+        footer={
+          <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+            <Button size="large" onClick={() => setIsFinishConfirmOpen(false)} style={{ borderRadius: 10 }}>
+              Hủy
+            </Button>
+            <Button
+              type="primary"
+              size="large"
+              loading={isPatching}
+              onClick={handleConfirmFinish}
+              style={{ background: "var(--success, #00ffaa)", borderRadius: 10, fontWeight: 600 }}
+            >
+              Xác nhận hoàn thành
+            </Button>
+          </div>
+        }
+      >
+        <p style={{ color: "#4b5563", lineHeight: 1.7 }}>
+          Kiện hàng sẽ chuyển sang trạng thái <strong>Hoàn thành</strong> và mã AprilTag sẽ được giải phóng về pool.
+        </p>
+        {pkg && (
+          <div
+            style={{
+              marginTop: "1rem",
+              padding: "0.75rem 1rem",
+              background: "#f9fafb",
+              borderRadius: 10,
+              border: "1px solid #e5e7eb",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "1rem",
+            }}
+          >
+            <div>
+              <p style={{ fontSize: "13px", color: "#6b7280", marginBottom: "4px" }}>Kiện hàng</p>
+              <strong style={{ color: "#2563eb" }}>{pkg.packageName}</strong>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <p style={{ fontSize: "13px", color: "#6b7280", marginBottom: "4px" }}>Mã AprilTag sẽ giải phóng</p>
+              <strong style={{ fontFamily: "'JetBrains Mono', monospace", color: "#111827" }}>
+                {pkg.tagId === null || pkg.tagId === undefined ? "—" : `#${String(pkg.tagId)}`}
+              </strong>
+            </div>
+          </div>
+        )}
       </Modal>
     </Layout>
     </ConfigProvider>

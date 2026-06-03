@@ -3,6 +3,7 @@ import { getSocket } from "@/lib/socket";
 import type {
   Package,
   PackagePaginatedResponseDto,
+  PackageStatus,
   Shelf,
   ShelfSlot,
   MovePackageDto,
@@ -102,6 +103,21 @@ export const inventoryApi = baseApi.injectEndpoints({
     deletePackage: builder.mutation<void, string>({
       query: (id) => ({ url: `/packages/${id}`, method: "DELETE" }),
       invalidatesTags: (): TagDescription[] => [{ type: "Packages" }],
+    }),
+
+    patchPackageStatus: builder.mutation<
+      Package,
+      { id: string; status: PackageStatus }
+    >({
+      query: ({ id, status }) => ({
+        url: `/packages/${id}/status`,
+        method: "PATCH",
+        body: { status },
+      }),
+      invalidatesTags: (_r, _e, { id }): TagDescription[] => [
+        { type: "Packages" },
+        { type: "Packages", id },
+      ],
     }),
 
     // ─── Shelves ─────────────────────────────────────────────────
@@ -219,6 +235,7 @@ export const {
   useCreatePackageMutation,
   useUpdatePackageMutation,
   useDeletePackageMutation,
+  usePatchPackageStatusMutation,
   useGetShelvesQuery,
   useGetAllSlotsQuery,
   useGetSlotsByShelfQuery,

@@ -46,7 +46,10 @@ This section documents the physical robot and the firmware/software contract tha
 
 #### 2.3. Sensors & Perception
 - **LiDAR:** RPLIDAR A1M8-R6 (12m range, 360°). Connected to Pi 5.
-- **IMU:** BNO055 or MPU6050 — I2C to ESP32. **Required** to stabilize the SLAM yaw (corrects mecanum wheel slip).
+- **IMU:** MCU-055 (BNO055 9DOF Module).
+  - *Connection:* I2C (Address 0x28 or 0x29).
+  - *Feature:* Phần cứng tự tính toán Euler Angles/Quaternions.
+  - *Role:* Cung cấp hướng (Heading) chuẩn cho Robot Manager xử lý SLAM.
 - **IR Sensors:** 4× E18-D80NK (~20cm range). Connected to ESP32 for emergency stop.
 - **Vision:** Logitech BRIO 100 FullHD.
 

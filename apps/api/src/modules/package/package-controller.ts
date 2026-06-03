@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -20,6 +21,7 @@ import { CreatePackageDto } from './dto/create-package.dto';
 import { PackagePaginatedResponseDto } from './dto/package-paginated-response.dto';
 import { PaginatedResponseDto, PaginationQueryDto } from './dto/pagination.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
+import { UpdatePackageStatusDto } from './dto/update-package-status.dto';
 import { PackageService } from './package-service';
 import { Package } from './schemas/package.schema';
 
@@ -70,5 +72,18 @@ export class PackageController {
   @ApiResponse({ status: 404, description: 'Package not found' })
   remove(@Param('id') id: string): Promise<void> {
     return this.packageService.remove(id);
+  }
+
+  @Patch(':id/status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update the status (and tagId allocation) of a package' })
+  @ApiResponse({ status: 200, description: 'Package status updated', type: Package })
+  @ApiResponse({ status: 400, description: 'Invalid status transition or pool exhausted' })
+  @ApiResponse({ status: 404, description: 'Package not found' })
+  updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdatePackageStatusDto,
+  ): Promise<Package> {
+    return this.packageService.changeStatus(id, dto.status);
   }
 }

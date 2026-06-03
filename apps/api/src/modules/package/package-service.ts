@@ -1,4 +1,12 @@
-import { forwardRef,Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  forwardRef,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { EventsGateway } from '../../gateway/events-gateway';
 import { ShelfService } from '../shelf/shelf-service';
@@ -8,10 +16,16 @@ import { UpdatePackageDto } from './dto/update-package.dto';
 import { IPACKAGE_REPOSITORY } from './interfaces/package-repository.interface';
 import { IPackageRepository } from './interfaces/package-repository.interface';
 import { IPackageService } from './interfaces/package-service.interface';
-import { Package } from './schemas/package.schema';
+import { Package, PackageStatus } from './schemas/package.schema';
 
 @Injectable()
 export class PackageService implements IPackageService {
+  private static readonly TAG_ID_MIN = 0;
+  private static readonly TAG_ID_MAX = 586;
+  private static readonly ALLOCATE_RETRIES = 5;
+  private static readonly DUPLICATE_KEY_ERROR_CODE = 11000;
+  private readonly logger = new Logger(PackageService.name);
+
   constructor(
     @Inject(IPACKAGE_REPOSITORY)
     private readonly packageRepository: IPackageRepository,
@@ -21,9 +35,29 @@ export class PackageService implements IPackageService {
   ) {}
 
   async create(dto: CreatePackageDto): Promise<Package> {
-    const created = await this.packageRepository.create(dto);
-    this.eventsGateway.emitPackageCreated(created);
-    return created;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < PackageService.ALLOCATE_RETRIES; attempt++) {
+      const tagId = await this.pickLowestFreeTagId();
+      try {
+        const created = await this.packageRepository.create({
+          ...dto,
+          status: PackageStatus.CREATED,
+          tagId,
+        });
+        this.eventsGateway.emitPackageCreated(created);
+        return created;
+      } catch (err: unknown) {
+        lastError = err;
+        if (!this.isDuplicateKeyError(err)) {
+          throw err;
+        }
+        this.logger.warn(`tagId ${String(tagId)} collision on insert (attempt ${String(attempt + 1)}); retrying.`);
+      }
+    }
+    this.logger.error('Failed to allocate a unique tagId after retries', lastError as Error);
+    throw new ConflictException(
+      'Không thể cấp phát mã AprilTag sau nhiều lần thử. Vui lòng thử lại.',
+    );
   }
 
   async findAll(): Promise<Package[]> {
@@ -63,12 +97,98 @@ export class PackageService implements IPackageService {
   }
 
   async remove(id: string): Promise<void> {
+    const found = await this.findById(id);
+    await this.shelfService.clearSlotByPackageId(found._id);
+    await this.packageRepository.remove(found._id);
+    this.eventsGateway.emitPackageDeleted(found._id);
+  }
+
+  async changeStatus(id: string, nextStatus: PackageStatus): Promise<Package> {
+    const pkg = await this.findById(id);
+    if (pkg.status === nextStatus) {
+      return pkg;
+    }
+
+    let nextTagId: number | null = pkg.tagId;
+    if (nextStatus === PackageStatus.FINISHED) {
+      nextTagId = null;
+    } else if (pkg.status === PackageStatus.FINISHED) {
+      nextTagId = await this.pickLowestFreeTagId();
+    }
+
+    const updated = await this.applyStatusUpdate(pkg._id, nextStatus, nextTagId, pkg.tagId);
+    this.eventsGateway.emitPackageUpdated(updated);
+    return updated;
+  }
+
+  async markFinished(id: string): Promise<Package | null> {
     const found = await this.packageRepository.findById(id);
     if (!found) {
-      throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
+      return null;
     }
-    await this.shelfService.clearSlotByPackageId(id);
-    await this.packageRepository.remove(id);
-    this.eventsGateway.emitPackageDeleted(id);
+    if (found.status === PackageStatus.FINISHED) {
+      return found;
+    }
+
+    const updated = await this.applyStatusUpdate(found._id, PackageStatus.FINISHED, null, found.tagId);
+    this.eventsGateway.emitPackageUpdated(updated);
+    return updated;
+  }
+
+  private async pickLowestFreeTagId(): Promise<number> {
+    for (let attempt = 0; attempt < PackageService.ALLOCATE_RETRIES; attempt++) {
+      const taken = new Set(await this.packageRepository.findAllocatedTagIds());
+      for (let id = PackageService.TAG_ID_MIN; id <= PackageService.TAG_ID_MAX; id++) {
+        if (!taken.has(id)) {
+          return id;
+        }
+      }
+      throw new ConflictException(
+        'Đã hết mã AprilTag khả dụng (0–586). Vui lòng đánh dấu một số kiện hàng là FINISHED để giải phóng mã.',
+      );
+    }
+    throw new ConflictException(
+      'Không thể cấp phát mã AprilTag sau nhiều lần thử. Vui lòng thử lại.',
+    );
+  }
+
+  private async applyStatusUpdate(
+    id: string,
+    status: PackageStatus,
+    tagId: number | null,
+    previousTagId: number | null,
+  ): Promise<Package> {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < PackageService.ALLOCATE_RETRIES; attempt++) {
+      try {
+        const updated = await this.packageRepository.update(id, { status, tagId });
+        if (!updated) {
+          throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
+        }
+        return updated;
+      } catch (err: unknown) {
+        lastError = err;
+        if (!this.isDuplicateKeyError(err) || tagId === null || tagId === previousTagId) {
+          throw err;
+        }
+        this.logger.warn(
+          `tagId ${String(tagId)} collision on status update (attempt ${String(attempt + 1)}); retrying.`,
+        );
+        const retryTagId = await this.pickLowestFreeTagId();
+        tagId = retryTagId;
+      }
+    }
+    this.logger.error('Failed to apply status update after retries', lastError as Error);
+    throw new BadRequestException(
+      'Không thể cập nhật trạng thái package sau nhiều lần thử. Vui lòng thử lại.',
+    );
+  }
+
+  private isDuplicateKeyError(err: unknown): boolean {
+    if (!err || typeof err !== 'object') {
+      return false;
+    }
+    const code = (err as { code?: number }).code;
+    return code === PackageService.DUPLICATE_KEY_ERROR_CODE;
   }
 }

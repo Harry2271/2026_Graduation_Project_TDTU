@@ -1,8 +1,12 @@
 // ─── Backend API types (from swagger.json) ───────────────────────────
 
+export type PackageStatus = 'CREATED' | 'IN_PROGRESS' | 'FINISHED';
+
 export interface Package {
   _id: string;
   packageName: string;
+  status: PackageStatus;
+  tagId: number | null;
   createdAt?: string;
   updatedAt?: string;
 }

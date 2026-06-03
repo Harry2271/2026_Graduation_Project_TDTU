@@ -7,7 +7,12 @@ import { PaginationQueryDto } from './dto/pagination.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
 import { IPACKAGE_REPOSITORY } from './interfaces/package-repository.interface';
 import { IPackageRepository } from './interfaces/package-repository.interface';
-import { Package, PackageDocument } from './schemas/package.schema';
+import { Package, PackageDocument, PackageStatus } from './schemas/package.schema';
+
+export interface CreatePackageInput extends CreatePackageDto {
+  status: PackageStatus;
+  tagId: number | null;
+}
 
 @Injectable()
 export class PackageRepository implements IPackageRepository {
@@ -16,7 +21,7 @@ export class PackageRepository implements IPackageRepository {
     private readonly packageModel: Model<PackageDocument>,
   ) {}
 
-  async create(dto: CreatePackageDto): Promise<Package> {
+  async create(dto: CreatePackageInput): Promise<Package> {
     const created = new this.packageModel(dto);
     return created.save();
   }
@@ -48,6 +53,15 @@ export class PackageRepository implements IPackageRepository {
 
   async remove(id: string): Promise<void> {
     await this.packageModel.findByIdAndDelete(id).exec();
+  }
+
+  async findAllocatedTagIds(): Promise<number[]> {
+    const docs = await this.packageModel
+      .find({ tagId: { $ne: null } }, { tagId: 1, _id: 0 })
+      .lean()
+      .exec();
+
+    return docs.flatMap((doc) => (typeof doc.tagId === 'number' ? [doc.tagId] : []));
   }
 }
 

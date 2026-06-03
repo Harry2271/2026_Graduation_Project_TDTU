@@ -98,9 +98,16 @@ export default function ProductsPage() {
   }, [packages, slots]);
 
   const filteredPackages = useMemo(() => {
-    return packages.filter((pkg) =>
-      pkg.packageName.toLowerCase().includes(searchTerm.toLowerCase()) || pkg._id.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return packages;
+    return packages.filter((pkg) => {
+      if (pkg.packageName.toLowerCase().includes(term)) return true;
+      if (pkg._id.toLowerCase().includes(term)) return true;
+      if (pkg.tagId !== null && pkg.tagId !== undefined && String(pkg.tagId) === term) {
+        return true;
+      }
+      return false;
+    });
   }, [packages, searchTerm]);
 
   const handleAdd = async (values: { packageName: string }) => {
@@ -144,6 +151,41 @@ export default function ProductsPage() {
       render: (name: string) => (
         <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", fontSize: '14px' }}>{name}</span>
       ),
+    },
+    {
+      title: 'Trạng thái',
+      key: 'status',
+      width: 150,
+      render: (_: unknown, record: Package) => {
+        const palette: Record<Package['status'], { bg: string; border: string; text: string; label: string }> = {
+          CREATED: { bg: 'rgba(0,212,255,0.10)', border: 'rgba(0,212,255,0.30)', text: 'var(--accent)', label: 'Đã tạo' },
+          IN_PROGRESS: { bg: 'rgba(255,184,0,0.10)', border: 'rgba(255,184,0,0.30)', text: 'var(--warning)', label: 'Đang xử lý' },
+          FINISHED: { bg: 'rgba(0,255,170,0.08)', border: 'rgba(0,255,170,0.25)', text: 'var(--success)', label: 'Hoàn thành' },
+        };
+        const c = palette[record.status] ?? palette.CREATED;
+        return (
+          <Tag style={{ borderRadius: '8px', background: c.bg, border: `1px solid ${c.border}`, color: c.text, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: '11px' }}>
+            {c.label}
+          </Tag>
+        );
+      },
+    },
+    {
+      title: 'Mã AprilTag',
+      key: 'tagId',
+      width: 140,
+      render: (_: unknown, record: Package) => {
+        if (record.tagId === null || record.tagId === undefined) {
+          return (
+            <span style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>—</span>
+          );
+        }
+        return (
+          <span style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", fontSize: '13px', fontWeight: 700 }}>
+            #{record.tagId}
+          </span>
+        );
+      },
     },
     {
       title: 'Kệ',
@@ -404,7 +446,7 @@ export default function ProductsPage() {
         <div className="mb-5">
           <Input
             size="large"
-            placeholder="Tìm kiếm theo tên kiện hàng..."
+            placeholder="Tìm theo tên, mã AprilTag hoặc _id..."
             prefix={<Search size={18} style={{ color: 'var(--text-muted)' }} />}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
