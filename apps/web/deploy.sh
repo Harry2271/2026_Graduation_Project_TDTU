@@ -33,14 +33,20 @@ export NEXT_TELEMETRY_DISABLED=1
 
 (cd "$APP_DIR" && yarn build)
 
-# With `output: 'standalone'`, Next.js does not copy `public/` or
-# `.next/static` into the standalone output. The standalone server.js looks
+# With `output: 'standalone'`, Next.js does not copy `public/`, `.next/static`,
+# or `.next/server` into the standalone output. The standalone server.js looks
 # for them inside `.next/standalone/apps/web/...`. Without these copies the
-# page renders but every static asset (and the favicon) returns 404, which
-# cascades into a 500.
-echo "[3b/4] 📦 Copying static assets and public/ into the standalone output..."
+# page renders but every static asset (and the favicon) returns 404, and the
+# server crashes with MODULE_NOT_FOUND for middleware-manifest.json / app
+# manifests, which cascades into a 500.
+echo "[3b/4] 📦 Copying static assets, server manifests, and public/ into the standalone output..."
 mkdir -p "$APP_DIR/.next/standalone/apps/web/.next/static"
 cp -r "$APP_DIR/.next/static/." "$APP_DIR/.next/standalone/apps/web/.next/static/"
+# .next/server contains middleware-manifest.json + App Router / Pages Router
+# manifests the server reads at runtime. Standalone output excludes it by
+# default — must be copied or the server returns 500 on every request.
+mkdir -p "$APP_DIR/.next/standalone/apps/web/.next/server"
+cp -r "$APP_DIR/.next/server/." "$APP_DIR/.next/standalone/apps/web/.next/server/"
 if [ -d "$APP_DIR/public" ]; then
     mkdir -p "$APP_DIR/.next/standalone/apps/web/public"
     cp -r "$APP_DIR/public/." "$APP_DIR/.next/standalone/apps/web/public/"
