@@ -50,6 +50,7 @@ MONGO_URI=${MONGO_URI}
 ENVEOF
 
 echo "[5/5] Restarting with PM2..."
+mkdir -p /home/pi/.pm2/logs
 pm2 stop    "$SERVICE_NAME" 2>/dev/null || true
 pm2 delete  "$SERVICE_NAME" 2>/dev/null || true
 pm2 start   ecosystem.json --env production
