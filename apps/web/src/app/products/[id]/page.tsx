@@ -74,21 +74,21 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
         alignItems: "baseline",
         gap: "0.5rem",
         padding: "10px 0",
-        borderBottom: "1px solid #f3f4f6",
+        borderBottom: "1px solid var(--border-dim)",
       }}
     >
       <span
         style={{
           minWidth: 140,
           fontSize: "13px",
-          color: "#9ca3af",
+          color: "var(--text-muted)",
           fontWeight: 500,
           flexShrink: 0,
         }}
       >
         {label}
       </span>
-      <span style={{ fontSize: "14px", color: "#374151", fontWeight: 600, wordBreak: "break-word" }}>
+      <span style={{ fontSize: "14px", color: "var(--text-primary)", fontWeight: 600, wordBreak: "break-word" }}>
         {value}
       </span>
     </div>
@@ -271,7 +271,7 @@ export default function ProductDetailPage({
     },
   }}
     >
-      <Layout style={{ minHeight: "100vh", background: "#f0f2f5" }}>
+      <Layout style={{ minHeight: "100vh", background: "var(--bg-void)" }}>
       <Content
         style={{
           display: "flex",
@@ -285,14 +285,19 @@ export default function ProductDetailPage({
             type="link"
             icon={<ArrowLeftOutlined />}
             onClick={() => router.back()}
-            style={{ marginBottom: "1rem", paddingLeft: 0, fontSize: "15px", color: "#6b7280" }}
+            style={{ marginBottom: "1rem", paddingLeft: 0, fontSize: "15px", color: "var(--text-secondary)" }}
           >
             Quay lại danh sách
           </Button>
 
           <Card
             variant="borderless"
-            style={{ borderRadius: 16, boxShadow: "0 4px 12px rgba(0,0,0,0.06)" }}
+            style={{
+              borderRadius: 16,
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-dim)",
+              boxShadow: "0 4px 24px rgba(0,0,0,0.3)",
+            }}
           >
             {isLoading && <Skeleton active paragraph={{ rows: 8 }} />}
 
@@ -321,14 +326,15 @@ export default function ProductDetailPage({
                         width: 56,
                         height: 56,
                         borderRadius: 14,
-                        background: "#eff6ff",
+                        background: "var(--accent-dim)",
+                        border: "1px solid var(--accent-border)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
                         flexShrink: 0,
                       }}
                     >
-                      <PackageIcon size={28} style={{ color: "#2563eb" }} />
+                      <PackageIcon size={28} style={{ color: "var(--accent)" }} />
                     </div>
                     <h2
                       style={{
@@ -336,7 +342,9 @@ export default function ProductDetailPage({
                         fontWeight: 800,
                         fontSize: "1.4rem",
                         lineHeight: 1.3,
-                        color: "#111827",
+                        color: "var(--text-primary)",
+                        fontFamily: "'JetBrains Mono', monospace",
+                        letterSpacing: "-0.02em",
                       }}
                     >
                       {pkg.packageName}
@@ -360,14 +368,14 @@ export default function ProductDetailPage({
                       icon={<QrCode size={14} />}
                       onClick={handlePrint}
                       disabled={pkg.tagId === null || pkg.tagId === undefined}
-                      style={{ background: "#2563eb", borderRadius: 8, display: "flex", alignItems: "center", gap: "4px" }}
+                      style={{ background: "var(--accent)", color: "#080b10", borderRadius: 8, fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}
                     >
                       In tem
                     </Button>
                   </div>
                 </div>
 
-                <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: "0.5rem" }}>
+                <div style={{ borderTop: "1px solid var(--border-dim)", paddingTop: "0.5rem" }}>
                   <InfoRow
                     label="Tên kiện hàng:"
                     value={<span style={{ fontWeight: 700 }}>{pkg.packageName}</span>}
@@ -377,9 +385,9 @@ export default function ProductDetailPage({
                     label="Mã AprilTag:"
                     value={
                       pkg.tagId === null || pkg.tagId === undefined ? (
-                        <span style={{ color: "#9ca3af" }}>—</span>
+                        <span style={{ color: "var(--text-muted)" }}>—</span>
                       ) : (
-                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
+                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "var(--accent)" }}>
                           #{pkg.tagId}
                         </span>
                       )
@@ -414,8 +422,8 @@ export default function ProductDetailPage({
                 {/* QR Preview */}
                 <Card
                   style={{
-                    background: "#fafafa",
-                    border: "1px dashed #d1d5db",
+                    background: "var(--bg-raised)",
+                    border: "1px dashed var(--border-mid)",
                     borderRadius: 12,
                     marginTop: "1.5rem",
                   }}
@@ -424,11 +432,12 @@ export default function ProductDetailPage({
                   <p
                     style={{
                       fontSize: "12px",
-                      color: "#9ca3af",
+                      color: "var(--text-muted)",
                       marginBottom: "0.75rem",
                       fontWeight: 600,
                       textTransform: "uppercase",
                       letterSpacing: "0.05em",
+                      fontFamily: "'JetBrains Mono', monospace",
                     }}
                   >
                     Mã QR — dữ liệu bên trong
@@ -436,20 +445,21 @@ export default function ProductDetailPage({
                   <code
                     style={{
                       display: "block",
-                      background: "#1f2937",
-                      color: "#10b981",
+                      background: "var(--bg-void)",
+                      color: "var(--success)",
                       padding: "8px 14px",
                       borderRadius: 8,
                       fontSize: "12px",
-                      fontFamily: "monospace",
+                      fontFamily: "'JetBrains Mono', monospace",
                       wordBreak: "break-all",
                       marginBottom: "0.75rem",
+                      border: "1px solid var(--border-dim)",
                     }}
                   >
                     {qrPayload}
                   </code>
                   <Tooltip title="Quét mã QR này bằng thiết bị cầm tay để nhận diện kiện hàng">
-                    <p style={{ fontSize: "12px", color: "#9ca3af", margin: 0 }}>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>
                       Quét mã QR này để nhận diện kiện hàng
                     </p>
                   </Tooltip>
@@ -469,8 +479,8 @@ export default function ProductDetailPage({
       {isEditModalOpen && (
         <Modal
           title={
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
-              <Edit3 size={18} style={{ color: "#2563eb" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "'JetBrains Mono', monospace" }}>
+              <Edit3 size={18} style={{ color: "var(--accent)" }} />
               Sửa kiện hàng
             </div>
           }
@@ -512,7 +522,7 @@ export default function ProductDetailPage({
                 type="primary"
                 size="large"
                 onClick={handleConfirm}
-                style={{ background: "#2563eb", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}
+                style={{ background: "var(--accent)", color: "#080b10", borderRadius: 10, fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" }}
               >
                 <SaveOutlined /> Lưu thay đổi
               </Button>
@@ -523,7 +533,7 @@ export default function ProductDetailPage({
 
       {/* Confirm Modal */}
       <Modal
-        title={<span style={{ fontWeight: 700, color: "#1f2937" }}>Xác nhận cập nhật kiện hàng?</span>}
+        title={<span style={{ fontWeight: 700, color: "var(--text-primary)", fontFamily: "'JetBrains Mono', monospace" }}>Xác nhận cập nhật kiện hàng?</span>}
         open={isConfirmOpen}
         onCancel={() => setIsConfirmOpen(false)}
         centered
@@ -537,33 +547,33 @@ export default function ProductDetailPage({
               size="large"
               loading={isUpdating}
               onClick={handleUpdate}
-              style={{ background: "#2563eb", borderRadius: 10, fontWeight: 600 }}
+              style={{ background: "var(--accent)", color: "#080b10", borderRadius: 10, fontWeight: 700 }}
             >
               Xác nhận cập nhật
             </Button>
           </div>
         }
       >
-        <p style={{ color: "#4b5563", lineHeight: 1.7 }}>Bạn có chắc chắn muốn cập nhật kiện hàng này?</p>
+        <p style={{ color: "var(--text-secondary)", lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace" }}>Bạn có chắc chắn muốn cập nhật kiện hàng này?</p>
         <div
           style={{
             marginTop: "1rem",
             padding: "0.75rem 1rem",
-            background: "#f9fafb",
+            background: "var(--bg-raised)",
             borderRadius: 10,
-            border: "1px solid #e5e7eb",
+            border: "1px solid var(--border-dim)",
           }}
         >
-          <p style={{ fontSize: "13px", color: "#6b7280", marginBottom: "4px" }}>Tên kiện hàng mới:</p>
-          <strong style={{ color: "#2563eb" }}>{pendingName}</strong>
+          <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "4px", fontFamily: "'JetBrains Mono', monospace" }}>Tên kiện hàng mới:</p>
+          <strong style={{ color: "var(--accent)" }}>{pendingName}</strong>
         </div>
       </Modal>
 
       {/* Print Modal */}
       <Modal
         title={
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
-            <PrinterOutlined style={{ color: "#2563eb" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "'JetBrains Mono', monospace" }}>
+            <PrinterOutlined style={{ color: "var(--accent)" }} />
             In tem kiện hàng
           </div>
         }
@@ -582,7 +592,7 @@ export default function ProductDetailPage({
               icon={<PrinterOutlined />}
               onClick={executePrint}
               disabled={pkg?.tagId === null || pkg?.tagId === undefined}
-              style={{ background: "#2563eb", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}
+              style={{ background: "var(--accent)", color: "#080b10", borderRadius: 10, fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" }}
             >
               In tem
             </Button>
@@ -594,11 +604,12 @@ export default function ProductDetailPage({
             <p
               style={{
                 fontSize: "13px",
-                color: "#6b7280",
-                fontWeight: 600,
+                color: "var(--text-primary)",
+                fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
                 marginBottom: "0.5rem",
+                fontFamily: "'JetBrains Mono', monospace",
               }}
             >
               {pkg.packageName}
@@ -608,7 +619,7 @@ export default function ProductDetailPage({
               style={{
                 width: LABEL_SIZE,
                 height: LABEL_SIZE,
-                border: "2px dashed #d1d5db",
+                border: "2px dashed var(--border-mid)",
                 borderRadius: 16,
                 background: "#fff",
                 display: "flex",
@@ -636,7 +647,7 @@ export default function ProductDetailPage({
               </div>
             </div>
 
-            <p style={{ fontSize: "12px", color: "#9ca3af", textAlign: "center", marginTop: "0.75rem" }}>
+            <p style={{ fontSize: "12px", color: "var(--text-muted)", textAlign: "center", marginTop: "0.75rem", fontFamily: "'JetBrains Mono', monospace" }}>
               Tem gồm AprilTag (mã số #{pkg.tagId ?? "—"}) cho robot vision và QR (mongoId) cho máy quét cầm tay.
             </p>
           </div>
@@ -646,7 +657,7 @@ export default function ProductDetailPage({
       {/* Finish confirm modal */}
       <Modal
         title={
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "'JetBrains Mono', monospace" }}>
             <CheckCircleOutlined style={{ color: "var(--success)" }} />
             Đánh dấu hoàn thành?
           </div>
@@ -664,24 +675,24 @@ export default function ProductDetailPage({
               size="large"
               loading={isPatching}
               onClick={handleConfirmFinish}
-              style={{ background: "var(--success, #00ffaa)", borderRadius: 10, fontWeight: 600 }}
+              style={{ background: "var(--success)", color: "#080b10", borderRadius: 10, fontWeight: 700 }}
             >
               Xác nhận hoàn thành
             </Button>
           </div>
         }
       >
-        <p style={{ color: "#4b5563", lineHeight: 1.7 }}>
-          Kiện hàng sẽ chuyển sang trạng thái <strong>Hoàn thành</strong> và mã AprilTag sẽ được giải phóng về pool.
+        <p style={{ color: "var(--text-secondary)", lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace" }}>
+          Kiện hàng sẽ chuyển sang trạng thái <strong style={{ color: "var(--success)" }}>Hoàn thành</strong> và mã AprilTag sẽ được giải phóng về pool.
         </p>
         {pkg && (
           <div
             style={{
               marginTop: "1rem",
               padding: "0.75rem 1rem",
-              background: "#f9fafb",
+              background: "var(--bg-raised)",
               borderRadius: 10,
-              border: "1px solid #e5e7eb",
+              border: "1px solid var(--border-dim)",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
@@ -689,12 +700,12 @@ export default function ProductDetailPage({
             }}
           >
             <div>
-              <p style={{ fontSize: "13px", color: "#6b7280", marginBottom: "4px" }}>Kiện hàng</p>
-              <strong style={{ color: "#2563eb" }}>{pkg.packageName}</strong>
+              <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "4px", fontFamily: "'JetBrains Mono', monospace" }}>Kiện hàng</p>
+              <strong style={{ color: "var(--accent)" }}>{pkg.packageName}</strong>
             </div>
             <div style={{ textAlign: "right" }}>
-              <p style={{ fontSize: "13px", color: "#6b7280", marginBottom: "4px" }}>Mã AprilTag sẽ giải phóng</p>
-              <strong style={{ fontFamily: "'JetBrains Mono', monospace", color: "#111827" }}>
+              <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "4px", fontFamily: "'JetBrains Mono', monospace" }}>Mã AprilTag sẽ giải phóng</p>
+              <strong style={{ fontFamily: "'JetBrains Mono', monospace", color: "var(--text-primary)" }}>
                 {pkg.tagId === null || pkg.tagId === undefined ? "—" : `#${String(pkg.tagId)}`}
               </strong>
             </div>
