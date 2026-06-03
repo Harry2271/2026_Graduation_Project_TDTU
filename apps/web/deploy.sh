@@ -33,6 +33,31 @@ export NEXT_TELEMETRY_DISABLED=1
 
 (cd "$APP_DIR" && yarn build)
 
+# With `output: 'standalone'`, Next.js does not copy `public/` or
+# `.next/static` into the standalone output. The standalone server.js looks
+# for them inside `.next/standalone/apps/web/...`. Without these copies the
+# page renders but every static asset (and the favicon) returns 404, which
+# cascades into a 500.
+echo "[3b/4] 📦 Copying static assets and public/ into the standalone output..."
+mkdir -p "$APP_DIR/.next/standalone/apps/web/.next/static"
+cp -r "$APP_DIR/.next/static/." "$APP_DIR/.next/standalone/apps/web/.next/static/"
+if [ -d "$APP_DIR/public" ]; then
+    mkdir -p "$APP_DIR/.next/standalone/apps/web/public"
+    cp -r "$APP_DIR/public/." "$APP_DIR/.next/standalone/apps/web/public/"
+fi
+
+# Sanity-check the build before launching PM2. A missing middleware-manifest
+# means `next build` failed silently — better to abort the deploy than start
+# a half-broken server.
+if [ ! -f "$APP_DIR/.next/server/middleware-manifest.json" ]; then
+    echo "❌ Build looks incomplete: $APP_DIR/.next/server/middleware-manifest.json is missing."
+    exit 1
+fi
+if [ ! -f "$APP_DIR/.next/standalone/apps/web/server.js" ]; then
+    echo "❌ Standalone build is missing: $APP_DIR/.next/standalone/apps/web/server.js"
+    exit 1
+fi
+
 echo "[4/4] 🔄 Restarting PM2..."
 mkdir -p /home/pi/.pm2/logs
 
@@ -41,7 +66,8 @@ pm2 delete "$SERVICE_NAME" 2>/dev/null || true
 if [ -f "$APP_DIR/ecosystem.json" ]; then
     (cd "$APP_DIR" && pm2 start ecosystem.json)
 else
-    pm2 start yarn --name "$SERVICE_NAME" --interpreter bash -- start -p ${PORT:-3000}
+    # Fallback: run the standalone server directly.
+    PORT="${PORT:-3000}" pm2 start "$APP_DIR/.next/standalone/apps/web/server.js" --name "$SERVICE_NAME"
 fi
 
 pm2 save
