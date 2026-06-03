@@ -237,6 +237,7 @@ The per-app dev workflow hasn't changed — `yarn start:dev` in `apps/api/`, `ya
 | `apps/web/src/...` | `detect` + `deploy-web` |
 | `services/robot/src/...` | `detect` + `deploy-robot` |
 | `tools/deploy/...` | `detect` + all 3 deploy jobs |
+| `.github/workflows/deploy.yml` | `detect` + all 3 deploy jobs (so workflow edits get tested) |
 | `apps/mobile/...` | `detect` only (no deploy job gated on it) |
 | `apps/web/.env` | `detect` only (env files are gitignored, this is illustrative) |
 

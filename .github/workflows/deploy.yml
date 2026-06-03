@@ -12,8 +12,10 @@
 #   web  → apps/web/**
 #   robot → services/robot/**
 #
-# A change to `tools/deploy/**` (shared manual SSH toolkit) re-runs all
-# three deploy jobs because all three depend on those scripts being intact.
+# A change to `tools/deploy/**` (shared manual SSH toolkit) or to this workflow
+# file itself re-runs all three deploy jobs — the former because all three
+# depend on those scripts being intact, the latter so workflow edits actually
+# get tested. Use `workflow_dispatch` for ad-hoc redeploys.
 # =============================================================================
 
 name: Deploy
@@ -50,12 +52,15 @@ jobs:
             api:
               - 'apps/api/**'
               - 'tools/deploy/**'
+              - '.github/workflows/deploy.yml'
             web:
               - 'apps/web/**'
               - 'tools/deploy/**'
+              - '.github/workflows/deploy.yml'
             robot:
               - 'services/robot/**'
               - 'tools/deploy/**'
+              - '.github/workflows/deploy.yml'
             tools:
               - 'tools/deploy/**'
 
