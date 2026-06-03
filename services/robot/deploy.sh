@@ -46,15 +46,34 @@ source "$ROS_WS/install/setup.bash"
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."
 
+# The sllidar_ros2 driver is built into its own workspace by install-pi.sh at
+# /opt/ros/sllidar_ros2/install. It is NOT part of the robot_ws colcon build.
+# Without sourcing that setup, `ros2 launch sllidar_ros2 ...` fails with
+# `Package 'sllidar_ros2' not found` and PM2 spins the launch wrapper in a
+# crash loop while reporting the process as 'online' (because the launch
+# wrapper itself stays alive long enough to be registered).
+SLLIDAR_SETUP="/opt/ros/sllidar_ros2/install/setup.bash"
+if [ ! -f "$SLLIDAR_SETUP" ]; then
+    echo "❌ sllidar_ros2 workspace is missing at $SLLIDAR_SETUP."
+    echo "   Run install-pi.sh first, or manually install the Slamtec driver."
+    exit 1
+fi
+
 start_ros_node() {
     local name=$1
     local command=$2
+    # Optional 4th arg: extra setup file to source (used for sllidar_ros2).
+    local extra_setup=${3:-}
     pm2 delete "$name" 2>/dev/null || true
-    pm2 start "bash" --name "$name" -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $command"
+    if [ -n "$extra_setup" ]; then
+        pm2 start "bash" --name "$name" -- -c "source /opt/ros/jazzy/setup.bash && source $extra_setup && source $ROS_WS/install/setup.bash && $command"
+    else
+        pm2 start "bash" --name "$name" -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $command"
+    fi
 }
 
 # 1. Lidar & SLAM
-start_ros_node "${SERVICE_NAME_PREFIX}-lidar" "ros2 launch sllidar_ros2 sllidar_a1_launch.py serial_port:=$LIDAR_PORT"
+start_ros_node "${SERVICE_NAME_PREFIX}-lidar" "ros2 launch sllidar_ros2 sllidar_a1_launch.py serial_port:=$LIDAR_PORT" "$SLLIDAR_SETUP"
 start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller slam_only_launch.py"
 
 # 2. Logic Nodes (brain_node removed — slam_toolbox handles odometry)
