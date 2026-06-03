@@ -72,6 +72,7 @@ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME
         ros-jazzy-nav-msgs \
         ros-jazzy-geometry2 \
         ros-jazzy-slam-toolbox \
+        ros-jazzy-rplidar-ros2 \
         python3-colcon-common-extensions \
         python3-pip \
         python3-venv
@@ -85,20 +86,19 @@ fi
 # Source ROS 2 for this session
 source /opt/ros/jazzy/setup.bash
 
-# ---- SLLidar ROS 2 driver --------------------------------------------------
-echo "[EXTRA] Installing SLLidar ROS 2 driver..."
-SLLIDAR_WS="/opt/ros/sllidar_ros2"
-if [ -d "$SLLIDAR_WS/src/sllidar_ros2" ]; then
-    echo "  SLLidar driver already cloned — skipping"
+# ---- RPLidar ROS 2 driver (apt) -------------------------------------------
+# The Slamtec RPLidar A1M8 is supported by `ros-jazzy-rplidar-ros2`, which is
+# maintained by the ROS 2 distribution and ships with a working ament_index.
+# We previously built Slamtec's `sllidar_ros2` from source into a separate
+# workspace at /opt/ros/sllidar_ros2, but that install's ament_index is
+# inconsistently populated on first boot, causing
+# `Package 'sllidar_ros2' not found` at PM2 launch. The apt package avoids
+# that whole class of issue.
+echo "[EXTRA] RPLidar ROS 2 driver (apt)..."
+if dpkg -s ros-jazzy-rplidar-ros2 >/dev/null 2>&1; then
+    echo "  ros-jazzy-rplidar-ros2 already installed — skipping"
 else
-    mkdir -p "$SLLIDAR_WS/src"
-    git clone https://github.com/Slamtec/sllidar_ros2.git "$SLLIDAR_WS/src/sllidar_ros2"
-    cd "$SLLIDAR_WS"
-    source /opt/ros/jazzy/setup.bash
-    colcon build --merge-install --executor sequential
-    if ! grep -q "sllidar_ros2/setup.bash" /root/.bashrc; then
-        echo "source $SLLIDAR_WS/install/setup.bash" >> /root/.bashrc
-    fi
+    apt-get install -y ros-jazzy-rplidar-ros2
 fi
 
 # ---- Python deps ------------------------------------------------------------

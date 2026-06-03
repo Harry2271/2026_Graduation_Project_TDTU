@@ -1,55 +1,41 @@
-"""Lidar-only launch — used by the hot-plug monitor in entrypoint.sh."""
-import os
+"""Lidar-only launch — used by the hot-plug monitor in entrypoint.sh.
+
+Wraps the apt-installed `ros-jazzy-rplidar-ros2` driver (which supports the
+Slamtec RPLidar A1M8 out of the box). The driver lives in the system ROS 2
+prefix at /opt/ros/jazzy, so the wrapper just `IncludeLaunchDescription`s
+its `view_rplidar_a1_launch.py`.
+"""
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import SetParameter
+from launch.substitutions import LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
     serial_port_arg = DeclareLaunchArgument(
         'serial_port', default_value='/dev/ttyUSB0',
-        description='USB port for Slamtec SLLidar')
-    lidar_model_arg = DeclareLaunchArgument(
-        'lidar_model', default_value='a1',
-        description='Lidar model (a1, a2m8, a3, etc.)')
+        description='USB port for Slamtec RPLidar A1M8')
+    serial_baudrate_arg = DeclareLaunchArgument(
+        'serial_baudrate', default_value='115200',
+        description='Serial baud rate (A1M8 standard: 115200; the Slamtec SDK '
+                    'flashes 256000 via rplidar_ros2 param below if needed)')
 
     serial_port = LaunchConfiguration('serial_port')
-    lidar_model = LaunchConfiguration('lidar_model')
+    serial_baudrate = LaunchConfiguration('serial_baudrate')
 
-    sllidar_pkg = FindPackageShare('sllidar_ros2').find('sllidar_ros2')
-
-    # Build the launch file path using PythonExpression —
-    # this is the exact same pattern that works in the original mapping_launch.py.
-    # PythonExpression evaluates the concatenated string at launch time (after
-    # substitutions are resolved), producing: /path/to/sllidar_ros2/launch/sllidar_a1_launch.py
-    launch_file = PythonExpression([
-        "'" + sllidar_pkg + "/launch/sllidar_' + '",
-        lidar_model,
-        "' + '_launch.py'"
-    ])
-
-    scan_frequency_arg = DeclareLaunchArgument(
-        'scan_frequency', default_value='10',
-        description='Lidar scan frequency in Hz')
-    scan_frequency = LaunchConfiguration('scan_frequency')
+    rplidar_share = FindPackageShare('rplidar_ros2').find('rplidar_ros2')
+    rplidar_launch = f'{rplidar_share}/launch/view_rplidar_a1_launch.py'
 
     return LaunchDescription([
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
         serial_port_arg,
-        lidar_model_arg,
-        scan_frequency_arg,
-        # Pass serial_baudrate as launch argument — the Slamtec driver reads it from
-        # there, not from SetParameter (SetParameter targets the parent launch node,
-        # not the driver node created inside the included launch file).
+        serial_baudrate_arg,
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(launch_file),
+            PythonLaunchDescriptionSource(rplidar_launch),
             launch_arguments={
                 'serial_port': serial_port,
-                'serial_baudrate': '256000',   # A1M8 requires 256000 baud
-                'scan_frequency': scan_frequency,
-                'scan_mode': 'Sensitivity',
+                'serial_baudrate': serial_baudrate,
+                'frame_id': 'laser',
             }.items()),
     ])

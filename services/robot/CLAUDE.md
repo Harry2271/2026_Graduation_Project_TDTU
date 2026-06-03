@@ -12,7 +12,7 @@
    +-- Lidar  -->  /scan  (LaserScan ~12 Hz)
    |
    v
-[sllidar_ros2 driver]  <-- lidar_only_launch.py
+[rplidar_ros2 driver]  <-- lidar_only_launch.py
    |
    +-- /scan  -->  [slam_toolbox]  -->  TF (map→odom→base_footprint)
    |                                    /map (OccupancyGrid)
@@ -29,21 +29,10 @@
 ```
 
 **ROS 2 nodes (managed by PM2 via deploy.sh):**
-1. `sllidar_ros2` — SLLidar driver, publishes `/scan`
+1. `rplidar_ros2` — RPLidar driver (apt package `ros-jazzy-rplidar-ros2`), publishes `/scan`
 2. `slam_toolbox` (online_async) — scan-matching, TF, map building
 3. `my_robot_controller/map_manager` — state machine, obstacle awareness zone
 4. `my_robot_controller/web_bridge` — WebSocket server on port 9091
-
-**No custom odometry node** — slam_toolbox handles all scan-matching, TF publishing (`map→odom→base_footprint`), and occupancy grid generation.
-
----
-
-## Data Flow
-
-```
-sllidar_ros2 → /scan ──┬──→ slam_toolbox → TF + /map
-                        ├──→ map_manager  → /map_combined + /obstacle_layer
-                        └──→ web_bridge   → ws://0.0.0.0:9091
                                                 ↓
                                               Browser
 ```
@@ -220,7 +209,7 @@ ws.send(JSON.stringify({ type: 'cmd', command: 'reset' }));
 
 | Source | Topic | Message Type | Frequency | WebSocket field |
 |---|---|---|---|---|
-| sllidar driver | `/scan` | LaserScan | ~12 Hz | `scan.points[]` (throttled to 5 Hz) |
+| rplidar driver (`ros-jazzy-rplidar-ros2`) | `/scan` | LaserScan | ~10 Hz | `scan.points[]` (throttled to 5 Hz) |
 | slam_toolbox | `/map` | OccupancyGrid | dynamic | relayed as `map_layer.*` via map_manager |
 | map_manager | `/obstacle_layer` | OccupancyGrid | one-shot | `obstacle_layer.*` |
 | slam_toolbox | TF (`map→base_footprint`) | TransformStamped | ~10 Hz | `pose.*` (via web_bridge TF lookup) |
