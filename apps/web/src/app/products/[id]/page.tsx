@@ -273,10 +273,10 @@ export default function ProductDetailPage({
     >
       <Layout style={{ minHeight: "100vh", background: "var(--bg-void)" }}>
       <Content
+        className="p-4! md:p-8!"
         style={{
           display: "flex",
           justifyContent: "center",
-          padding: "2rem",
         }}
       >
         <div style={{ maxWidth: 640, width: "100%" }}>
@@ -311,12 +311,8 @@ export default function ProductDetailPage({
               <>
                 {/* Header */}
                 <div
+                  className="flex flex-col md:flex-row md:items-center md:justify-between flex-wrap gap-3 md:gap-4"
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    flexWrap: "wrap",
-                    gap: "1rem",
                     marginBottom: "1.5rem",
                   }}
                 >
@@ -351,14 +347,15 @@ export default function ProductDetailPage({
                     </h2>
                   </div>
 
-                  <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0, flexWrap: "wrap" }}>
-                    <Button icon={<Edit3 size={14} />} onClick={handleOpenEdit} style={{ borderRadius: 8 }}>
+                  <div className="flex flex-col md:flex-row gap-2 w-full md:w-auto">
+                    <Button icon={<Edit3 size={14} />} onClick={handleOpenEdit} className="w-full md:w-auto" style={{ borderRadius: 8 }}>
                       Sửa tên
                     </Button>
                     <Button
                       icon={<CheckCircleOutlined />}
                       onClick={handleFinishClick}
                       disabled={pkg.status === "FINISHED"}
+                      className="w-full md:w-auto"
                       style={{ borderRadius: 8 }}
                     >
                       Hoàn thành
@@ -368,6 +365,7 @@ export default function ProductDetailPage({
                       icon={<QrCode size={14} />}
                       onClick={handlePrint}
                       disabled={pkg.tagId === null || pkg.tagId === undefined}
+                      className="w-full md:w-auto"
                       style={{ background: "var(--accent)", color: "#080b10", borderRadius: 8, fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}
                     >
                       In tem
@@ -421,6 +419,7 @@ export default function ProductDetailPage({
 
                 {/* QR Preview */}
                 <Card
+                  className="w-full"
                   style={{
                     background: "var(--bg-raised)",
                     border: "1px dashed var(--border-mid)",
@@ -491,6 +490,8 @@ export default function ProductDetailPage({
           }}
           footer={null}
           centered
+          width="calc(100vw - 32px)"
+          style={{ maxWidth: 720, top: 16 }}
         >
           <Form
             form={editForm}
@@ -537,6 +538,8 @@ export default function ProductDetailPage({
         open={isConfirmOpen}
         onCancel={() => setIsConfirmOpen(false)}
         centered
+        width="calc(100vw - 32px)"
+        style={{ maxWidth: 720, top: 16 }}
         footer={
           <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
             <Button size="large" onClick={() => setIsConfirmOpen(false)} style={{ borderRadius: 10 }}>
@@ -580,7 +583,8 @@ export default function ProductDetailPage({
         open={isPrintModalOpen}
         onCancel={() => setIsPrintModalOpen(false)}
         centered
-        width={420}
+        width="calc(100vw - 32px)"
+        style={{ maxWidth: 720, top: 16 }}
         footer={
           <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
             <Button size="large" onClick={() => setIsPrintModalOpen(false)} style={{ borderRadius: 10 }}>
@@ -665,6 +669,8 @@ export default function ProductDetailPage({
         open={isFinishConfirmOpen}
         onCancel={() => setIsFinishConfirmOpen(false)}
         centered
+        width="calc(100vw - 32px)"
+        style={{ maxWidth: 720, top: 16 }}
         footer={
           <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
             <Button size="large" onClick={() => setIsFinishConfirmOpen(false)} style={{ borderRadius: 10 }}>
