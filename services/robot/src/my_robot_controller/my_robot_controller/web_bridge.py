@@ -184,12 +184,13 @@ class WebBridge(Node):
 
     def _on_mapping_status(self, msg: String) -> None:
         raw = msg.data
-        for ros_state, label in STATE_LABELS.items():
-            if ros_state in raw.upper():
-                new_mode = label
-                break
-        else:
-            new_mode = 'idle'
+        # Status strings are formatted as "STATE_NAME: <description>" by
+        # map_manager_node._publish_status. Parse the underscored state name
+        # from the prefix (substring match on the raw string used to break on
+        # the colon, e.g. "MAPPING_IDLE" never appeared inside
+        # "MAPPING: waiting...").
+        prefix = raw.split(':', 1)[0].strip().upper()
+        new_mode = STATE_LABELS.get(prefix, 'idle')
 
         if new_mode != self.mode:
             self.mode = new_mode

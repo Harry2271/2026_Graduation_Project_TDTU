@@ -437,11 +437,15 @@ class MapManager(Node):
         self.obstacle_pub.publish(msg)
 
     def _publish_status(self) -> None:
+        # Status strings are formatted as "STATE_NAME: <description>" so
+        # web_bridge.py can parse the state from the prefix (the underscored
+        # form is unambiguous, the bare "MAPPING" was ambiguous between
+        # MAPPING_IDLE / MAPPING_ACTIVE / SCAN_OBSTACLE).
         labels = {
             STATE_IDLE:           'IDLE: waiting',
-            STATE_MAPPING_IDLE:   'MAPPING: waiting for movement...',
-            STATE_MAPPING_ACTIVE: 'MAPPING: recording...',
-            STATE_SCAN_OBSTACLE:  'MAPPING: scanning obstacles...',
+            STATE_MAPPING_IDLE:   'MAPPING_IDLE: waiting for movement...',
+            STATE_MAPPING_ACTIVE: 'MAPPING_ACTIVE: recording...',
+            STATE_SCAN_OBSTACLE:  'SCAN_OBSTACLE: scanning obstacles...',
             STATE_LIVE:           'LIVE: localizing',
         }
         self.status_pub.publish(String(data=labels.get(self.state, 'IDLE: unknown')))
