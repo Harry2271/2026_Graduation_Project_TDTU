@@ -86,20 +86,12 @@ fi
 # Source ROS 2 for this session
 source /opt/ros/jazzy/setup.bash
 
-# ---- RPLidar ROS 2 driver (apt) -------------------------------------------
-# The Slamtec RPLidar A1M8 is supported by `ros-jazzy-rplidar-ros2`, which is
-# maintained by the ROS 2 distribution and ships with a working ament_index.
-# We previously built Slamtec's `sllidar_ros2` from source into a separate
-# workspace at /opt/ros/sllidar_ros2, but that install's ament_index is
-# inconsistently populated on first boot, causing
-# `Package 'sllidar_ros2' not found` at PM2 launch. The apt package avoids
-# that whole class of issue.
-echo "[EXTRA] RPLidar ROS 2 driver (apt)..."
-if dpkg -s ros-jazzy-rplidar-ros2 >/dev/null 2>&1; then
-    echo "  ros-jazzy-rplidar-ros2 already installed — skipping"
-else
-    apt-get install -y ros-jazzy-rplidar-ros2
-fi
+# ---- RPLidar ROS 2 driver (built from source by deploy.sh) ----------------
+# `ros-jazzy-rplidar-ros2` is NOT in the Pi's Jazzy apt repos. Slamtec's
+# official `rplidar_ros2` source is cloned and built into the colcon workspace
+# at deploy time (see services/robot/deploy.sh), so no apt step is required
+# here. We previously tried `sllidar_ros2` from source, but its ament_index
+# was inconsistently populated, breaking PM2 launch.
 
 # ---- Python deps ------------------------------------------------------------
 echo "[EXTRA] Installing Python packages..."

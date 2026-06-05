@@ -1,9 +1,10 @@
-"""Lidar-only launch — used by the hot-plug monitor in entrypoint.sh.
+"""Lidar-only launch.
 
-Wraps the apt-installed `ros-jazzy-rplidar-ros2` driver (which supports the
-Slamtec RPLidar A1M8 out of the box). The driver lives in the system ROS 2
-prefix at /opt/ros/jazzy, so the wrapper just `IncludeLaunchDescription`s
-its `view_rplidar_a1_launch.py`.
+Wraps Slamtec's `rplidar_ros` driver (from the `ros2` branch), which is built
+from source into the colcon workspace at deploy time (no apt package is
+available on the Pi's Jazzy repos). The driver supports the Slamtec RPLidar
+A1M8 out of the box; the wrapper just `IncludeLaunchDescription`s its
+`rplidar_a1_launch.py`.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
@@ -18,14 +19,13 @@ def generate_launch_description():
         description='USB port for Slamtec RPLidar A1M8')
     serial_baudrate_arg = DeclareLaunchArgument(
         'serial_baudrate', default_value='115200',
-        description='Serial baud rate (A1M8 standard: 115200; the Slamtec SDK '
-                    'flashes 256000 via rplidar_ros2 param below if needed)')
+        description='Serial baud rate (A1M8 standard: 115200)')
 
     serial_port = LaunchConfiguration('serial_port')
     serial_baudrate = LaunchConfiguration('serial_baudrate')
 
-    rplidar_share = FindPackageShare('rplidar_ros2').find('rplidar_ros2')
-    rplidar_launch = f'{rplidar_share}/launch/view_rplidar_a1_launch.py'
+    rplidar_share = FindPackageShare('rplidar_ros').find('rplidar_ros')
+    rplidar_launch = f'{rplidar_share}/launch/rplidar_a1_launch.py'
 
     return LaunchDescription([
         SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),

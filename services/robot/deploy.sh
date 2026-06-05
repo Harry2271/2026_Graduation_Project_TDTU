@@ -38,6 +38,19 @@ echo "📂 Reorganizing files for colcon build..."
 rm -rf "$ROS_WS/src/my_robot_controller"
 cp -r "$APP_DIR/src/my_robot_controller" "$ROS_WS/src/"
 
+# rplidar_ros (Slamtec's official driver) is NOT available as an apt package
+# on the Pi's Ubuntu 24.04 / Jazzy repos. Build it from source into the same
+# colcon workspace so it shares the overlay with my_robot_controller.
+# Upstream repo: github.com/Slamtec/rplidar_ros, branch: ros2, package name: rplidar_ros
+RPLIDAR_SRC="$ROS_WS/src/rplidar_ros"
+if [ -d "$RPLIDAR_SRC/.git" ]; then
+    echo "🔄 Updating rplidar_ros in $RPLIDAR_SRC ..."
+    git -C "$RPLIDAR_SRC" pull --ff-only || echo "⚠️  rplidar_ros pull failed — using existing source"
+else
+    echo "📥 Cloning rplidar_ros (ros2 branch) from github.com/Slamtec/rplidar_ros ..."
+    git clone --depth 1 --branch ros2 https://github.com/Slamtec/rplidar_ros.git "$RPLIDAR_SRC"
+fi
+
 cd "$ROS_WS"
 echo "🏗️ Building workspace..."
 colcon build --merge-install --executor sequential
@@ -46,14 +59,8 @@ source "$ROS_WS/install/setup.bash"
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."
 
-# The RPLidar driver is now installed via apt (ros-jazzy-rplidar-ros2) in the
-# system ROS 2 prefix, so a single `source /opt/ros/jazzy/setup.bash` is
-# enough — no separate sllidar_ros2 workspace needed.
-if ! dpkg -s ros-jazzy-rplidar-ros2 >/dev/null 2>&1; then
-    echo "❌ ros-jazzy-rplidar-ros2 is not installed."
-    echo "   Re-run install-pi.sh, or: sudo apt-get install -y ros-jazzy-rplidar-ros2"
-    exit 1
-fi
+# rplidar_ros2 is now built from source into $ROS_WS/install — no apt package
+# required, no separate sllidar_ros2 workspace.
 
 start_ros_node() {
     local name=$1
