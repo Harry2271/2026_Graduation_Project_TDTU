@@ -811,8 +811,8 @@ export default function MapPage() {
           )}
         </div>
 
-        {/* Right: Status + Controls */}
-        <div className="flex items-center gap-3 flex-wrap">
+        {/* Right: Status + Controls — hidden on phones (status is shown in top bar) */}
+        <div className="hidden md:flex items-center gap-3 flex-wrap">
           {/* Status cluster */}
           {isOnline && (
             <div
