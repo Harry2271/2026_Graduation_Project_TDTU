@@ -74,12 +74,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install + build API
-        run: |
-          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
-          yarn install --frozen-lockfile
-          yarn workspace @robot-for-nguyen/api build
-
+      # apps/api/deploy.sh handles the full lifecycle on the Pi: git reset/clean,
+      # yarn install (with devDeps for the build), `nest build`, sanity check
+      # dist/main.js, prune to --production, write .env, restart PM2. We
+      # intentionally do NOT pre-build here — doing so split the build from the
+      # PM2 launch across two different `yarn install` invocations and let the
+      # dist/ output go out of sync with the production node_modules.
       - name: Run API deploy
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
@@ -94,7 +94,7 @@ jobs:
       - name: Health check
         run: |
           sleep 3
-          curl -sf http://localhost:${{ vars.API_PORT }}|| (echo "Health check failed"; exit 1)
+          curl -sf http://localhost:${{ vars.API_PORT }} || (echo "Health check failed"; exit 1)
 
   deploy-web:
     name: Deploy Web (Next.js)
