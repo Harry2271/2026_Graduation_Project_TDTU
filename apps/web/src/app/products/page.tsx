@@ -137,6 +137,7 @@ export default function ProductsPage() {
       title: 'STT',
       key: 'index',
       width: 64,
+      responsive: ['md'],
       render: (_: unknown, _record: Package, index: number) => (
         <span style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: '12px' }}>
           {String(index + 1).padStart(2, '0')}
@@ -174,6 +175,7 @@ export default function ProductsPage() {
       title: 'Mã AprilTag',
       key: 'tagId',
       width: 140,
+      responsive: ['md'],
       render: (_: unknown, record: Package) => {
         if (record.tagId === null || record.tagId === undefined) {
           return (
@@ -189,6 +191,7 @@ export default function ProductsPage() {
     },
     {
       title: 'Kệ',
+      responsive: ['md'],
       key: 'shelf',
       width: 150,
       render: (_: unknown, record: Package) => {
@@ -322,14 +325,14 @@ export default function ProductsPage() {
     <div className="flex-1 min-h-0" style={{ background: 'var(--bg-void)' }}>
       {/* ─── Page Header ─────────────────────────────────── */}
       <div
-        className="relative overflow-hidden px-8 pt-8 pb-6"
+        className="relative overflow-hidden px-4 md:px-8 pt-8 pb-6"
         style={{ borderBottom: '1px solid var(--border-dim)' }}
       >
         {/* Background accents */}
         <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(180deg, rgba(0,212,255,0.03) 0%, transparent 100%)' }} />
         <span className="absolute right-8 top-4 w-48 h-48 opacity-5 pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(0,212,255,0.4), transparent 70%)' }} />
 
-        <div className="flex justify-between items-start relative z-10 flex-wrap gap-4">
+        <div className="flex flex-col md:flex-row md:justify-between md:items-start relative z-10 flex-wrap gap-4">
           <div>
             <div className="flex items-center gap-3 mb-2">
               <Layers size={24} style={{ color: 'var(--accent)' }} />
@@ -360,7 +363,7 @@ export default function ProductsPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col md:flex-row md:items-center gap-3 w-full md:w-auto">
             {/* Stats */}
             <div
               className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
@@ -417,6 +420,7 @@ export default function ProductsPage() {
               icon={<Plus size={16} />}
               size="large"
               onClick={() => setIsAddModalOpen(true)}
+              className="w-full md:w-auto"
               style={{
                 background: 'linear-gradient(135deg, #00d4ff, #00b8e6)',
                 border: 'none',
@@ -440,7 +444,10 @@ export default function ProductsPage() {
       </div>
 
       {/* ─── Content area ────────────────────────────────── */}
-      <Content style={{ padding: '2rem', maxWidth: 1100, margin: '0 auto', width: '100%' }}>
+      <Content
+          style={{ padding: '1rem', maxWidth: 1100, margin: '0 auto', width: '100%' }}
+          className="md:!p-8"
+        >
 
         {/* Search bar */}
         <div className="mb-5">
@@ -451,6 +458,7 @@ export default function ProductsPage() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             allowClear
+            className="w-full"
             style={{
               borderRadius: '12px',
               maxWidth: 400,
