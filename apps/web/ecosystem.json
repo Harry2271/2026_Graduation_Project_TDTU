@@ -3,7 +3,7 @@
     {
       "name": "nguyen-frontend",
       "script": "./.next/standalone/apps/web/server.js",
-      "cwd": "/home/pi/actions-runner/_work/robot-for-nguyen/robot-for-nguyen/apps/web",
+      "cwd": "./",
       "instances": 1,
       "exec_mode": "fork",
       "env": {
