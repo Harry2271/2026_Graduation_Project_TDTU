@@ -27,6 +27,8 @@ import {
   Wifi,
   ChevronRight,
   MapPin,
+  List as ListIcon,
+  X,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setSource, setDest, resetInventory, SelectedCell } from '@/store/inventorySlice';
@@ -61,6 +63,7 @@ export default function InventoryPage() {
   const [isRemoveSourceConfirmOpen, setIsRemoveSourceConfirmOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isPackageListOpen, setIsPackageListOpen] = useState(true);
+  const [isPackageListSheetOpen, setIsPackageListSheetOpen] = useState(false);
 
   const selectedCount = (source ? 1 : 0) + (dest ? 1 : 0);
 
@@ -225,19 +228,19 @@ export default function InventoryPage() {
 
         {/* Header */}
         <div
-          className="px-8 py-5 relative overflow-hidden"
+          className="px-4 md:px-8 py-5 relative overflow-hidden"
           style={{
             background: 'linear-gradient(180deg, rgba(0,212,255,0.03) 0%, transparent 100%)',
             borderBottom: '1px solid var(--border-dim)',
             boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
           }}
         >
-          <div className="flex justify-between items-start relative z-10">
+          <div className="flex flex-wrap gap-3 justify-between items-start relative z-10">
             <div>
               <div className="flex items-center gap-3 mb-1">
                 <Hexagon size={22} style={{ color: 'var(--accent)' }} />
                 <h1
-                  className="text-display text-2xl"
+                  className="text-display text-xl md:text-2xl"
                   style={{
                     fontFamily: "'JetBrains Mono', monospace",
                     color: 'var(--text-primary)',
@@ -291,7 +294,7 @@ export default function InventoryPage() {
 
         {/* Status command bar */}
         <div
-          className="px-8 py-3.5 flex items-center gap-4 relative z-10"
+          className="px-4 md:px-8 py-3.5 flex flex-wrap items-center gap-3 md:gap-4 relative z-10"
           style={{
             background: 'linear-gradient(90deg, #0c0f14, #111827)',
             borderBottom: '1px solid var(--border-dim)',
@@ -414,29 +417,29 @@ export default function InventoryPage() {
         >
           {/* Shelf grid using CSS grid — avoids the flex+absolute height-collapse issue */}
           <div
-            className="relative w-full max-w-5xl mx-auto h-full px-6"
-            style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gridTemplateRows: '1fr auto 1fr', alignItems: 'center' }}
+            className="relative w-full max-w-5xl mx-auto h-full px-4 md:px-6 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] md:grid-rows-[1fr_auto_1fr] gap-4 md:gap-0 items-center"
           >
             {/* Top-left shelf */}
-            <div style={{ gridColumn: '1', gridRow: '1', justifySelf: 'start' }}>
+            <div className="w-full md:col-start-1 md:row-start-1 md:justify-self-start">
               <ShelfCard shelf={SHELF_POSITIONS[0]} source={source} dest={dest} packageCount={packagesByShelf[1]?.length || 0} onClick={() => setActiveShelf(1)} />
             </div>
             {/* Top-right shelf */}
-            <div style={{ gridColumn: '3', gridRow: '1', justifySelf: 'end' }}>
+            <div className="w-full md:col-start-3 md:row-start-1 md:justify-self-end">
               <ShelfCard shelf={SHELF_POSITIONS[1]} source={source} dest={dest} packageCount={packagesByShelf[2]?.length || 0} onClick={() => setActiveShelf(2)} />
             </div>
             {/* Bottom-left shelf */}
-            <div style={{ gridColumn: '1', gridRow: '3', justifySelf: 'start' }}>
+            <div className="w-full md:col-start-1 md:row-start-3 md:justify-self-start">
               <ShelfCard shelf={SHELF_POSITIONS[2]} source={source} dest={dest} packageCount={packagesByShelf[3]?.length || 0} onClick={() => setActiveShelf(3)} />
             </div>
             {/* Bottom-right shelf */}
-            <div style={{ gridColumn: '3', gridRow: '3', justifySelf: 'end' }}>
+            <div className="w-full md:col-start-3 md:row-start-3 md:justify-self-end">
               <ShelfCard shelf={SHELF_POSITIONS[3]} source={source} dest={dest} packageCount={packagesByShelf[4]?.length || 0} onClick={() => setActiveShelf(4)} />
             </div>
 
             {/* Center hub — overlaid in the middle column/row */}
             <div
-              style={{ gridColumn: '2', gridRow: '2', justifySelf: 'center', alignSelf: 'center', pointerEvents: 'none' }}
+              className="hidden md:block md:col-start-2 md:row-start-2 md:justify-self-center md:self-center"
+              style={{ pointerEvents: 'none' }}
             >
               <div
                 className="text-center px-10 py-8 relative"
@@ -489,7 +492,7 @@ export default function InventoryPage() {
 
         {/* Footer action bar */}
         <div
-          className="px-8 py-4 flex items-center justify-between"
+          className="px-4 md:px-8 py-4 flex flex-wrap gap-3 items-center justify-between"
           style={{
             background: 'var(--bg-surface)',
             borderTop: '1px solid var(--border-dim)',
@@ -554,9 +557,9 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* ─── Package list sidebar ──────────────────────────── */}
+      {/* ─── Package list sidebar (desktop only) / sheet (mobile) ─── */}
       <div
-        className="flex flex-col h-full overflow-hidden"
+        className="hidden lg:flex flex-col h-full overflow-hidden"
         style={{
           width: isPackageListOpen ? '320px' : '48px',
           background: 'var(--bg-surface)',
@@ -1101,6 +1104,162 @@ export default function InventoryPage() {
         )}
       </Modal>
   </ConfigProvider>
+
+      {/* Mobile FAB to open package list */}
+      <button
+        type="button"
+        onClick={() => setIsPackageListSheetOpen(true)}
+        aria-label="Mở danh sách kiện hàng"
+        className="lg:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full flex items-center justify-center"
+        style={{
+          background: 'linear-gradient(135deg, #00d4ff, #00b8e6)',
+          color: '#080b10',
+          boxShadow: '0 8px 24px rgba(0,212,255,0.4)',
+        }}
+      >
+        <ListIcon size={22} />
+      </button>
+
+      {/* Mobile bottom sheet for package list */}
+      <div
+        aria-hidden={!isPackageListSheetOpen}
+        className={`lg:hidden fixed inset-0 z-40 ${isPackageListSheetOpen ? '' : 'pointer-events-none'}`}
+      >
+        <div
+          onClick={() => setIsPackageListSheetOpen(false)}
+          className={`absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity ${
+            isPackageListSheetOpen ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Danh sách kiện hàng"
+          className={`absolute bottom-0 inset-x-0 max-h-[85vh] flex flex-col rounded-t-2xl transition-transform duration-200 ${
+            isPackageListSheetOpen ? 'translate-y-0' : 'translate-y-full'
+          }`}
+          style={{
+            background: 'var(--bg-surface)',
+            borderTop: '1px solid var(--border-mid)',
+            boxShadow: '0 -8px 32px rgba(0,0,0,0.5)',
+          }}
+        >
+          <div
+            className="flex items-center justify-between px-4 py-3"
+            style={{ borderBottom: '1px solid var(--border-dim)' }}
+          >
+            <div className="flex items-center gap-2">
+              <Package size={15} style={{ color: 'var(--accent)' }} />
+              <span
+                className="text-xs font-bold"
+                style={{
+                  color: 'var(--text-primary)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: '0.06em',
+                }}
+              >
+                DANH SÁCH KIỆN
+              </span>
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-md"
+                style={{
+                  background: 'rgba(0,212,255,0.1)',
+                  border: '1px solid rgba(0,212,255,0.2)',
+                  color: 'var(--accent)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                {filteredPackages.length}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPackageListSheetOpen(false)}
+              aria-label="Đóng"
+              className="w-9 h-9 flex items-center justify-center rounded-lg"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3">
+            <Input
+              size="large"
+              placeholder="Tìm kiện hàng..."
+              prefix={<Search size={16} style={{ color: 'var(--text-muted)' }} />}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              allowClear
+              className="mb-3"
+            />
+            <List
+              dataSource={filteredPackages}
+              locale={{
+                emptyText: (
+                  <Empty
+                    description={
+                      <span
+                        style={{
+                          color: 'var(--text-muted)',
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: '12px',
+                        }}
+                      >
+                        Không có kiện hàng nào
+                      </span>
+                    }
+                  />
+                ),
+              }}
+              renderItem={(pkg) => {
+                const cellPkg = pkg as PackageItem;
+                return (
+                  <List.Item
+                    onClick={() => {
+                      if (cellPkg.shelfId > 0 && cellPkg.cell) {
+                        selectFromList(cellPkg.shelfId, cellPkg.cell);
+                        setIsPackageListSheetOpen(false);
+                      }
+                    }}
+                    className="cursor-pointer"
+                    style={{
+                      background: 'var(--bg-raised)',
+                      border: '1px solid var(--border-dim)',
+                      borderRadius: '10px',
+                      padding: '10px 12px',
+                      marginBottom: '8px',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2 w-full">
+                      <div className="min-w-0">
+                        <p
+                          className="text-sm font-bold truncate"
+                          style={{
+                            color: 'var(--text-primary)',
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}
+                        >
+                          {cellPkg.packageName}
+                        </p>
+                        <p
+                          className="text-[10px] mt-0.5"
+                          style={{
+                            color: 'var(--text-muted)',
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}
+                        >
+                          {cellPkg.shelfId > 0 ? `Kệ ${cellPkg.shelfId} · Ô ${cellPkg.cell}` : 'Chưa xếp'}
+                        </p>
+                      </div>
+                      <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
+                    </div>
+                  </List.Item>
+                );
+              }}
+            />
+          </div>
+        </div>
+      </div>
 
       {/* Global keyframe animations */}
       <style>{`
