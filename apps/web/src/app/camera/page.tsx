@@ -21,12 +21,12 @@ export default function CameraPage() {
 
   return (
     <div
-      className="flex flex-col h-screen overflow-hidden"
+      className="flex flex-col min-h-dvh overflow-hidden"
       style={{ background: 'var(--bg-void)', fontFamily: "'JetBrains Mono', system-ui" }}
     >
       {/* ─── Header ─────────────────────────────────────── */}
       <div
-        className="px-8 py-5 relative overflow-hidden"
+        className="px-4 md:px-8 py-4 md:py-5 relative overflow-hidden"
         style={{
           background: 'linear-gradient(180deg, rgba(255,59,92,0.04) 0%, transparent 100%)',
           borderBottom: '1px solid var(--border-dim)',
@@ -34,7 +34,7 @@ export default function CameraPage() {
         }}
       >
         <div className="absolute inset-0 pointer-events-none" />
-        <div className="flex justify-between items-start relative z-10 flex-wrap gap-4">
+        <div className="flex flex-col md:flex-row md:justify-between md:items-start relative z-10 flex-wrap gap-3 md:gap-4">
           <div>
             <div className="flex items-center gap-3 mb-1">
               <Camera size={22} style={{ color: 'var(--danger)' }} />
@@ -44,8 +44,16 @@ export default function CameraPage() {
               >
                 CAMERA ROBOT
               </h1>
+              {/* Mobile compact dot */}
               <span
-                className="text-[9px] font-bold px-2 py-1 rounded-md"
+                className="md:hidden w-2 h-2 rounded-full"
+                style={{
+                  background: isOnline ? 'var(--success)' : 'var(--danger)',
+                  boxShadow: isOnline ? '0 0 6px var(--success-glow)' : 'none',
+                }}
+              />
+              <span
+                className="hidden md:inline-block text-[9px] font-bold px-2 py-1 rounded-md"
                 style={{
                   background: isOnline ? 'rgba(0,255,136,0.1)' : 'rgba(255,59,92,0.1)',
                   border: `1px solid ${isOnline ? 'rgba(0,255,136,0.25)' : 'rgba(255,59,92,0.25)'}`,
@@ -65,7 +73,7 @@ export default function CameraPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-3">
             {/* Status */}
             <div
               className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold border"
@@ -93,7 +101,7 @@ export default function CameraPage() {
       </div>
 
       {/* ─── Video area ─────────────────────────────────── */}
-      <div className="flex-1 min-h-0 p-6 flex flex-col gap-4">
+      <div className="flex-1 min-h-0 p-3 md:p-6 flex flex-col gap-3 md:gap-4">
 
         {/* Main viewport */}
         <div
@@ -114,10 +122,10 @@ export default function CameraPage() {
           />
 
           {/* Corner brackets */}
-          <div className="absolute top-5 left-5 w-10 h-10 border-l-2 border-t-2 rounded-tl z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
-          <div className="absolute top-5 right-5 w-10 h-10 border-r-2 border-t-2 rounded-tr z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
-          <div className="absolute bottom-5 left-5 w-10 h-10 border-l-2 border-b-2 rounded-bl z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
-          <div className="absolute bottom-5 right-5 w-10 h-10 border-r-2 border-b-2 rounded-br z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
+          <div className="absolute top-3 left-3 w-6 h-6 md:top-5 md:left-5 md:w-10 md:h-10 border-l-2 border-t-2 rounded-tl z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
+          <div className="absolute top-3 right-3 w-6 h-6 md:top-5 md:right-5 md:w-10 md:h-10 border-r-2 border-t-2 rounded-tr z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
+          <div className="absolute bottom-3 left-3 w-6 h-6 md:bottom-5 md:left-5 md:w-10 md:h-10 border-l-2 border-b-2 rounded-bl z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
+          <div className="absolute bottom-3 right-3 w-6 h-6 md:bottom-5 md:right-5 md:w-10 md:h-10 border-r-2 border-b-2 rounded-br z-20 pointer-events-none" style={{ borderColor: 'rgba(255,59,92,0.4)' }} />
 
           {/* Camera info badge */}
           <div
@@ -153,7 +161,7 @@ export default function CameraPage() {
 
           {/* Controls overlay at bottom */}
           <div
-            className="absolute bottom-4 right-4 z-20 flex items-center gap-2 p-1.5 rounded-2xl"
+            className="absolute bottom-3 right-3 md:bottom-4 md:right-4 z-20 flex items-center gap-1.5 md:gap-2 p-1.5 rounded-2xl"
             style={{
               background: 'rgba(8,11,16,0.85)',
               backdropFilter: 'blur(12px)',
@@ -163,7 +171,7 @@ export default function CameraPage() {
             <button
               onClick={() => setIsMuted(!isMuted)}
               title={isMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
-              className="w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
+              className="w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
               style={{
                 background: isMuted ? 'rgba(255,59,92,0.15)' : 'var(--bg-raised)',
                 border: '1px solid',
@@ -177,7 +185,7 @@ export default function CameraPage() {
             <button
               onClick={handleToggleFullscreen}
               title={isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
-              className="w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
+              className="w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
               style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-dim)', color: 'var(--text-secondary)' }}
             >
               {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
@@ -186,7 +194,7 @@ export default function CameraPage() {
             <button
               onClick={() => { setIsConnecting(true); setTimeout(() => setIsConnecting(false), 2000); }}
               title="Kết nối lại"
-              className="w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
+              className="w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
               style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-dim)', color: 'var(--text-secondary)' }}
             >
               <RefreshCw size={18} className={isConnecting ? 'animate-spin' : ''} />
@@ -198,7 +206,7 @@ export default function CameraPage() {
             <div className="text-center">
               {/* Large icon */}
               <div
-                className="w-24 h-24 rounded-3xl mx-auto mb-6 flex items-center justify-center"
+                className="w-20 h-20 md:w-24 md:h-24 rounded-3xl mx-auto mb-4 md:mb-6 flex items-center justify-center"
                 style={{
                   background: 'linear-gradient(135deg, rgba(255,59,92,0.08), rgba(255,59,92,0.02))',
                   border: '1px solid rgba(255,59,92,0.15)',
@@ -209,13 +217,13 @@ export default function CameraPage() {
               </div>
 
               <h2
-                className="text-xl font-black mb-2"
+                className="text-lg md:text-xl font-black mb-2"
                 style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
               >
                 Camera Robot — Chưa kết nối
               </h2>
               <p
-                className="text-sm max-w-sm mx-auto"
+                className="text-xs md:text-sm max-w-sm mx-auto px-4"
                 style={{ color: 'var(--text-muted)', lineHeight: 1.6, fontFamily: "'JetBrains Mono', monospace" }}
               >
                 Luồng video từ camera gắn trên tay robot sẽ hiển thị tại đây khi kết nối WebSocket thành công với ROS.
