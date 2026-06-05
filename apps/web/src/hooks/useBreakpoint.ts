@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 export type Breakpoint = 'mobile' | 'tablet' | 'desktop';
 
@@ -13,25 +13,22 @@ function getBreakpoint(width: number): Breakpoint {
   return 'mobile';
 }
 
+const subscribe = (callback: () => void) => {
+  window.addEventListener('resize', callback, { passive: true });
+  return () => window.removeEventListener('resize', callback);
+};
+
+const getSnapshot = () => window.innerWidth;
+const getServerSnapshot = () => DESKTOP_MIN;
+
 export function useBreakpoint(): {
   breakpoint: Breakpoint;
   isMobile: boolean;
   isTablet: boolean;
   isDesktop: boolean;
 } {
-  const [width, setWidth] = useState<number | null>(null);
-
-  useEffect(() => {
-    setWidth(window.innerWidth);
-    const onResize = () => setWidth(window.innerWidth);
-    window.addEventListener('resize', onResize, { passive: true });
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  // Until the first measurement, default to desktop to match what would
-  // render on the server (no window) and to avoid a mobile flash on desktop
-  // reload. Real client value arrives after the first effect tick.
-  const breakpoint: Breakpoint = width === null ? 'desktop' : getBreakpoint(width);
+  const width = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const breakpoint = getBreakpoint(width);
   return {
     breakpoint,
     isMobile: breakpoint === 'mobile',
