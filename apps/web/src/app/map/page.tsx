@@ -723,12 +723,12 @@ export default function MapPage() {
 
   return (
     <div
-      className="flex flex-col h-screen select-none overflow-hidden"
+      className="flex flex-col min-h-dvh select-none overflow-hidden"
       style={{ background: 'var(--bg-void)', fontFamily: "'JetBrains Mono', system-ui" }}
     >
       {/* ─── Header ─────────────────────────────────────────────────── */}
       <div
-        className="px-8 py-4 flex flex-wrap items-center justify-between gap-4 relative z-10"
+        className="px-4 md:px-8 py-4 flex flex-wrap items-center justify-between gap-3 md:gap-4 relative z-10"
         style={{
           background: 'linear-gradient(180deg, rgba(0,212,255,0.06) 0%, rgba(0,212,255,0.02) 60%, transparent 100%)',
           borderBottom: '1px solid var(--border-dim)',
@@ -973,7 +973,7 @@ export default function MapPage() {
       </div>
 
       {/* ─── Canvas viewer ───────────────────────────────────────────── */}
-      <div className="flex-1 min-h-0 p-5">
+      <div className="flex-1 min-h-0 p-2 md:p-5">
         <div
           className="relative w-full h-full rounded-2xl overflow-hidden"
           style={{
