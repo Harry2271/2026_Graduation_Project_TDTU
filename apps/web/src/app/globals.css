@@ -75,8 +75,8 @@ body {
   font-family: var(--font-sans), 'JetBrains Mono', monospace;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100dvh;
+  overflow-x: hidden;
 }
 
 /* ─── Text selection ─────────────────────────────────────────────── */
@@ -559,4 +559,23 @@ body {
 /* Xử lý cái tiêu đề cho khớp màu */
 .dark-modal .ant-modal-header .ant-modal-title {
   background-color: var(--bg-surface) !important;
+}
+
+/* ─── Mobile safe area + iOS zoom prevention ─────────── */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-input-number-input,
+.ant-select-selector,
+textarea.ant-input {
+  font-size: 16px !important;
+}
+
+button,
+a,
+[role='button'] {
+  touch-action: manipulation;
 }
