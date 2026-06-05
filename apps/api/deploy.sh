@@ -33,14 +33,22 @@ if [ -z "$MONGO_URI" ]; then
     exit 1
 fi
 
-echo "[1/5] 📥 Cleaning local working tree (matches web/deploy.sh)..."
+echo "[1/7] 📥 Cleaning local working tree (matches web/deploy.sh)..."
 git reset --hard HEAD
 git clean -fd
 
-echo "[2/5] 📦 Installing all dependencies (devDeps needed for `nest build`)..."
+echo "[2/7] 🧹 Removing partial node_modules (defense against torn installs)..."
+# A previous interrupted `yarn install` can leave a node_modules/ where some
+# nested files are missing — e.g. iconv-lite/encodings/, mongoose/lib/document.js.
+# That breaks runtime lazy requires with cryptic 400/500 errors at request time.
+# Force a full re-install on every deploy so the state on disk is always
+# deterministic. This is the same pattern the root `yarn clean` script uses.
+rm -rf node_modules apps/*/node_modules services/*/node_modules packages/*/node_modules
+
+echo "[3/7] 📦 Installing all dependencies (devDeps needed for `nest build`)..."
 yarn install --frozen-lockfile
 
-echo "[3/5] 🏗️ Building NestJS..."
+echo "[4/7] 🏗️ Building NestJS..."
 yarn build
 
 # Sanity-check the build before touching PM2. A missing dist/main.js means the
@@ -53,18 +61,55 @@ if [ ! -f "$APP_DIR/dist/main.js" ]; then
     exit 1
 fi
 
-echo "[4/5] 📥 Pruning to production dependencies..."
+# Sanity-check the runtime node_modules. These are files known to vanish when
+# yarn install is interrupted mid-flight; if any are missing, the next POST/PUT
+# (body-parser → iconv-lite) or any Mongoose schema operation (mongoose/lib/
+# document) will throw MODULE_NOT_FOUND at request time. Fail loudly here
+# instead of leaving a 500-serving PM2.
+echo "[4b/7] 🔎 Verifying runtime node_modules is complete..."
+RUNTIME_REQUIRED=(
+    "node_modules/iconv-lite/encodings/index.js"
+    "node_modules/iconv-lite/package.json"
+    "node_modules/mongoose/lib/document.js"
+    "node_modules/mongoose/package.json"
+    "node_modules/body-parser/index.js"
+    "node_modules/raw-body/index.js"
+)
+MISSING=0
+for f in "${RUNTIME_REQUIRED[@]}"; do
+    if [ ! -f "$MONOREPO_ROOT/$f" ]; then
+        echo "  ❌ missing: $f"
+        MISSING=$((MISSING+1))
+    fi
+done
+if [ "$MISSING" -gt 0 ]; then
+    echo "❌ $MISSING runtime file(s) missing — node_modules install was torn. Aborting before PM2 restart."
+    exit 1
+fi
+echo "  ✓ all ${#RUNTIME_REQUIRED[@]} runtime files present"
+
+echo "[5/7] 📥 Pruning to production dependencies..."
 # dist/ is already on disk; switching to --production drops devDeps (nest, swc,
 # ts-jest, etc.) so node_modules is closer to runtime size.
 yarn install --production --frozen-lockfile
 
-echo "[5/5] ✍️  Writing .env..."
+# Re-verify after prune — yarn shouldn't drop our runtime files (they're
+# production deps), but check anyway in case the lockfile is wrong.
+for f in "${RUNTIME_REQUIRED[@]}"; do
+    if [ ! -f "$MONOREPO_ROOT/$f" ]; then
+        echo "❌ Runtime file disappeared after --production prune: $f"
+        echo "    Likely cause: lockfile marks the parent package as devDependency."
+        exit 1
+    fi
+done
+
+echo "[6/7] ✍️  Writing .env..."
 cat > "$ENV_FILE" << ENVEOF
 PORT=${PORT:-5000}
 MONGO_URI=${MONGO_URI}
 ENVEOF
 
-echo "[6/6] 🔄 Restarting with PM2..."
+echo "[7/7] 🔄 Restarting with PM2..."
 mkdir -p /home/pi/.pm2/logs
 
 pm2 stop    "$SERVICE_NAME" 2>/dev/null || true
