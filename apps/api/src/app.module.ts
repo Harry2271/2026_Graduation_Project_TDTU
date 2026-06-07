@@ -8,6 +8,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseConfig } from './config/database.config';
 import { GatewayModule } from './gateway/gateway.module';
+import { MapsModule } from './modules/maps/maps.module';
 import { PackageModule } from './modules/package/package.module';
 import { ShelfModule } from './modules/shelf/shelf.module';
 
@@ -21,6 +22,7 @@ import { ShelfModule } from './modules/shelf/shelf.module';
     HttpModule,
     DatabaseConfig,
     GatewayModule,
+    MapsModule,
     PackageModule,
     ShelfModule,
   ],
