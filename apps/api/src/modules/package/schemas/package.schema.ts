@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { HydratedDocument } from 'mongoose';
 
 export type PackageDocument = HydratedDocument<Package>;
@@ -41,6 +41,14 @@ export class Package {
   })
   @Prop({ type: Number, min: 0, max: 586, default: null })
   tagId!: number | null;
+
+  @ApiPropertyOptional({ description: 'Source slot code, set when the user picks the source slot in the web UI', example: 'S1A1', nullable: true })
+  @Prop({ type: String, default: null })
+  sourceSlotCode!: string | null;
+
+  @ApiPropertyOptional({ description: 'Target slot code, set when the user picks the destination slot in the web UI', example: 'S2C3', nullable: true })
+  @Prop({ type: String, default: null })
+  targetSlotCode!: string | null;
 }
 
 export const PackageSchema = SchemaFactory.createForClass(Package);
