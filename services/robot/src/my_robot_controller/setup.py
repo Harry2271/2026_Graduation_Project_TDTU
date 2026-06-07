@@ -15,10 +15,10 @@ setup(
         ('share/' + package_name, ['package.xml']),
         # Include launch files from launch/ (relative to package root)
         (os.path.join('share', package_name, 'launch'),
-            ['launch/slam_only_launch.py', 'launch/lidar_only_launch.py']),
+            sorted(glob('launch/*.py'))),
         # Include config files from config/
         (os.path.join('share', package_name, 'config'),
-            ['config/slam_params.yaml']),
+            sorted(glob('config/*.yaml'))),
     ],
     install_requires=['setuptools', 'websockets>=10.0'],
     zip_safe=True,
