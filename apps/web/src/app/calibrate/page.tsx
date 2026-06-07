@@ -6,16 +6,14 @@ import { Spin, message } from 'antd';
 import {
   useGetAllSlotsQuery,
   useAssignCoordinatesMutation,
-  useAssignAprilTagMutation,
+  // useAssignAprilTagMutation, // for AprilTag panel (future)
 } from '@/store/services/inventoryApi';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   setSelectedCalibrateSlot,
   selectSelectedCalibrateSlot,
 } from '@/store/calibrateSlice';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:5000';
-const MAPS_URL = `${API_BASE}/api/robot/map-image`;
+import { MAPS_URL } from '@/lib/apiBase';
 
 // SLAM map image dimensions: 40 m × 40 m at 5 cm/cell → 800×800 px.
 const MAP_METERS = 40;
@@ -26,7 +24,7 @@ export default function CalibratePage() {
   const selectedCode = useAppSelector(selectSelectedCalibrateSlot);
   const { data: slots = [], isLoading, isError, error, refetch } = useGetAllSlotsQuery();
   const [assignCoordinates, { isLoading: isSaving }] = useAssignCoordinatesMutation();
-  const [assignAprilTag] = useAssignAprilTagMutation();
+  // const [_assignAprilTag] = useAssignAprilTagMutation(); // For AprilTag panel (future)
 
   const [imageSize, setImageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const imgRef = useRef<HTMLImageElement>(null);
@@ -107,6 +105,7 @@ export default function CalibratePage() {
       </aside>
 
       <main className="flex-1 relative overflow-auto">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           ref={imgRef}
           src={MAPS_URL}
