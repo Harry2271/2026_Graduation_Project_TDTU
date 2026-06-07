@@ -35,8 +35,12 @@ export interface ShelfSlot {
   shelf: string;      // S1, S2, S3, S4
   row: string;        // A, B, C, D
   column: number;     // 1, 2, 3, 4
-  status: 'AVAILABLE' | 'OCCUPIED';
+  status: 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'TRANSIT';
   packageId: string | null;
+  slotX?: number;          // meters in SLAM map frame (Calibrate)
+  slotY?: number;          // meters in SLAM map frame (Calibrate)
+  facingTheta?: number;    // radians, yaw the robot must face (Calibrate)
+  aprilTagId?: number;     // 0..586, fixed physical tag ID (Calibrate)
 }
 
 export interface MovePackageDto {

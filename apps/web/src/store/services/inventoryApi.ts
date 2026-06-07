@@ -226,6 +226,43 @@ export const inventoryApi = baseApi.injectEndpoints({
         { type: "Packages" },
       ],
     }),
+
+    // ─── Calibrate (Phase 1) ──────────────────────────────────────
+    assignCoordinates: builder.mutation<
+      ShelfSlot,
+      { slotCode: string; slotX: number; slotY: number; facingTheta?: number | null }
+    >({
+      query: ({ slotCode, ...body }) => ({
+        url: `/shelves/${slotCode}/coordinates`,
+        method: "PUT",
+        body,
+      }),
+      invalidatesTags: (): TagDescription[] => [{ type: "Slots" }],
+    }),
+
+    assignCoordinatesBatch: builder.mutation<
+      ShelfSlot[],
+      { entries: Array<{ slotCode: string; slotX: number; slotY: number; facingTheta?: number | null }> }
+    >({
+      query: (body) => ({
+        url: "/shelves/coordinates/batch",
+        method: "PUT",
+        body,
+      }),
+      invalidatesTags: (): TagDescription[] => [{ type: "Slots" }],
+    }),
+
+    assignAprilTag: builder.mutation<
+      ShelfSlot,
+      { slotCode: string; aprilTagId: number }
+    >({
+      query: ({ slotCode, ...body }) => ({
+        url: `/shelves/${slotCode}/april-tag`,
+        method: "PUT",
+        body,
+      }),
+      invalidatesTags: (): TagDescription[] => [{ type: "Slots" }],
+    }),
   }),
 });
 
@@ -242,4 +279,7 @@ export const {
   useAssignPackageToSlotMutation,
   useMovePackageMutation,
   useRemovePackageFromSlotMutation,
+  useAssignCoordinatesMutation,
+  useAssignCoordinatesBatchMutation,
+  useAssignAprilTagMutation,
 } = inventoryApi;
