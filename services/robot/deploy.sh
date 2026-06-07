@@ -73,9 +73,14 @@ start_ros_node() {
 start_ros_node "${SERVICE_NAME_PREFIX}-lidar" "ros2 launch my_robot_controller lidar_only_launch.py serial_port:=$LIDAR_PORT"
 start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller slam_only_launch.py"
 
-# 2. Logic Nodes (brain_node removed — slam_toolbox handles odometry)
+# 2. Logic Nodes (brain_node added in Phase 0 of robot-controller-brain plan)
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
 start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
+start_ros_node "${SERVICE_NAME_PREFIX}-brain" "ros2 run my_robot_controller brain"
+start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
+
+# 3. Nav2 (stub launch for Phase 0; real Nav2 in Phase 3)
+start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py"
 
 pm2 save
 echo "✅ DEPLOY THÀNH CÔNG!"
