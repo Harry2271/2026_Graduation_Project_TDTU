@@ -15,6 +15,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
+import { AssignCoordinatesBatchDto } from './dto/assign-coordinates-batch.dto';
+import { AssignCoordinatesDto } from './dto/assign-coordinates.dto';
 import { AssignPackageDto } from './dto/assign-package.dto';
 import { MovePackageDto } from './dto/move-package.dto';
 import { Shelf } from './schemas/shelf.schema';
@@ -80,5 +82,37 @@ export class ShelfController {
   @ApiResponse({ status: 404, description: 'Slot not found' })
   removePackage(@Param('slotCode') slotCode: string): Promise<void> {
     return this.shelfService.removePackage(slotCode.toUpperCase());
+  }
+
+  @Put('coordinates/batch')
+  @ApiOperation({ summary: 'Assign coordinates to multiple slots at once (Calibrate bulk)' })
+  @ApiResponse({ status: 200, description: 'Coordinates assigned', type: [ShelfSlot] })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  assignCoordinatesBatch(@Body() dto: AssignCoordinatesBatchDto): Promise<ShelfSlot[]> {
+    return this.shelfService.assignCoordinatesBatch(
+      dto.entries.map((e) => ({
+        slotCode: e.slotCode.toUpperCase(),
+        slotX: e.slotX,
+        slotY: e.slotY,
+        facingTheta: e.facingTheta ?? null,
+      })),
+    );
+  }
+
+  @Put(':slotCode/coordinates')
+  @ApiOperation({ summary: 'Assign (slotX, slotY, facingTheta) to a slot (Calibrate)' })
+  @ApiResponse({ status: 200, description: 'Coordinates assigned', type: ShelfSlot })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 404, description: 'Slot not found' })
+  assignCoordinates(
+    @Param('slotCode') slotCode: string,
+    @Body() dto: AssignCoordinatesDto,
+  ): Promise<ShelfSlot> {
+    return this.shelfService.assignCoordinates(
+      slotCode.toUpperCase(),
+      dto.slotX,
+      dto.slotY,
+      dto.facingTheta ?? null,
+    );
   }
 }
