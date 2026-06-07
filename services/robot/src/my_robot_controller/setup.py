@@ -32,6 +32,7 @@ setup(
             'brain = my_robot_controller.brain_node:main',
             'web_bridge = my_robot_controller.web_bridge:main',
             'map_manager = my_robot_controller.map_manager_node:main',
+            'april_tag_node = my_robot_controller.april_tag_node:main',
         ],
     },
 )
