@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Put,
@@ -15,6 +16,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
+import { AssignAprilTagDto } from './dto/assign-april-tag.dto';
 import { AssignCoordinatesBatchDto } from './dto/assign-coordinates-batch.dto';
 import { AssignCoordinatesDto } from './dto/assign-coordinates.dto';
 import { AssignPackageDto } from './dto/assign-package.dto';
@@ -114,5 +116,34 @@ export class ShelfController {
       dto.slotY,
       dto.facingTheta ?? null,
     );
+  }
+
+  @Get('april-tag/:aprilTagId')
+  @ApiOperation({ summary: 'Look up a slot by its fixed AprilTag ID (used by robot vision)' })
+  @ApiResponse({ status: 200, description: 'Slot found', type: ShelfSlot })
+  @ApiResponse({ status: 404, description: 'No slot with that AprilTag ID' })
+  findByAprilTagId(@Param('aprilTagId') aprilTagId: string): Promise<ShelfSlot> {
+    const tagId = Number.parseInt(aprilTagId, 10);
+    if (Number.isNaN(tagId) || tagId < 0 || tagId > 586) {
+      throw new NotFoundException(`aprilTagId phải là số nguyên trong khoảng 0..586`);
+    }
+    return this.shelfService.findByAprilTagId(tagId).then((slot) => {
+      if (!slot) {
+        throw new NotFoundException(`Không tìm thấy vị trí với aprilTagId ${tagId}`);
+      }
+      return slot;
+    });
+  }
+
+  @Put(':slotCode/april-tag')
+  @ApiOperation({ summary: 'Assign an AprilTag ID to a slot (Calibrate)' })
+  @ApiResponse({ status: 200, description: 'AprilTag assigned', type: ShelfSlot })
+  @ApiResponse({ status: 400, description: 'Validation failed or AprilTag already used' })
+  @ApiResponse({ status: 404, description: 'Slot not found' })
+  assignAprilTag(
+    @Param('slotCode') slotCode: string,
+    @Body() dto: AssignAprilTagDto,
+  ): Promise<ShelfSlot> {
+    return this.shelfService.assignAprilTag(slotCode.toUpperCase(), dto.aprilTagId);
   }
 }
