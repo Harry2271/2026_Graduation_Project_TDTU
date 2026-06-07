@@ -406,6 +406,143 @@ project-root/
 
 ---
 
+## What the ESP32 Needs to Do Next (Brain Integration)
+
+The Pi is getting a new `brain_node.py` that will own the high-level
+state machine (autonomous mapping, job dispatch, path planning via
+Nav2, AprilTag vision). The brain drives the ESP32 through a clean
+abstract interface, but **the ESP32 must implement several new
+capabilities** that don't exist in the current firmware. This section
+is the contract — what each side has to deliver.
+
+### Current state vs. required state
+
+| Capability | Today | Required |
+|---|---|---|
+| Accept `(vx, vy, omega)` over UART JSON | ✅ Yes | ✅ Keep |
+| Stop / e-stop / heartbeat | ✅ Yes | ✅ Keep |
+| `obstacle_*` reactive dodge | ✅ Yes | ✅ Keep |
+| Publish encoder counts to Pi | ❌ No | ✅ Add — for Nav2 odometry fusion |
+| Publish IMU heading to Pi | ❌ No | ✅ Add — BNO055 init + stream over UART |
+| Acknowledge a `move` with status | ❌ No | ✅ Add — type-132 ack with sequence id |
+| Receive "go to point (x,y)" | ❌ No | ⏸ Deferred — brain drives with `move` only, no on-board waypoint follower |
+| Receive "follow path" | ❌ No | ⏸ Deferred — brain sends `move` continuously at 50 Hz |
+| Receive "rotate to heading" | ❌ No | ⏸ Deferred — encoded as `move` with non-zero `omega` |
+| Battery voltage publish | ❌ No | ✅ Add — type-133 telemetry |
+| Robotic arm control | ❌ No | ⏸ Deferred to firmware phase 8 |
+| AprilTag reading | ❌ No (Pi's job) | ✅ Keep on Pi |
+
+### New UART message types (ESP32 → Pi)
+
+The current firmware emits type 128 (ACK), 129 (error), 130 (encoders),
+131 (status). Add these:
+
+```json
+// 132 — move command acknowledgment
+{"type":132,"data":{"seq":N,"status":"accepted"|"rejected","reason":"..."}}
+
+// 133 — battery + system telemetry
+{"type":133,"data":{"voltage_mv":12345,"current_ma":250,"uptime_ms":N,"e_stop":false,"watchdog_ok":true}}
+```
+
+The `seq` field lets the Pi correlate ACKs with commands and detect
+packet loss. The brain increments `seq` on every `move` it sends; the
+ESP32 echoes it back in the 132 response.
+
+### Updated UART command (Pi → ESP32)
+
+The existing `{"cmd":"move","vx":N,"vy":N,"omega":N}` is kept, with
+one new optional field:
+
+```json
+{"cmd":"move","vx":100,"vy":0,"omega":0,"seq":42}
+```
+
+If the brain does not include `seq`, the ESP32 must not emit a 132
+ack (back-compat for the existing manual-control ASCII path). When
+`seq` is present, emit a 132 within 5 ms.
+
+### New required modules
+
+| Module | Purpose | Key APIs |
+|---|---|---|
+| `firmware/src/modules/brain_bridge.cpp` | Decodes `move` JSON into `MecanumDrive::compute()` calls, emits 132 acks | `on_move_cmd(vx, vy, omega, seq)` |
+| `firmware/src/modules/odometry_publisher.cpp` | Reads encoder counts, computes wheel delta, emits 130 every 50 ms | `publish_encoder_snapshot()` |
+| `firmware/src/modules/imu_bno055.cpp` | Initializes BNO055 over I2C (address 0x28 or 0x29), reads Euler angles | `imu_read_heading_rad()` |
+| `firmware/src/modules/battery_monitor.cpp` | ADC read on a battery-sense pin, emits 133 every 5 s | `read_voltage_mv()` |
+
+### New config.h additions
+
+```cpp
+// I2C for BNO055
+#define BNO055_I2C_ADDR  0x28
+#define I2C_SDA_PIN      8
+#define I2C_SCL_PIN      9
+#define I2C_FREQ_HZ      400000
+
+// Battery sense
+#define BATTERY_ADC_PIN  1
+#define BATTERY_DIVIDER  0.2f   // 100k/400k → ~0.2
+
+// Telemetry intervals
+#define ENCODER_PUBLISH_MS  50
+#define BATTERY_PUBLISH_MS  5000
+
+// Heartbeat (existing)
+#define HEARTBEAT_TIMEOUT_MS  2000  // Pi must heartbeat within this
+```
+
+### Heartbeat contract (existing, tightened)
+
+- Pi sends `{"cmd":"heartbeat"}` every 50 ms (much faster than the
+  current 2 s timeout — gives the brain a 40× safety margin for
+  re-sending on transient UART loss).
+- ESP32 resets the watchdog timer on every heartbeat.
+- If the watchdog expires, ESP32 calls `e_stop()` internally and
+  publishes `{"type":133,"data":{"e_stop":true,"watchdog_ok":false}}`
+  on next boot cycle.
+
+### Pin allocation check
+
+The existing `config.h` has free pins for I2C and the battery ADC.
+Verify before flashing — the current pin list reserves GPIO 43/44
+for UART2 (Pi link) which is correct; everything else listed under
+"Available GPIOs" is fair game.
+
+### What the ESP32 does NOT need to do
+
+The brain owns the world model. The ESP32 must not:
+- ❌ Parse `/cmd_vel` from ROS 2 (it only sees UART JSON from the brain)
+- ❌ Track its own pose or do SLAM (the brain does this)
+- ❌ Make path-planning decisions (Nav2 on the Pi decides; ESP32
+  executes)
+- ❌ Read AprilTags (the Pi's `april_tag_node.py` does this; ESP32
+  never sees tag data)
+
+The mental model: **ESP32 = fast dumb motors. Pi = slow smart brain.**
+The brain sends `move` JSON, the ESP32 obeys.
+
+### Implementation order (matches spec rollout Phase 6)
+
+1. `brain_bridge.cpp` first (smallest, no hardware).
+2. `odometry_publisher.cpp` second (uses existing encoders, just
+   needs to publish more often).
+3. `battery_monitor.cpp` third (ADC + 133 type).
+4. `imu_bno055.cpp` last (new hardware bringup, BNO055 has a known
+   boot-time quirk where you must read its chip ID before config).
+
+Each module has a stub `loop()` that compiles and emits the right
+type-N message with placeholder data, so the brain can be developed
+incrementally against the real UART before each module is real.
+
+### See also
+
+- Design spec: `docs/superpowers/specs/2026-06-07-robot-controller-brain-design.md`
+- Brain's `Esp32Bridge` interface: `services/robot/src/my_robot_controller/my_robot_controller/esp32_bridge.py` (forthcoming, Phase 2 of rollout)
+- Existing UART command reference: `firmware/src/modules/CommandParser.cpp` lines 158-244
+
+---
+
 ## Important Design Decisions
 
 1. **Real-time criticality:** ESP32-S3 handles ALL real-time motor control (PWM, encoder, PID). The Raspberry Pi 5 handles ONLY high-level decision-making (SLAM, path planning, obstacle avoidance strategy).
