@@ -7,6 +7,8 @@ export type ShelfSlotDocument = HydratedDocument<ShelfSlot>;
 export enum SlotStatus {
   AVAILABLE = 'AVAILABLE',
   OCCUPIED = 'OCCUPIED',
+  RESERVED = 'RESERVED',
+  TRANSIT = 'TRANSIT',
 }
 
 @Schema({ timestamps: true })
@@ -34,6 +36,22 @@ export class ShelfSlot {
   @ApiPropertyOptional({ description: 'ID of the package occupying this slot', example: '6771a2b3c4d5e6f7a8b9c0d1', nullable: true })
   @Prop({ type: Types.ObjectId, ref: 'Package', default: null })
   packageId!: Types.ObjectId | null;
+
+  @ApiPropertyOptional({ description: 'X coordinate in SLAM map frame (meters), set during Calibrate', example: 1.5, nullable: true })
+  @Prop({ required: false, default: null })
+  slotX?: number;
+
+  @ApiPropertyOptional({ description: 'Y coordinate in SLAM map frame (meters), set during Calibrate', example: -2.3, nullable: true })
+  @Prop({ required: false, default: null })
+  slotY?: number;
+
+  @ApiPropertyOptional({ description: 'Yaw the robot must face when stopped at this slot (radians), set during Calibrate', example: 1.5708, nullable: true })
+  @Prop({ required: false, default: null })
+  facingTheta?: number;
+
+  @ApiPropertyOptional({ description: 'Fixed AprilTag ID for this slot (0..586), set during Calibrate', example: 42, nullable: true })
+  @Prop({ required: false, default: null, unique: true })
+  aprilTagId?: number;
 }
 
 export const ShelfSlotSchema = SchemaFactory.createForClass(ShelfSlot);
