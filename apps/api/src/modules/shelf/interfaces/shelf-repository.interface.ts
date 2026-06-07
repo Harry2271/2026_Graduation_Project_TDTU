@@ -12,6 +12,7 @@ export interface IShelfRepository {
   createSlots(slots: ShelfSlot[]): Promise<void>;
   findSlotByCode(code: string): Promise<ShelfSlot | null>;
   findSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null>;
+  findByAprilTagId(aprilTagId: number): Promise<ShelfSlot | null>;
   assignPackageToSlot(slotCode: string, packageId: Types.ObjectId): Promise<ShelfSlot | null>;
   clearSlot(slotCode: string): Promise<ShelfSlot | null>;
   clearSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null>;

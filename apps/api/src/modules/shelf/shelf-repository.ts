@@ -49,6 +49,10 @@ export class ShelfRepository implements IShelfRepository {
     return this.shelfSlotModel.findOne({ packageId }).exec();
   }
 
+  async findByAprilTagId(aprilTagId: number): Promise<ShelfSlot | null> {
+    return this.shelfSlotModel.findOne({ aprilTagId }).exec();
+  }
+
   async assignPackageToSlot(slotCode: string, packageId: Types.ObjectId): Promise<ShelfSlot | null> {
     return this.shelfSlotModel
       .findOneAndUpdate(
