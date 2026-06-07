@@ -304,6 +304,8 @@ If you need to pull new commits from an old repo into the monorepo later, use `g
 | `.gitignore` | Monorepo-level ignore patterns (per-app `.gitignore` files remain) |
 | `CLAUDE.md` | This file |
 | `docs/superpowers/specs/2026-06-02-monorepo-restructure-design.md` | The design doc that drove this restructure |
+| `docs/superpowers/specs/2026-06-07-robot-controller-brain-design.md` | Brain controller design: Pi 5 high-level state machine (autonomous mapping + job dispatch via Nav2 + AprilTag + ESP32 UART) |
+| `docs/superpowers/plans/2026-06-07-robot-controller-brain-plan.md` | Implementation plan for Phases 0-2 of the brain controller (skeleton, Calibrate data model, Esp32Bridge) |
 | `.github/workflows/ci.yml` | Affected build + lint |
 | `.github/workflows/deploy.yml` | Path-filtered deploy |
 | `tools/deploy/` | Manual SSH toolkit (deploy-all.sh, install-pi.sh, etc.) |
