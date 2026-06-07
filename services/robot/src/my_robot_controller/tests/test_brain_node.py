@@ -3,10 +3,19 @@
 These tests don't spin up rclpy; they construct the BrainNode class
 directly and exercise its transition_to() method. This lets us verify
 the state machine logic without ROS infrastructure.
+
+These tests require `rclpy` (a ROS 2 Python package). On a non-Pi dev
+machine without ROS 2 Jazzy installed, the module-level import will
+fail and pytest will skip the entire file.
 """
 import pytest
 
-from my_robot_controller.brain_node import BrainNode, BrainState
+# Skip the whole module if rclpy is unavailable. This keeps the rest
+# of the test suite runnable on plain CPython (e.g. Windows dev) and
+# the brain tests run automatically on the Pi where rclpy is present.
+rclpy = pytest.importorskip('rclpy')
+
+from my_robot_controller.brain_node import BrainNode, BrainState  # noqa: E402
 
 
 @pytest.fixture
