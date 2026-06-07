@@ -10,4 +10,8 @@ export interface IShelfService {
   movePackage(fromSlotCode: string, targetSlotCode: string): Promise<ShelfSlot>;
   removePackage(slotCode: string): Promise<void>;
   clearSlotByPackageId(packageId: string): Promise<ShelfSlot | null>;
+  assignCoordinates(slotCode: string, slotX: number, slotY: number, facingTheta: number | null): Promise<ShelfSlot>;
+  assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot>;
+  findByAprilTagId(aprilTagId: number): Promise<ShelfSlot | null>;
+  assignCoordinatesBatch(entries: Array<{ slotCode: string; slotX: number; slotY: number; facingTheta: number | null }>): Promise<ShelfSlot[]>;
 }

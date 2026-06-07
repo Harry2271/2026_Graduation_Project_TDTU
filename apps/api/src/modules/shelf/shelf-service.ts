@@ -159,4 +159,57 @@ export class ShelfService implements IShelfService, OnModuleInit {
     }
     return slot;
   }
+
+  async assignCoordinates(
+    slotCode: string,
+    slotX: number,
+    slotY: number,
+    facingTheta: number | null,
+  ): Promise<ShelfSlot> {
+    const slot = await this.shelfRepository.findSlotByCode(slotCode);
+    if (!slot) {
+      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
+    }
+    const updated = await this.shelfRepository.updateCoordinates(slotCode, slotX, slotY, facingTheta);
+    if (!updated) {
+      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
+    }
+    this.eventsGateway.emitShelfUpdated(updated);
+    return updated;
+  }
+
+  async assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot> {
+    if (aprilTagId < 0 || aprilTagId > 586) {
+      throw new BadRequestException('aprilTagId phải nằm trong khoảng 0..586');
+    }
+    const conflict = await this.shelfRepository.findByAprilTagId(aprilTagId);
+    if (conflict && conflict.code !== slotCode) {
+      throw new BadRequestException(`aprilTagId ${aprilTagId} đã được gán cho vị trí "${conflict.code}"`);
+    }
+    const slot = await this.shelfRepository.findSlotByCode(slotCode);
+    if (!slot) {
+      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
+    }
+    const updated = await this.shelfRepository.assignAprilTag(slotCode, aprilTagId);
+    if (!updated) {
+      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
+    }
+    this.eventsGateway.emitShelfUpdated(updated);
+    return updated;
+  }
+
+  async findByAprilTagId(aprilTagId: number): Promise<ShelfSlot | null> {
+    return this.shelfRepository.findByAprilTagId(aprilTagId);
+  }
+
+  async assignCoordinatesBatch(
+    entries: Array<{ slotCode: string; slotX: number; slotY: number; facingTheta: number | null }>,
+  ): Promise<ShelfSlot[]> {
+    const updated: ShelfSlot[] = [];
+    for (const entry of entries) {
+      const slot = await this.assignCoordinates(entry.slotCode, entry.slotX, entry.slotY, entry.facingTheta);
+      updated.push(slot);
+    }
+    return updated;
+  }
 }

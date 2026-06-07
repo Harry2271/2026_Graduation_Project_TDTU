@@ -16,4 +16,6 @@ export interface IShelfRepository {
   assignPackageToSlot(slotCode: string, packageId: Types.ObjectId): Promise<ShelfSlot | null>;
   clearSlot(slotCode: string): Promise<ShelfSlot | null>;
   clearSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null>;
+  updateCoordinates(slotCode: string, slotX: number, slotY: number, facingTheta: number | null): Promise<ShelfSlot | null>;
+  assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null>;
 }

@@ -82,6 +82,31 @@ export class ShelfRepository implements IShelfRepository {
       )
       .exec();
   }
+
+  async updateCoordinates(
+    slotCode: string,
+    slotX: number,
+    slotY: number,
+    facingTheta: number | null,
+  ): Promise<ShelfSlot | null> {
+    return this.shelfSlotModel
+      .findOneAndUpdate(
+        { code: slotCode },
+        { $set: { slotX, slotY, facingTheta } },
+        { new: true },
+      )
+      .exec();
+  }
+
+  async assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null> {
+    return this.shelfSlotModel
+      .findOneAndUpdate(
+        { code: slotCode },
+        { $set: { aprilTagId } },
+        { new: true },
+      )
+      .exec();
+  }
 }
 
 export const ShelfRepositoryProvider = {
