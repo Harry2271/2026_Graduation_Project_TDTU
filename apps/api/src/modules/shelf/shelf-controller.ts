@@ -17,8 +17,8 @@ import {
 } from '@nestjs/swagger';
 
 import { AssignAprilTagDto } from './dto/assign-april-tag.dto';
-import { AssignCoordinatesBatchDto } from './dto/assign-coordinates-batch.dto';
 import { AssignCoordinatesDto } from './dto/assign-coordinates.dto';
+import { AssignCoordinatesBatchDto } from './dto/assign-coordinates-batch.dto';
 import { AssignPackageDto } from './dto/assign-package.dto';
 import { MovePackageDto } from './dto/move-package.dto';
 import { Shelf } from './schemas/shelf.schema';
@@ -129,7 +129,7 @@ export class ShelfController {
     }
     return this.shelfService.findByAprilTagId(tagId).then((slot) => {
       if (!slot) {
-        throw new NotFoundException(`Không tìm thấy vị trí với aprilTagId ${tagId}`);
+        throw new NotFoundException(`Không tìm thấy vị trí với aprilTagId ${String(tagId)}`);
       }
       return slot;
     });

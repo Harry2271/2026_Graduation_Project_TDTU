@@ -184,7 +184,7 @@ export class ShelfService implements IShelfService, OnModuleInit {
     }
     const conflict = await this.shelfRepository.findByAprilTagId(aprilTagId);
     if (conflict && conflict.code !== slotCode) {
-      throw new BadRequestException(`aprilTagId ${aprilTagId} đã được gán cho vị trí "${conflict.code}"`);
+      throw new BadRequestException(`aprilTagId ${String(aprilTagId)} đã được gán cho vị trí "${conflict.code}"`);
     }
     const slot = await this.shelfRepository.findSlotByCode(slotCode);
     if (!slot) {
@@ -203,7 +203,7 @@ export class ShelfService implements IShelfService, OnModuleInit {
   }
 
   async assignCoordinatesBatch(
-    entries: Array<{ slotCode: string; slotX: number; slotY: number; facingTheta: number | null }>,
+    entries: { slotCode: string; slotX: number; slotY: number; facingTheta: number | null }[],
   ): Promise<ShelfSlot[]> {
     const updated: ShelfSlot[] = [];
     for (const entry of entries) {
