@@ -168,6 +168,17 @@ yarn test:e2e
 | POST   | `/shelves/:slotCode/package` | Assign a package to a slot        | 201, 400, 404 |
 | PUT    | `/shelves/:slotCode/package` | Move package to another slot     | 200, 400, 404 |
 | DELETE | `/shelves/:slotCode/package` | Remove package from a slot       | 204, 400, 404 |
+| PUT    | `/shelves/:slotCode/coordinates` | Set (slotX, slotY, facingTheta) | 200, 400, 404 |
+| PUT    | `/shelves/coordinates/batch` | Bulk-set coordinates (Calibrate) | 200, 400 |
+| PUT    | `/shelves/:slotCode/april-tag` | Assign fixed AprilTag ID (0..586) | 200, 400, 404 |
+| GET    | `/shelves/april-tag/:aprilTagId` | Lookup slot by AprilTag (robot vision) | 200, 404 |
+
+### Robot Maps (`/api/robot`)
+
+| Method | Path                      | Description                          | Status Codes |
+| ------ | ------------------------- | ------------------------------------ | ------------ |
+| GET    | `/api/robot/map-image`    | Latest saved SLAM map (PGM)          | 200, 404 |
+| GET    | `/api/robot/map-image/:name` | Specific named map                | 200, 404 |
 
 **Slot codes follow the pattern:** `{shelf}{row}{column}` — e.g., `S1A1`, `S2D4`.
 - Shelf codes: `S1`, `S2`, `S3`, `S4`
@@ -178,6 +189,16 @@ yarn test:e2e
 **Slot status enum (`SlotStatus`):**
 - `AVAILABLE` — slot is empty and ready for assignment
 - `OCCUPIED` — slot contains a package
+- `RESERVED` — robot job created; package still at previous slot
+- `TRANSIT` — package is on the robot (in transit between slots)
+
+**Slot coordinates (Calibrate):** each slot may carry a `(slotX, slotY, facingTheta)` triple and an `aprilTagId` (0..586). All four are set via the Calibrate page (`/calibrate`):
+- `PUT /shelves/:slotCode/coordinates` — single slot
+- `PUT /shelves/coordinates/batch` — bulk
+- `PUT /shelves/:slotCode/april-tag` — assign fixed AprilTag ID
+- `GET /shelves/april-tag/:aprilTagId` — robot-vision lookup
+
+`aprilTagId` has a partial unique index (only when present) so the 64 seeded slots can coexist with `aprilTagId: null`.
 
 ---
 
@@ -232,8 +253,12 @@ yarn test:e2e
   shelf: string,         // "S1"–"S4"
   row: string,            // "A"–"D"
   column: number,         // 1–4
-  status: SlotStatus,    // AVAILABLE | OCCUPIED
+  status: SlotStatus,    // AVAILABLE | OCCUPIED | RESERVED | TRANSIT
   packageId: ObjectId | null,  // ref to Package
+  slotX?: number,         // meters in SLAM map frame (set during Calibrate)
+  slotY?: number,         // meters in SLAM map frame (set during Calibrate)
+  facingTheta?: number,   // radians, yaw the robot must face when stopped here
+  aprilTagId?: number,    // 0..586, fixed physical tag ID (set during Calibrate)
   createdAt: Date,
   updatedAt: Date,
 }
@@ -371,6 +396,7 @@ Both modules also use `forwardRef(() => OtherModule)` in their `imports` arrays.
 | ---------- | -------- | ------------------------------------ |
 | `MONGO_URI` | **Yes**  | MongoDB connection string           |
 | `PORT`     | No       | Server port (default: `5000`)        |
+| `MAPS_DIR` | No       | Directory where the robot saves SLAM map images (PGM files). Default: `/home/pi/robot_ws/maps`. Used by `/api/robot/map-image*` to serve the map to the Calibrate page. |
 
 ---
 
@@ -432,6 +458,10 @@ All DTOs and schemas are decorated with `@ApiProperty()` from `@nestjs/swagger` 
 | `src/modules/shelf/interfaces/shelf-service.interface.ts` | Service contract |
 | `src/modules/shelf/dto/assign-package.dto.ts` | `packageId` — assign to slot |
 | `src/modules/shelf/dto/move-package.dto.ts` | `targetSlotCode` — move package |
+| `src/modules/shelf/dto/assign-coordinates.dto.ts` | `slotX, slotY, facingTheta` — Calibrate single slot |
+| `src/modules/shelf/dto/assign-coordinates-batch.dto.ts` | `entries: [...]` — Calibrate bulk |
+| `src/modules/shelf/dto/assign-april-tag.dto.ts` | `aprilTagId` (0..586) — Calibrate AprilTag |
+| `src/modules/maps/maps.controller.ts` | `GET /api/robot/map-image` — serve SLAM map PGM to the Calibrate page |
 | `src/modules/shelf/shelf.token.ts` | String token `ISHELF_REPOSITORY`    |
 
 ---
