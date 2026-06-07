@@ -50,8 +50,16 @@ export class ShelfSlot {
   facingTheta?: number;
 
   @ApiPropertyOptional({ description: 'Fixed AprilTag ID for this slot (0..586), set during Calibrate', example: 42, nullable: true })
-  @Prop({ required: false, default: null, unique: true })
+  @Prop({ required: false, default: null })
   aprilTagId?: number;
 }
 
 export const ShelfSlotSchema = SchemaFactory.createForClass(ShelfSlot);
+
+// Sparse unique index so the 64 seeded slots (all with aprilTagId: null)
+// can coexist. Only slots with a real aprilTagId are checked for
+// uniqueness. Mirrors the partial-index pattern on Package.tagId.
+ShelfSlotSchema.index(
+  { aprilTagId: 1 },
+  { unique: true, partialFilterExpression: { aprilTagId: { $type: 'number' } } },
+);

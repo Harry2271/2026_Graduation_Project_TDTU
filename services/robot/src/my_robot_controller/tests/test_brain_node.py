@@ -22,22 +22,49 @@ from my_robot_controller.brain_node import BrainNode, BrainState  # noqa: E402
 def brain() -> BrainNode:
     """Construct a BrainNode without rclpy spin.
 
-    We monkey-patch rclpy.node.Node.__init__ to skip the heavy ROS setup.
+    We monkey-patch rclpy.node.Node.__init__ to skip the heavy ROS setup
+    AND stub get_logger / get_name so the BrainNode's __init__ can call
+    self.get_logger().info(...) without needing the rest of rclpy.
     """
     # Patch out rclpy.node.Node.__init__ before constructing BrainNode.
     import rclpy.node
     original_init = rclpy.node.Node.__init__
+    original_get_logger = rclpy.node.Node.get_logger
+    original_get_name = rclpy.node.Node.get_name
+
+    class _StubLogger:
+        def info(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def warn(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def error(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def debug(self, *args: object, **kwargs: object) -> None:
+            pass
 
     def _noop_init(self, name: str) -> None:
         # Skip rclpy.node.Node setup; just stash the name.
         self.__dict__['_name'] = name
 
+    def _stub_get_logger(self) -> _StubLogger:
+        return _StubLogger()
+
+    def _stub_get_name(self) -> str:
+        return str(self.__dict__.get('_name', 'brain'))
+
     rclpy.node.Node.__init__ = _noop_init  # type: ignore[assignment]
+    rclpy.node.Node.get_logger = _stub_get_logger  # type: ignore[assignment]
+    rclpy.node.Node.get_name = _stub_get_name  # type: ignore[assignment]
     try:
         node = BrainNode()
         yield node
     finally:
         rclpy.node.Node.__init__ = original_init  # type: ignore[assignment]
+        rclpy.node.Node.get_logger = original_get_logger  # type: ignore[assignment]
+        rclpy.node.Node.get_name = original_get_name  # type: ignore[assignment]
 
 
 def test_brain_starts_in_boot(brain: BrainNode) -> None:
