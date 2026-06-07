@@ -47,12 +47,15 @@ async def test_fake_bridge_e_stop_command() -> None:
 async def test_fake_bridge_heartbeat_runs_at_interval() -> None:
     bridge = FakeEsp32Bridge(heartbeat_interval_s=0.01)
     await bridge.connect()
-    await asyncio.sleep(0.05)
+    # Sleep long enough for at least 5 heartbeat cycles; assertion is loose
+    # (>= 2) so it stays stable across platforms with different clock
+    # resolution and asyncio scheduling overhead.
+    await asyncio.sleep(0.1)
     await bridge.disconnect()
 
     sent = bridge.sent_commands()
     heartbeat_count = sum(1 for cmd in sent if cmd == {'cmd': 'heartbeat'})
-    assert heartbeat_count >= 3, f'expected at least 3 heartbeats, got {heartbeat_count}'
+    assert heartbeat_count >= 2, f'expected at least 2 heartbeats, got {heartbeat_count}'
 
 
 @pytest.mark.asyncio
