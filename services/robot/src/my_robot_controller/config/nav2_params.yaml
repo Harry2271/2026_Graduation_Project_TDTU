@@ -1,0 +1,4 @@
+# Nav2 parameters — placeholder. Real values in Phase 3.
+amcl:
+  ros__parameters:
+    use_sim_time: false
