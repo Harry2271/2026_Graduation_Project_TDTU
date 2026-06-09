@@ -84,6 +84,8 @@ jobs:
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           PORT: ${{ vars.API_PORT }}
+          JWT_SIGN_SECRET: ${{ secrets.JWT_SIGN_SECRET }}
+          ROBOT_BRAIN_TOKEN: ${{ secrets.ROBOT_BRAIN_TOKEN }}
         run: |
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
           cd apps/api
@@ -129,6 +131,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build and deploy
+        env:
+          ROBOT_BRAIN_TOKEN: ${{ secrets.ROBOT_BRAIN_TOKEN }}
+          API_SOCKET_URL: ${{ vars.API_SOCKET_URL }}
         run: |
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
           cd services/robot

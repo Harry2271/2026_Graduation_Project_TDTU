@@ -392,11 +392,13 @@ Both modules also use `forwardRef(() => OtherModule)` in their `imports` arrays.
 
 ## Environment Variables
 
-| Variable   | Required | Description                          |
+| Variable | Required | Description |
 | ---------- | -------- | ------------------------------------ |
-| `MONGO_URI` | **Yes**  | MongoDB connection string           |
-| `PORT`     | No       | Server port (default: `5000`)        |
-| `MAPS_DIR` | No       | Directory where the robot saves SLAM map images (PGM files). Default: `/home/pi/robot_ws/maps`. Used by `/api/robot/map-image*` to serve the map to the Calibrate page. |
+| `MONGO_URI` | **Yes** | MongoDB connection string |
+| `PORT` | No | Server port (default: `5000`) |
+| `MAPS_DIR` | No | Directory where the robot saves SLAM map images (PGM files). Default: `/home/pi/robot_ws/maps`. Used by `/api/robot/map-image*` to serve the map to the Calibrate page. |
+| `JWT_SIGN_SECRET` | **Yes** | JWT signing secret for auth. Generate with `openssl rand -hex 32`. |
+| `ROBOT_BRAIN_TOKEN` | **Yes** | Shared secret for brain↔API Socket.io auth. Generate with `openssl rand -hex 32`. |
 
 ---
 
