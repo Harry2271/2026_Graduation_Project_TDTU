@@ -82,13 +82,6 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[params_file],
             ),
             Node(
-                package="nav2_recoveries",
-                executable="recoveries_server",
-                name="recoveries_server",
-                output="screen",
-                parameters=[params_file],
-            ),
-            Node(
                 package="nav2_bt_navigator",
                 executable="bt_navigator",
                 name="bt_navigator",
@@ -109,7 +102,6 @@ def generate_launch_description() -> LaunchDescription:
                             "amcl",
                             "planner_server",
                             "controller_server",
-                            "recoveries_server",
                             "bt_navigator",
                         ],
                     }

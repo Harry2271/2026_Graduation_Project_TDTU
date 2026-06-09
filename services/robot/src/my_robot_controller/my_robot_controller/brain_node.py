@@ -13,7 +13,7 @@ from enum import Enum
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
-from nav2_simple_commander.nav2_to_pose import BasicNavigator
+from nav2_simple_commander.robot_navigator import BasicNavigator
 from rclpy.node import Node
 
 from my_robot_controller.api_client import BrainApiClient
