@@ -51,6 +51,42 @@
 
 ---
 
+## Nav2 Bringup (Phase 3)
+
+Two modes via PM2 — operator must **not** run both at the same time:
+
+| Mode | PM2 service | What it does |
+|---|---|---|
+| MAPPING | `nexus-robot-slam` | slam_toolbox online_async — build/live-update map |
+| LIVE | `nexus-robot-nav2` | map_server + AMCL + Navfn + DWA — localization + planning on saved map |
+
+### Switching modes
+```bash
+pm2 stop nexus-robot-slam && pm2 start nexus-robot-nav2
+```
+
+### Save map (from MAPPING mode)
+```bash
+ros2 run nav2_map_server map_saver_cli -f ~/robot_ws/maps/latest
+```
+
+### Key nodes (LIVE mode)
+- `map_server` — loads `~/robot_ws/maps/latest.yaml`
+- `amcl` — publishes `map→odom`
+- `planner_server` — Navfn global planner
+- `controller_server` — DWA local planner (holonomic, mecanum)
+- `bt_navigator` — NavigateToPose action server
+- `recoveries_server` — spin / backup / wait
+- `lifecycle_manager` — orchestrates startup
+
+### Brain integration
+`brain_node.navigate_to(x, y, theta)` uses `nav2_simple_commander`. Called from state machine via `run_in_executor()` (wired in Phase 5).
+
+### Param file
+`config/nav2_params.yaml` — footprint: ~30cm square (mecanum), max vel: 0.3 m/s linear / 0.5 rad/s angular. Conservative for arm stability.
+
+---
+
 ## Running on the Pi
 
 **First-time setup** (one-time on the Pi):

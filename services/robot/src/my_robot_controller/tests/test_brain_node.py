@@ -102,3 +102,9 @@ def test_brain_uses_fake_esp32_bridge(brain: BrainNode) -> None:
     """The brain's _bridge should be a FakeEsp32Bridge in Phase 2."""
     from my_robot_controller.esp32_bridge import FakeEsp32Bridge
     assert isinstance(brain._bridge, FakeEsp32Bridge)
+
+
+def test_brain_has_navigate_to_method(brain: BrainNode) -> None:
+    """The brain node has a navigate_to method (Nav2 not available in unit test)."""
+    assert hasattr(brain, 'navigate_to')
+    assert callable(brain.navigate_to)
