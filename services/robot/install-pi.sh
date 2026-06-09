@@ -77,7 +77,6 @@ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME
         python3-pip \
         python3-venv \
         ros-jazzy-navigation2 \
-        ros-jazzy-nav2-dwa-planner \
         ros-jazzy-nav2-navfn-planner \
         ros-jazzy-nav2-simple-commander
 

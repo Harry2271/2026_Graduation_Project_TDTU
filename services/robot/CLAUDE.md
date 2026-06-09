@@ -58,7 +58,7 @@ Two modes via PM2 — operator must **not** run both at the same time:
 | Mode | PM2 service | What it does |
 |---|---|---|
 | MAPPING | `nexus-robot-slam` | slam_toolbox online_async — build/live-update map |
-| LIVE | `nexus-robot-nav2` | map_server + AMCL + Navfn + DWA — localization + planning on saved map |
+| LIVE | `nexus-robot-nav2` | map_server + AMCL + Navfn + SimpleFollowPath — localization + planning on saved map |
 
 ### Switching modes
 ```bash
@@ -74,7 +74,7 @@ ros2 run nav2_map_server map_saver_cli -f ~/robot_ws/maps/latest
 - `map_server` — loads `~/robot_ws/maps/latest.yaml`
 - `amcl` — publishes `map→odom`
 - `planner_server` — Navfn global planner
-- `controller_server` — DWA local planner (holonomic, mecanum)
+- `controller_server` — SimpleFollowPath local planner (holonomic, mecanum)
 - `bt_navigator` — NavigateToPose action server
 - `recoveries_server` — spin / backup / wait
 - `lifecycle_manager` — orchestrates startup

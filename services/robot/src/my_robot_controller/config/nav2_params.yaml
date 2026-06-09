@@ -134,33 +134,17 @@ controller_server:
     use_sim_time: false
     controller_plugins: ["FollowPath"]
     FollowPath:
-      plugin: "dwa_local_planner::DWAPlanner"
+      plugin: "nav2_controller::SimpleFollowPath"
       min_vel_x: -0.1
       max_vel_x: 0.3
-      min_vel_y: -0.1
-      max_vel_y: 0.15
       max_vel_theta: 0.5
       min_speed_xy: 0.05
       max_speed_xy: 0.35
       min_speed_theta: 0.1
       acc_lim_x: 0.2
-      acc_lim_y: 0.15
       acc_lim_theta: 0.4
       decel_lim_x: -0.3
-      decel_lim_y: -0.2
       decel_lim_theta: -0.6
-      vx_samples: 10
-      vy_samples: 5
-      vtheta_samples: 20
-      sim_time: 1.5
-      sim_granularity: 0.025
-      angular_sim_granularity: 0.025
-      path_distance_bias: 32.0
-      goal_distance_bias: 24.0
-      occdist_scale: 0.02
-      forward_point_distance: 0.1
-      oscillation_reset_dist: 0.05
-      escape_vel: -0.1
       holonomic_robot: true
       max_vel_trans: 0.35
       max_vel_rot: 0.5

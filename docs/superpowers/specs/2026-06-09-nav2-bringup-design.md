@@ -56,7 +56,7 @@ No changes to the existing `slam_only_launch.py` — it stays for MAPPING mode.
 | `map_server` | `nav2_map_server` | Load `latest.yaml`, publish `/map` |
 | `amcl` | `nav2_amcl` | Localization on static map, publish `map→odom` |
 | `planner_server` | `nav2_planner` | Navfn global planner |
-| `controller_server` | `nav2_controller` | DWA local planner (not DWB) |
+| `controller_server` | `nav2_controller` | SimpleFollowPath local planner (DWB mặc định Jazzy — DWA package không có sẵn) |
 | `bt_navigator` | `nav2_bt_navigator` | Behavior tree for NavigateToPose |
 | `recoveries_server` | `nav2_recoveries` | Spin / backup / wait |
 | `lifecycle_manager` | `nav2_lifecycle_manager` | Manage lifecycle of all Nav2 nodes |
@@ -69,7 +69,7 @@ Key settings:
 
 - **Footprint:** `[[0.15,0.15],[0.15,-0.15],[-0.15,-0.15],[-0.15,0.15]]` (~30cm square, mecanum)
 - **Global planner:** `navfn_planner` — simple, fast, no BT overhead
-- **Local planner:** `dwa_local_planner` — conservative velocities:
+- **Local planner:** `SimpleFollowPath` (DWB built-in) — conservative velocities:
   - `max_vel_x: 0.3 m/s`
   - `max_vel_theta: 0.5 rad/s`
   - `acc_lim_x: 0.2 m/s²`
@@ -174,6 +174,6 @@ pm2 logs nexus-robot-nav2 --lines 30
 
 | Question | Decision |
 |---|---|
-| DWB or DWA? | DWA — Jazzy-compatible, conservative params |
+| DWA or DWB? | Neither — Jazzy ships `SimpleFollowPath` by default. DWB is not available as separate apt package. `SimpleFollowPath` works well for mecanum with proper velocity limits set. |
 | AMCL initial pose source? | Parameter default `[0, 0, 0]`; Calibrate (future) writes to `initial_pose.yaml` |
 | Recovery behaviors? | Default 3 recoveries (spin, backup, wait); tune after Phase 6 real-world testing |
