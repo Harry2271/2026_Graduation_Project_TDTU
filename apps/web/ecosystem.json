@@ -2,8 +2,8 @@
   "apps": [
     {
       "name": "nguyen-frontend",
-      "script": "./.next/standalone/apps/web/server.js",
-      "cwd": "./",
+      "cwd": "./.next/standalone/apps/web",
+      "script": "server.js",
       "instances": 1,
       "exec_mode": "fork",
       "env": {
