@@ -76,6 +76,24 @@ export interface MoveCommandResponse {
   message?: string;
 }
 
+// ─── Job types (Phase 4) ──────────────────────────────────────────
+
+export type JobStatus = 'DISPATCHED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+
+export interface Job {
+  _id: string;
+  packageId: string;
+  fromSlotCode: string;
+  toSlotCode: string;
+  status: JobStatus;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DispatchMoveResponse {
+  jobId: string;
+}
+
 // ─── Slot code helpers ──────────────────────────────────────────────
 
 /**

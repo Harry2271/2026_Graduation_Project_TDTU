@@ -7,10 +7,12 @@ import type {
   Shelf,
   ShelfSlot,
   MovePackageDto,
+  Job,
+  DispatchMoveResponse,
 } from "@/types/inventory";
 
 // Tag type helpers matching RTK Query's FullTagDescription
-type TagType = "Packages" | "Shelves" | "Slots";
+type TagType = "Packages" | "Shelves" | "Slots" | "Jobs";
 type TagDescription =
   | { type: TagType }
   | { type: TagType; id: string | number };
@@ -202,7 +204,7 @@ export const inventoryApi = baseApi.injectEndpoints({
     }),
 
     movePackage: builder.mutation<
-      ShelfSlot,
+      DispatchMoveResponse,
       { sourceSlotCode: string; targetSlotCode: string }
     >({
       query: ({ sourceSlotCode, targetSlotCode }) => ({
@@ -214,6 +216,31 @@ export const inventoryApi = baseApi.injectEndpoints({
         { type: "Slots" },
         { type: "Packages" },
       ],
+    }),
+
+    getJobs: builder.query<Job[], void>({
+      query: () => "/jobs",
+      providesTags: (): TagDescription[] => [{ type: "Jobs" }],
+      async onCacheEntryAdded(_arg, { updateCachedData, cacheEntryRemoved }) {
+        const socket = getSocket();
+        socket.on("job:created", (newJob: Job) => {
+          updateCachedData((draft) => {
+            if (!Array.isArray(draft)) return;
+            const exists = draft.some((j) => j._id === newJob._id);
+            if (!exists) draft.unshift(newJob);
+          });
+        });
+        socket.on("job:updated", (updatedJob: Job) => {
+          updateCachedData((draft) => {
+            if (!Array.isArray(draft)) return;
+            const idx = draft.findIndex((j) => j._id === updatedJob._id);
+            if (idx >= 0) draft[idx] = updatedJob;
+          });
+        });
+        await cacheEntryRemoved;
+        socket.off("job:created");
+        socket.off("job:updated");
+      },
     }),
 
     removePackageFromSlot: builder.mutation<void, string>({
@@ -282,4 +309,5 @@ export const {
   useAssignCoordinatesMutation,
   useAssignCoordinatesBatchMutation,
   useAssignAprilTagMutation,
+  useGetJobsQuery,
 } = inventoryApi;
