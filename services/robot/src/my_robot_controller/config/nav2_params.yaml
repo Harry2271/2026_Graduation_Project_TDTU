@@ -203,7 +203,5 @@ lifecycle_manager:
       - amcl
       - planner_server
       - controller_server
-      - recoveries_server
       - bt_navigator
     bond_timeout: 4.0
-    attempt_start_late: true

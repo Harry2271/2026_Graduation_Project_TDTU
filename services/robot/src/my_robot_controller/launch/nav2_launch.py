@@ -1,4 +1,4 @@
-"""Nav2 bringup — map_server, AMCL, planner, controller, BT navigator, recoveries.
+"""Nav2 bringup — map_server, AMCL, planner, controller, BT navigator.
 
 Launched as: ros2 launch my_robot_controller nav2_launch.py
 Managed by PM2 as nexus-robot-nav2.
@@ -15,14 +15,10 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description() -> LaunchDescription:
-    # Arguments
     map_yaml_arg = DeclareLaunchArgument(
         "map_yaml",
         default_value=os.path.expanduser("~/robot_ws/maps/latest.yaml"),
         description="Path to the saved map YAML file",
-    )
-    use_sim_time_arg = DeclareLaunchArgument(
-        "use_sim_time", default_value="false", description="Use simulation time"
     )
     params_file_arg = DeclareLaunchArgument(
         "params_file",
@@ -49,7 +45,6 @@ def generate_launch_description() -> LaunchDescription:
 
     def launch_nodes(context) -> list:
         map_yaml = LaunchConfiguration("map_yaml").perform(context)
-        use_sim_time = LaunchConfiguration("use_sim_time").perform(context)
         params_file = LaunchConfiguration("params_file").perform(context)
 
         return [
@@ -58,7 +53,7 @@ def generate_launch_description() -> LaunchDescription:
                 executable="map_server",
                 name="map_server",
                 output="screen",
-                parameters=[{"use_sim_time": use_sim_time, "yaml_filename": map_yaml}],
+                parameters=[params_file, {"yaml_filename": map_yaml}],
             ),
             Node(
                 package="nav2_amcl",
@@ -93,26 +88,13 @@ def generate_launch_description() -> LaunchDescription:
                 executable="lifecycle_manager",
                 name="lifecycle_manager",
                 output="screen",
-                parameters=[
-                    {
-                        "use_sim_time": use_sim_time,
-                        "autostart": True,
-                        "node_names": [
-                            "map_server",
-                            "amcl",
-                            "planner_server",
-                            "controller_server",
-                            "bt_navigator",
-                        ],
-                    }
-                ],
+                parameters=[params_file],
             ),
         ]
 
     return LaunchDescription(
         [
             map_yaml_arg,
-            use_sim_time_arg,
             params_file_arg,
             OpaqueFunction(function=check_map),
             OpaqueFunction(function=launch_nodes),
