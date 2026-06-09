@@ -1,7 +1,8 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { forwardRef,Module } from '@nestjs/common';
+
+import { JobModule } from '../job/job.module';
 import { RobotGateway } from './robot.gateway';
 import { RobotService } from './robot.service';
-import { JobModule } from '../job/job.module';
 
 @Module({
   imports: [forwardRef(() => JobModule)],

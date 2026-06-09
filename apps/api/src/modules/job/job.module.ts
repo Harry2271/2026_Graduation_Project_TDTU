@@ -1,10 +1,11 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { forwardRef,Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { Job, JobSchema } from './job.schema';
-import { JobController } from './job.controller';
-import { JobService } from './job.service';
-import { ShelfModule } from '../shelf/shelf.module';
+
 import { RobotModule } from '../robot/robot.module';
+import { ShelfModule } from '../shelf/shelf.module';
+import { JobController } from './job.controller';
+import { Job, JobSchema } from './job.schema';
+import { JobService } from './job.service';
 
 @Module({
   imports: [

@@ -16,6 +16,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
+import { JobService } from '../job/job.service';
 import { AssignAprilTagDto } from './dto/assign-april-tag.dto';
 import { AssignCoordinatesDto } from './dto/assign-coordinates.dto';
 import { AssignCoordinatesBatchDto } from './dto/assign-coordinates-batch.dto';
@@ -24,7 +25,6 @@ import { MovePackageDto } from './dto/move-package.dto';
 import { Shelf } from './schemas/shelf.schema';
 import { ShelfSlot } from './schemas/shelf-slot.schema';
 import { ShelfService } from './shelf-service';
-import { JobService } from '../job/job.service';
 
 @ApiTags('shelves')
 @Controller('shelves')

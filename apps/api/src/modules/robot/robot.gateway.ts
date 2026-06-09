@@ -1,16 +1,17 @@
-import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-} from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RobotService } from './robot.service';
-import { JobService } from '../job/job.service';
+import {
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+
 import { Job, JobStatus } from '../job/job.schema';
+import { JobService } from '../job/job.service';
+import { RobotService } from './robot.service';
 
 @WebSocketGateway({
   namespace: '/robot',
@@ -32,8 +33,8 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   handleConnection(client: Socket): void {
-    const token = client.handshake.auth?.token;
-    const expected = this.configService.get<string>('ROBOT_BRAIN_TOKEN');
+    const token: unknown = client.handshake.auth?.token;
+    const expected: string | undefined = this.configService.get<string>('ROBOT_BRAIN_TOKEN');
     if (!token || token !== expected) {
       this.logger.warn(`Rejected connection from ${client.id} — invalid token`);
       client.disconnect();

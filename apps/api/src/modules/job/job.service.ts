@@ -1,12 +1,13 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Job, JobDocument, JobStatus } from './job.schema';
-import { DispatchMoveDto } from './dto/dispatch-move.dto';
-import { ShelfService } from '../shelf/shelf-service';
-import { SlotStatus } from '../shelf/schemas/shelf-slot.schema';
-import { RobotGateway } from '../robot/robot.gateway';
+
 import { EventsGateway } from '../../gateway/events-gateway';
+import { RobotGateway } from '../robot/robot.gateway';
+import { SlotStatus } from '../shelf/schemas/shelf-slot.schema';
+import { ShelfService } from '../shelf/shelf-service';
+import { DispatchMoveDto } from './dto/dispatch-move.dto';
+import { Job, JobDocument, JobStatus } from './job.schema';
 
 @Injectable()
 export class JobService {
@@ -55,11 +56,11 @@ export class JobService {
   }
 
   async findAll(): Promise<Job[]> {
-    return this.jobModel.find().sort({ createdAt: -1 }).lean() as unknown as Job[];
+    return this.jobModel.find().sort({ createdAt: -1 }).lean();
   }
 
   async findById(id: string): Promise<Job | null> {
-    return this.jobModel.findById(id).lean() as unknown as Job | null;
+    return this.jobModel.findById(id).lean();
   }
 
   async updateStatus(jobId: string, status: JobStatus): Promise<void> {

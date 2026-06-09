@@ -1,7 +1,8 @@
-import { Controller, Get, Param, Post, Body } from '@nestjs/common';
+import { Body,Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JobService } from './job.service';
+
 import { DispatchMoveDto } from './dto/dispatch-move.dto';
+import { JobService } from './job.service';
 
 @ApiTags('Jobs')
 @Controller('jobs')

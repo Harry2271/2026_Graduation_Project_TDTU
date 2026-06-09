@@ -1,9 +1,10 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { PassportStrategy } from '@nestjs/passport';
 import { Model } from 'mongoose';
+import { ExtractJwt, Strategy } from 'passport-jwt';
+
 import { User, UserDocument } from './auth.schema';
 
 export interface JwtPayload {
@@ -20,13 +21,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: true, // permanent tokens
-      secretOrKey: configService.get<string>('JWT_SIGN_SECRET')!,
+      secretOrKey: configService.get<string>('JWT_SIGN_SECRET') ?? '',
     });
   }
 
   async validate(payload: JwtPayload): Promise<UserDocument> {
     const user = await this.userModel.findById(payload.sub);
-    if (!user || !user.approved) {
+    if (!user?.approved) {
       throw new UnauthorizedException();
     }
     return user;

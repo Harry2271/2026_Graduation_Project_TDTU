@@ -8,9 +8,9 @@ export class RobotService {
   private brainId: string | null = null;
 
   registerBrain(client: Socket): boolean {
-    if (this.brainClient && this.brainClient.connected) {
+    if (this.brainClient?.connected) {
       this.logger.warn(
-        `Brain ${client.id} connecting but ${this.brainId} already active — disconnecting old`,
+        `Brain ${client.id} connecting but ${this.brainId ?? 'unknown'} already active — disconnecting old`,
       );
       this.brainClient.disconnect();
     }
@@ -33,6 +33,6 @@ export class RobotService {
   }
 
   isBrainConnected(): boolean {
-    return this.brainClient !== null && this.brainClient.connected;
+    return this.brainClient?.connected === true;
   }
 }
