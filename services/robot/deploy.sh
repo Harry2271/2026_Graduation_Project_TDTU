@@ -79,7 +79,11 @@ start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller
 start_ros_node "${SERVICE_NAME_PREFIX}-brain" "ros2 run my_robot_controller brain"
 start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
 
-# 3. Nav2 (stub launch for Phase 0; real Nav2 in Phase 3)
+# --- Environment variables for brain<->API connection ---
+export API_SOCKET_URL="${API_SOCKET_URL:-https://api.nguyen-robot.io.vn}"
+export ROBOT_BRAIN_TOKEN="${ROBOT_BRAIN_TOKEN:-}"
+
+# 3. Nav2 (Phase 3 — real bringup)
 start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py"
 
 pm2 save

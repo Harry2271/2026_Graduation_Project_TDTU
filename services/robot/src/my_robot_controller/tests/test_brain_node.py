@@ -108,3 +108,10 @@ def test_brain_has_navigate_to_method(brain: BrainNode) -> None:
     """The brain node has a navigate_to method (Nav2 not available in unit test)."""
     assert hasattr(brain, 'navigate_to')
     assert callable(brain.navigate_to)
+
+
+def test_brain_has_api_client(brain: BrainNode) -> None:
+    """BrainNode should have a BrainApiClient instance."""
+    from my_robot_controller.api_client import BrainApiClient
+    assert hasattr(brain, '_api_client')
+    assert isinstance(brain._api_client, BrainApiClient)

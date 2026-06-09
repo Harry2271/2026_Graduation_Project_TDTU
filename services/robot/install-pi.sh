@@ -99,7 +99,7 @@ source /opt/ros/jazzy/setup.bash
 
 # ---- Python deps ------------------------------------------------------------
 echo "[EXTRA] Installing Python packages..."
-pip3 install --break-system-packages websockets numpy
+pip3 install --break-system-packages websockets numpy "python-socketio[asyncio_client]"
 
 # ---- Create project directories ---------------------------------------------
 echo "[EXTRA] Creating project directories..."
