@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { forwardRef, Inject, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   OnGatewayConnection,
@@ -29,6 +29,7 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private configService: ConfigService,
     private robotService: RobotService,
+    @Inject(forwardRef(() => JobService))
     private jobService: JobService,
   ) {}
 
