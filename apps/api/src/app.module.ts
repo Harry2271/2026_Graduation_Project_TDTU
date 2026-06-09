@@ -9,9 +9,11 @@ import { AppService } from './app.service';
 import { DatabaseConfig } from './config/database.config';
 import { GatewayModule } from './gateway/gateway.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { JobModule } from './modules/job/job.module';
 import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { MapsModule } from './modules/maps/maps.module';
 import { PackageModule } from './modules/package/package.module';
+import { RobotModule } from './modules/robot/robot.module';
 import { ShelfModule } from './modules/shelf/shelf.module';
 
 @Module({
@@ -25,6 +27,8 @@ import { ShelfModule } from './modules/shelf/shelf.module';
     DatabaseConfig,
     GatewayModule,
     AuthModule,
+    JobModule,
+    RobotModule,
     MapsModule,
     PackageModule,
     ShelfModule,

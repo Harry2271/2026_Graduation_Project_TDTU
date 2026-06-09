@@ -24,11 +24,15 @@ import { MovePackageDto } from './dto/move-package.dto';
 import { Shelf } from './schemas/shelf.schema';
 import { ShelfSlot } from './schemas/shelf-slot.schema';
 import { ShelfService } from './shelf-service';
+import { JobService } from '../job/job.service';
 
 @ApiTags('shelves')
 @Controller('shelves')
 export class ShelfController {
-  constructor(private readonly shelfService: ShelfService) {}
+  constructor(
+    private readonly shelfService: ShelfService,
+    private readonly jobService: JobService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get all shelves' })
@@ -65,15 +69,19 @@ export class ShelfController {
   }
 
   @Put(':slotCode/package')
-  @ApiOperation({ summary: 'Move a package from one slot to another (target must be empty)' })
-  @ApiResponse({ status: 200, description: 'Package moved to new slot', type: ShelfSlot })
-  @ApiResponse({ status: 400, description: 'Source slot is empty or target slot is occupied' })
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Move a package via AGV robot (returns jobId)' })
+  @ApiResponse({ status: 202, description: 'Job dispatched' })
+  @ApiResponse({ status: 400, description: 'Invalid move' })
   @ApiResponse({ status: 404, description: 'Slot not found' })
   movePackage(
     @Param('slotCode') slotCode: string,
     @Body() dto: MovePackageDto,
-  ): Promise<ShelfSlot> {
-    return this.shelfService.movePackage(slotCode.toUpperCase(), dto.targetSlotCode.toUpperCase());
+  ): Promise<{ jobId: string }> {
+    return this.jobService.dispatchMove({
+      fromSlotCode: slotCode.toUpperCase(),
+      toSlotCode: dto.targetSlotCode.toUpperCase(),
+    });
   }
 
   @Delete(':slotCode/package')

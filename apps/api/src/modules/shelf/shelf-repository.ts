@@ -4,7 +4,8 @@ import { Model, Types } from 'mongoose';
 
 import { IShelfRepository } from './interfaces/shelf-repository.interface';
 import { Shelf, ShelfDocument } from './schemas/shelf.schema';
-import { ShelfSlot, ShelfSlotDocument, SlotStatus } from './schemas/shelf-slot.schema';
+import { ShelfSlot, ShelfSlotDocument } from './schemas/shelf-slot.schema';
+import { SlotStatus } from './schemas/shelf-slot.schema';
 import { ISHELF_REPOSITORY } from './shelf.token';
 
 @Injectable()
@@ -106,6 +107,10 @@ export class ShelfRepository implements IShelfRepository {
         { new: true },
       )
       .exec();
+  }
+
+  async updateSlotStatus(slotCode: string, status: SlotStatus): Promise<void> {
+    await this.shelfSlotModel.updateOne({ code: slotCode }, { status }).exec();
   }
 }
 

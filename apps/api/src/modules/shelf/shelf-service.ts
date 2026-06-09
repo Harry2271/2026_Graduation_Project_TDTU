@@ -160,6 +160,20 @@ export class ShelfService implements IShelfService, OnModuleInit {
     return slot;
   }
 
+  // ─── Job/robot integration helpers (Phase 4) ─────────────────────
+
+  async findSlotByCode(slotCode: string): Promise<ShelfSlot | null> {
+    return this.shelfRepository.findSlotByCode(slotCode);
+  }
+
+  async updateSlotStatus(slotCode: string, status: SlotStatus): Promise<void> {
+    await this.shelfRepository.updateSlotStatus(slotCode, status);
+  }
+
+  async assignPackageToSlot(slotCode: string, packageId: Types.ObjectId): Promise<ShelfSlot | null> {
+    return this.shelfRepository.assignPackageToSlot(slotCode, packageId);
+  }
+
   async assignCoordinates(
     slotCode: string,
     slotX: number,

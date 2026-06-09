@@ -26,4 +26,12 @@ export class EventsGateway {
   emitShelfUpdated(data: unknown) {
     this.server.emit('shelf:updated', data);
   }
+
+  emitJobCreated(data: unknown) {
+    this.server.emit('job:created', data);
+  }
+
+  emitJobUpdated(data: unknown) {
+    this.server.emit('job:updated', data);
+  }
 }

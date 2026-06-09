@@ -1,7 +1,7 @@
 import type { Types } from 'mongoose';
 
 import type { Shelf } from '../schemas/shelf.schema';
-import type { ShelfSlot } from '../schemas/shelf-slot.schema';
+import type { ShelfSlot, SlotStatus } from '../schemas/shelf-slot.schema';
 
 export interface IShelfRepository {
   createShelf(shelf: Shelf): Promise<Shelf>;
@@ -18,4 +18,5 @@ export interface IShelfRepository {
   clearSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null>;
   updateCoordinates(slotCode: string, slotX: number, slotY: number, facingTheta: number | null): Promise<ShelfSlot | null>;
   assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null>;
+  updateSlotStatus(slotCode: string, status: SlotStatus): Promise<void>;
 }

@@ -1,6 +1,7 @@
-import { forwardRef,Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
+import { JobModule } from '../job/job.module';
 import { PackageModule } from '../package/package.module';
 import { Shelf, ShelfSchema } from './schemas/shelf.schema';
 import { ShelfSlot, ShelfSlotSchema } from './schemas/shelf-slot.schema';
@@ -15,6 +16,7 @@ import { ShelfService } from './shelf-service';
       { name: ShelfSlot.name, schema: ShelfSlotSchema },
     ]),
     forwardRef(() => PackageModule),
+    forwardRef(() => JobModule),
   ],
   controllers: [ShelfController],
   providers: [ShelfService, ShelfRepository, ShelfRepositoryProvider],
