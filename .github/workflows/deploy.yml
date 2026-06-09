@@ -84,6 +84,7 @@ jobs:
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           PORT: ${{ vars.API_PORT }}
+          MAPS_DIR: ${{ vars.MAPS_DIR }}
           JWT_SIGN_SECRET: ${{ secrets.JWT_SIGN_SECRET }}
           ROBOT_BRAIN_TOKEN: ${{ secrets.ROBOT_BRAIN_TOKEN }}
         run: |
