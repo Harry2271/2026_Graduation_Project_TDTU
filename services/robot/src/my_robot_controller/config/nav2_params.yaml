@@ -4,30 +4,6 @@ amcl:
     base_frame_id: base_footprint
     global_frame_id: map
     odom_frame_id: odom
-    odom_model_type: diff
-    set_initial_pose: true
-    initial_pose:
-      x: 0.0
-      y: 0.0
-      yaw: 0.0
-    laser_model_type: likelihood_field
-    max_beams: 60
-    max_particles: 2000
-    min_particles: 500
-    pf_err: 0.05
-    pf_z: 0.99
-    update_min_a: 0.2
-    update_min_d: 0.25
-    resample_interval: 1
-    transform_tolerance: 1.0
-    tf_broadcast: true
-    save_pose_rate: 0.5
-    sigma_hit: 0.2
-    z_hit: 0.5
-    z_short: 0.05
-    z_max: 0.05
-    z_rand: 0.5
-    first_map_only: false
 
 map_server:
   ros__parameters:
@@ -43,30 +19,6 @@ planner_server:
       tolerance: 0.5
       use_astar: false
       allow_unknown: true
-    global_costmap:
-      robot_base_frame: base_footprint
-      global_frame: map
-      footprint: [[0.15,0.15],[0.15,-0.15],[-0.15,-0.15],[-0.15,0.15]]
-      footprint_padding: 0.1
-      always_send_full_costmap: true
-      observation_sources: scan
-      scan:
-        topic: /scan
-        data_type: LaserScan
-        marking: true
-        clearing: true
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        map_subscribe_transient_local: true
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: true
-        observation_sources: scan
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.3
-        cost_scaling_factor: 3.0
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
 
 controller_server:
   ros__parameters:
@@ -77,45 +29,6 @@ controller_server:
       min_vel_x: -0.1
       max_vel_x: 0.3
       max_vel_theta: 0.5
-      min_speed_xy: 0.05
-      max_speed_xy: 0.35
-      min_speed_theta: 0.1
-      acc_lim_x: 0.2
-      acc_lim_theta: 0.4
-      decel_lim_x: -0.3
-      decel_lim_theta: -0.6
-      holonomic_robot: true
-      max_vel_trans: 0.35
-      max_vel_rot: 0.5
-    local_costmap:
-      robot_base_frame: base_footprint
-      global_frame: odom
-      footprint: [[0.15,0.15],[0.15,-0.15],[-0.15,-0.15],[-0.15,0.15]]
-      footprint_padding: 0.1
-      width: 3.0
-      height: 3.0
-      resolution: 0.05
-      observation_sources: scan
-      scan:
-        topic: /scan
-        data_type: LaserScan
-        marking: true
-        clearing: true
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.3
-        cost_scaling_factor: 3.0
-      plugins: ["voxel_layer", "inflation_layer"]
-      voxel_layer:
-        plugin: "nav2_costmap_2d::VoxelLayer"
-        enabled: true
-        publish_voxel_map: false
-        origin_z: 0.0
-        z_resolution: 0.05
-        z_voxels: 16
-        unknown_threshold: 15
-        mark_threshold: 0
-        observation_sources: scan
 
 bt_navigator:
   ros__parameters:
