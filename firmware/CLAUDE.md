@@ -91,6 +91,7 @@ An autonomous warehouse logistics robot capable of:
 | RPLIDAR A1M8-R6 | 360° scan, 0.15-12m range, 8kHz sample rate, UART 115200bps |
 | Webcam | USB camera for QR code scanning |
 | 5DOF Robotic Arm | 3× MG996R + 3× SG90 servos, ~40cm reach |
+| MCU-055 BNO055 | 9-axis accelerometer module (9DOF IMU), integrated with an intelligent sensor processor, supports I2C/UART communication |
 
 ### Power System
 | Component | Detail |
@@ -98,7 +99,7 @@ An autonomous warehouse logistics robot capable of:
 | Current Supply | 21VDC external PSU |
 | Battery (Planned) | 3S3P 18650 (11.1V nom / 12.6V full) with 40A BMS |
 | Regulation | Buck converters: 21V→12V (motors), 21V→5V (logic) |
-
+| INA226 (CJMCU-226) | Low-error current and voltage sensor, supports I2C communication (for power/battery voltage monitoring) |
 ---
 
 ## Pin Mapping — ESP32-S3 (WeAct N16R8)
