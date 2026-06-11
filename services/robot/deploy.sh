@@ -56,9 +56,9 @@ echo "🏗️ Building workspace..."
 colcon build --merge-install --executor sequential
 source "$ROS_WS/install/setup.bash"
 
-# --- [BƯỚC 2b] Ensure camera Python deps ---
-echo "📦 Checking camera dependencies..."
-pip3 install --quiet opencv-python-headless 2>/dev/null || echo "⚠️  pip3 opencv install skipped (may already be present)"
+# --- [BƯỚC 2b] Camera dependencies ---
+# camera_stream.py uses pure V4L2 (zero external deps) — no OpenCV or NumPy needed.
+echo "  ✓ Camera stream uses V4L2 (no extra deps)"
 
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."

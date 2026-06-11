@@ -20,7 +20,7 @@ setup(
         (os.path.join('share', package_name, 'config'),
             sorted(glob('config/*.yaml'))),
     ],
-    install_requires=['setuptools', 'websockets>=10.0', 'opencv-python-headless>=4.8'],
+    install_requires=['setuptools', 'websockets>=10.0'],
     zip_safe=True,
     maintainer='User',
     maintainer_email='user@todo.todo',
