@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, Wifi, WifiOff, Maximize2, Minimize2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 
-const CAMERA_STREAM_URL = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL || 'http://localhost:9092/stream';
+const CAMERA_STREAM_URL = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL || 'https://cam.nguyen-robot.io.vn/stream';
 const CAMERA_HEALTH_URL = CAMERA_STREAM_URL.replace('/stream', '/');
 
 export default function CameraPage() {
