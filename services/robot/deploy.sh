@@ -57,8 +57,13 @@ colcon build --merge-install --executor sequential
 source "$ROS_WS/install/setup.bash"
 
 # --- [BƯỚC 2b] Camera dependencies ---
-# camera_stream.py uses pure V4L2 (zero external deps) — no OpenCV or NumPy needed.
-echo "  ✓ Camera stream uses V4L2 (no extra deps)"
+echo "📦 Checking camera dependencies..."
+if command -v ffmpeg &>/dev/null; then
+    echo "  ✓ ffmpeg already installed"
+else
+    echo "  📥 Installing ffmpeg via apt..."
+    sudo apt-get install -y ffmpeg
+fi
 
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."
