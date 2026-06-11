@@ -20,7 +20,13 @@ export default function CameraPage() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch(CAMERA_HEALTH_URL, { cache: 'no-store' });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(CAMERA_HEALTH_URL, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
         if (res.ok) {
           const data = await res.json();
           setIsOnline(data.camera === true);
