@@ -12,7 +12,9 @@
   "out_file": "/home/pi/.pm2/logs/nguyen-backend-out.log",
   "time": true,
   "autorestart": true,
-  "max_restarts": 10,
+  "max_restarts": 5,
+  "min_uptime": "5s",
+  "exp_backoff_restart_delay": 2000,
   "max_memory_restart": "500M",
   "kill_timeout": 5000
 }

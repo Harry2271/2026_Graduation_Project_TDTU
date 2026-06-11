@@ -73,15 +73,25 @@ start_ros_node() {
 start_ros_node "${SERVICE_NAME_PREFIX}-lidar" "ros2 launch my_robot_controller lidar_only_launch.py serial_port:=$LIDAR_PORT"
 start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller slam_only_launch.py"
 
+# --- Environment variables for brain<->API connection ---
+# These are passed inline to the brain's bash command because PM2 daemon
+# may not inherit shell exports from this script.
+BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBOT_BRAIN_TOKEN=${ROBOT_BRAIN_TOKEN:-}"
+
 # 2. Logic Nodes (brain_node added in Phase 0 of robot-controller-brain plan)
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
 start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
-start_ros_node "${SERVICE_NAME_PREFIX}-brain" "ros2 run my_robot_controller brain"
-start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
 
-# --- Environment variables for brain<->API connection ---
-export API_SOCKET_URL="${API_SOCKET_URL:-https://api.nguyen-robot.io.vn}"
-export ROBOT_BRAIN_TOKEN="${ROBOT_BRAIN_TOKEN:-}"
+# Brain node gets extra PM2 settings: exponential backoff on restart so a
+# temporarily-unreachable API doesn't cause a 1500-restart crash loop.
+pm2 delete "${SERVICE_NAME_PREFIX}-brain" 2>/dev/null || true
+pm2 start "bash" \
+    --name "${SERVICE_NAME_PREFIX}-brain" \
+    --exp-backoff-restart-delay=1000 \
+    --max-restarts 50 \
+    -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
+
+start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
 
 # 3. Nav2 (Phase 3 — real bringup)
 start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py"

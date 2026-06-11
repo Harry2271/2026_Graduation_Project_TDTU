@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 DispatchCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
+# Retry settings for API connection
+_MAX_CONNECT_RETRIES = 10
+_BASE_RETRY_DELAY = 2.0
+_MAX_RETRY_DELAY = 60.0
+
 
 class BrainApiClient:
     """Manages a single Socket.io connection to the API's /robot namespace."""
@@ -40,27 +45,56 @@ class BrainApiClient:
 
         @self._sio.on('connect', namespace='/robot')
         def _on_connect() -> None:
+            self._connected = True
             logger.info('Connected to API /robot namespace')
 
         @self._sio.on('disconnect', namespace='/robot')
         def _on_disconnect() -> None:
+            self._connected = False
             logger.info('Disconnected from API /robot namespace')
 
     async def connect(self) -> None:
-        """Connect to the API server with ROBOT_BRAIN_TOKEN auth."""
+        """Connect to the API server with retry + exponential backoff.
+
+        Retries up to ``_MAX_CONNECT_RETRIES`` times. Does NOT raise on
+        failure — the caller should handle the fact that ``connected`` may
+        still be False after calling this method.
+        """
         if self._connected:
             return
-        try:
-            await self._sio.connect(
-                self._server_url,
-                namespaces=['/robot'],
-                auth={'token': self._token},
-            )
-            self._connected = True
-            logger.info('BrainApiClient connected to %s', self._server_url)
-        except Exception as e:
-            logger.error('BrainApiClient connection failed: %s', e)
-            raise
+
+        delay = _BASE_RETRY_DELAY
+        for attempt in range(1, _MAX_CONNECT_RETRIES + 1):
+            try:
+                await self._sio.connect(
+                    self._server_url,
+                    namespaces=['/robot'],
+                    auth={'token': self._token},
+                )
+                # _on_connect sets _connected = True
+                logger.info(
+                    'BrainApiClient connected to %s (attempt %d)',
+                    self._server_url,
+                    attempt,
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    'BrainApiClient connect attempt %d/%d failed: %s',
+                    attempt,
+                    _MAX_CONNECT_RETRIES,
+                    e,
+                )
+                if attempt < _MAX_CONNECT_RETRIES:
+                    import asyncio
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, _MAX_RETRY_DELAY)
+
+        logger.error(
+            'BrainApiClient: all %d connect attempts failed — '
+            'will retry in background loop',
+            _MAX_CONNECT_RETRIES,
+        )
 
     async def disconnect(self) -> None:
         """Disconnect from the API server."""

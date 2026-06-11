@@ -117,12 +117,34 @@ class BrainNode(Node):
             self.transition_to(BrainState.ERROR, f'job {job_id} failed')
 
 
+_RECONNECT_INTERVAL = 30.0  # seconds between background reconnection attempts
+
+
 async def _run_async(node: BrainNode) -> None:
-    """Async ROS spin loop that keeps the Socket.io client alive."""
+    """Async ROS spin loop that keeps the Socket.io client alive.
+
+    The API connection is non-fatal — if the backend is unreachable the brain
+    keeps spinning ROS and periodically retries the connection.  This prevents
+    PM2 crash-looping 1500+ times when the backend is temporarily down.
+    """
+    node.get_logger().info('Attempting initial API connection...')
     await node._api_client.connect()
+
+    last_reconnect = asyncio.get_event_loop().time()
+
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.1)
+
+        # If disconnected, try to reconnect periodically
+        if not node._api_client.connected:
+            now = asyncio.get_event_loop().time()
+            if now - last_reconnect >= _RECONNECT_INTERVAL:
+                node.get_logger().info('Attempting to reconnect to API...')
+                last_reconnect = now
+                await node._api_client.connect()
+
         await asyncio.sleep(0.1)
+
     await node._api_client.disconnect()
 
 
