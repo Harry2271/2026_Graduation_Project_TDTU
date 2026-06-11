@@ -279,7 +279,7 @@ These apply everywhere in the monorepo. Per-app `CLAUDE.md` files add project-sp
 | Where | Variable | Notes |
 |---|---|---|
 | `apps/api/.env` | `MONGO_URI`, `PORT` | written by deploy from GitHub secrets |
-| `apps/web/.env.local` | `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_WS_URL` | set at build time, baked into the bundle |
+| `apps/web/.env.local` | `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_CAMERA_STREAM_URL` | set at build time, baked into the bundle |
 | `apps/mobile/.env` | `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_CAMERA_STREAM_URL` | set at build time, baked into the bundle |
 | `services/robot` env | `LIDAR_MODEL` (e.g. `a1`) | set in `deploy.sh` |
 

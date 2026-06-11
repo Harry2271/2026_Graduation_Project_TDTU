@@ -56,6 +56,10 @@ echo "🏗️ Building workspace..."
 colcon build --merge-install --executor sequential
 source "$ROS_WS/install/setup.bash"
 
+# --- [BƯỚC 2b] Ensure camera Python deps ---
+echo "📦 Checking camera dependencies..."
+pip3 install --quiet opencv-python-headless 2>/dev/null || echo "⚠️  pip3 opencv install skipped (may already be present)"
+
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."
 
@@ -92,6 +96,14 @@ pm2 start "bash" \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
 
 start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
+
+# Camera stream (MJPEG over HTTP on port 9092)
+CAMERA_ENV="CAMERA_DEVICE=/dev/video0 CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_FPS=15 CAMERA_QUALITY=80 CAMERA_PORT=9092"
+pm2 delete "${SERVICE_NAME_PREFIX}-camera" 2>/dev/null || true
+pm2 start "bash" \
+    --name "${SERVICE_NAME_PREFIX}-camera" \
+    --max-restarts 10 \
+    -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $CAMERA_ENV ros2 run my_robot_controller camera_stream"
 
 # 3. Nav2 (Phase 3 — real bringup)
 start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py"

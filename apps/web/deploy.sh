@@ -41,6 +41,7 @@ yarn install --frozen-lockfile
 echo "[4/7] 🏗️ Building Next.js (Pi 5 is fast, please wait)..."
 export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL}"
 export NEXT_PUBLIC_WS_URL="${NEXT_PUBLIC_WS_URL}"
+export NEXT_PUBLIC_CAMERA_STREAM_URL="${NEXT_PUBLIC_CAMERA_STREAM_URL}"
 export NEXT_TELEMETRY_DISABLED=1
 
 (cd "$APP_DIR" && yarn build)

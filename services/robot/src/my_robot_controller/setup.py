@@ -20,7 +20,7 @@ setup(
         (os.path.join('share', package_name, 'config'),
             sorted(glob('config/*.yaml'))),
     ],
-    install_requires=['setuptools', 'websockets>=10.0'],
+    install_requires=['setuptools', 'websockets>=10.0', 'opencv-python-headless>=4.8'],
     zip_safe=True,
     maintainer='User',
     maintainer_email='user@todo.todo',
@@ -33,6 +33,7 @@ setup(
             'web_bridge = my_robot_controller.web_bridge:main',
             'map_manager = my_robot_controller.map_manager_node:main',
             'april_tag_node = my_robot_controller.april_tag_node:main',
+            'camera_stream = my_robot_controller.camera_stream:main',
         ],
     },
 )

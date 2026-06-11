@@ -1,23 +1,65 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, Wifi, WifiOff, Maximize2, Minimize2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
+
+const CAMERA_STREAM_URL = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL || 'http://localhost:9092/stream';
+const CAMERA_HEALTH_URL = CAMERA_STREAM_URL.replace('/stream', '/');
 
 export default function CameraPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isOnline, setIsOnline] = useState(false);
+  const [timestamp, setTimestamp] = useState(new Date());
+  const [resolution, setResolution] = useState('—');
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [streamSrc, setStreamSrc] = useState(CAMERA_STREAM_URL);
 
-  const isOnline = false;
+  // Poll health endpoint every 5s to update isOnline + resolution
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch(CAMERA_HEALTH_URL, { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          setIsOnline(data.camera === true);
+          if (data.resolution) setResolution(data.resolution);
+        } else {
+          setIsOnline(false);
+        }
+      } catch {
+        setIsOnline(false);
+      }
+    };
 
-  const handleToggleFullscreen = () => {
+    checkHealth();
+    const interval = setInterval(checkHealth, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update timestamp every second when online
+  useEffect(() => {
+    if (!isOnline) return;
+    const interval = setInterval(() => setTimestamp(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, [isOnline]);
+
+  const handleToggleFullscreen = useCallback(() => {
     if (!isFullscreen) {
       document.documentElement.requestFullscreen?.();
     } else {
       document.exitFullscreen?.();
     }
     setIsFullscreen(!isFullscreen);
-  };
+  }, [isFullscreen]);
+
+  const handleReconnect = useCallback(() => {
+    setIsConnecting(true);
+    // Force-reload MJPEG stream by busting cache with timestamp
+    setStreamSrc(`${CAMERA_STREAM_URL}?t=${Date.now()}`);
+    setTimeout(() => setIsConnecting(false), 2000);
+  }, []);
 
   return (
     <div
@@ -93,7 +135,7 @@ export default function CameraPage() {
               style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-dim)', color: 'var(--text-muted)' }}
             >
               <span style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", fontSize: '11px' }}>
-                1920×1080 @ 30fps
+                {resolution}
               </span>
             </div>
           </div>
@@ -155,7 +197,7 @@ export default function CameraPage() {
             }}
           >
             <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-              {new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              {timestamp.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
           </div>
 
@@ -192,7 +234,7 @@ export default function CameraPage() {
             </button>
 
             <button
-              onClick={() => { setIsConnecting(true); setTimeout(() => setIsConnecting(false), 2000); }}
+              onClick={handleReconnect}
               title="Kết nối lại"
               className="w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
               style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-dim)', color: 'var(--text-secondary)' }}
@@ -201,55 +243,65 @@ export default function CameraPage() {
             </button>
           </div>
 
+          {/* MJPEG Stream — <img> tag handles multipart/x-mixed-replace natively */}
+          {isOnline && (
+            <img
+              ref={imgRef}
+              src={streamSrc}
+              alt="Camera stream"
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{ imageRendering: 'auto' }}
+            />
+          )}
+
           {/* Center content: offline state */}
-          <div className="absolute inset-0 flex items-center justify-center z-30">
-            <div className="text-center">
-              {/* Large icon */}
-              <div
-                className="w-20 h-20 md:w-24 md:h-24 rounded-3xl mx-auto mb-4 md:mb-6 flex items-center justify-center"
-                style={{
-                  background: 'linear-gradient(135deg, rgba(255,59,92,0.08), rgba(255,59,92,0.02))',
-                  border: '1px solid rgba(255,59,92,0.15)',
-                  boxShadow: '0 0 40px rgba(255,59,92,0.08)',
-                }}
-              >
-                <Camera size={44} style={{ color: 'rgba(255,59,92,0.4)' }} />
-              </div>
-
-              <h2
-                className="text-lg md:text-xl font-black mb-2"
-                style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
-              >
-                Camera Robot — Chưa kết nối
-              </h2>
-              <p
-                className="text-xs md:text-sm max-w-sm mx-auto px-4"
-                style={{ color: 'var(--text-muted)', lineHeight: 1.6, fontFamily: "'JetBrains Mono', monospace" }}
-              >
-                Luồng video từ camera gắn trên tay robot sẽ hiển thị tại đây khi kết nối WebSocket thành công với ROS.
-              </p>
-
-              {/* Connection info */}
-              <div
-                className="mt-6 inline-flex items-center gap-3 px-5 py-3 rounded-2xl"
-                style={{
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border-dim)',
-                }}
-              >
+          {!isOnline && (
+            <div className="absolute inset-0 flex items-center justify-center z-30">
+              <div className="text-center">
+                {/* Large icon */}
                 <div
-                  className="w-2 h-2 rounded-full"
-                  style={{ background: 'var(--danger)', boxShadow: '0 0 8px var(--danger-glow)' }}
-                />
-                <span className="text-xs font-mono" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                  ws://robot.local:9090/camera/compressed
-                </span>
+                  className="w-20 h-20 md:w-24 md:h-24 rounded-3xl mx-auto mb-4 md:mb-6 flex items-center justify-center"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(255,59,92,0.08), rgba(255,59,92,0.02))',
+                    border: '1px solid rgba(255,59,92,0.15)',
+                    boxShadow: '0 0 40px rgba(255,59,92,0.08)',
+                  }}
+                >
+                  <Camera size={44} style={{ color: 'rgba(255,59,92,0.4)' }} />
+                </div>
+
+                <h2
+                  className="text-lg md:text-xl font-black mb-2"
+                  style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
+                >
+                  Camera Robot — Chưa kết nối
+                </h2>
+                <p
+                  className="text-xs md:text-sm max-w-sm mx-auto px-4"
+                  style={{ color: 'var(--text-muted)', lineHeight: 1.6, fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  Luồng video từ camera gắn trên tay robot sẽ hiển thị tại đây khi camera node hoạt động.
+                </p>
+
+                {/* Connection info */}
+                <div
+                  className="mt-6 inline-flex items-center gap-3 px-5 py-3 rounded-2xl"
+                  style={{
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border-dim)',
+                  }}
+                >
+                  <div
+                    className="w-2 h-2 rounded-full"
+                    style={{ background: 'var(--danger)', boxShadow: '0 0 8px var(--danger-glow)' }}
+                  />
+                  <span className="text-xs font-mono" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {CAMERA_HEALTH_URL}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-
-          {/* Video element (hidden when offline) */}
-          {/* <video ref={videoRef} autoPlay playsInline muted={isMuted} className="absolute inset-0 w-full h-full object-cover" /> */}
+          )}
         </div>
       </div>
 

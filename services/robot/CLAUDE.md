@@ -275,3 +275,43 @@ ros2 topic echo /map --once
 ros2 run tf2_ros tf2_echo map base_footprint
 sudo lsof -i :9091
 ```
+
+---
+
+## Camera Stream (MJPEG)
+
+The camera stream runs on **port 9092** (separate from the 9091 web bridge). It reads frames from the USB camera and serves them as MJPEG for the web UI.
+
+### Endpoints
+
+| Endpoint | Port | Description |
+|---|---|---|
+| `GET /stream` | `9092` | MJPEG multipart stream (`multipart/x-mixed-replace`) |
+| `GET /snapshot` | `9092` | Single JPEG frame |
+| `GET /` | `9092` | Health check (JSON: `{"camera": true, "device": "/dev/video0", ...}`) |
+
+### Configuration (env vars)
+
+| Variable | Default | Description |
+|---|---|---|
+| `CAMERA_DEVICE` | `/dev/video0` | V4L2 device path |
+| `CAMERA_WIDTH` | `640` | Capture width |
+| `CAMERA_HEIGHT` | `480` | Capture height |
+| `CAMERA_FPS` | `15` | Target FPS |
+| `CAMERA_QUALITY` | `80` | JPEG quality (1-100) |
+| `CAMERA_PORT` | `9092` | HTTP listen port |
+
+### Check camera node:
+```bash
+pm2 status nexus-robot-camera
+pm2 logs nexus-robot-camera --lines 10
+
+# Health check
+curl http://localhost:9092/
+
+# Snapshot
+curl -o snap.jpg http://localhost:9092/snapshot
+
+# Stream (open in browser)
+# http://<pi-ip>:9092/stream
+```
