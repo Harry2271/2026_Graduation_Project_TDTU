@@ -10,6 +10,7 @@ export const DatabaseConfig = MongooseModule.forRootAsync({
       throw new Error('MONGO_URI chưa được khai báo trong file .env');
     }
 
+    
     return { uri: mongoUri };
   },
 });
