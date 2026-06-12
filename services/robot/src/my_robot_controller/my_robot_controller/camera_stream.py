@@ -40,10 +40,10 @@ logger = logging.getLogger('camera_stream')
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 DEVICE = os.environ.get('CAMERA_DEVICE', '/dev/video0')
-WIDTH = int(os.environ.get('CAMERA_WIDTH', '640'))
-HEIGHT = int(os.environ.get('CAMERA_HEIGHT', '480'))
-FPS = int(os.environ.get('CAMERA_FPS', '15'))
-QUALITY = int(os.environ.get('CAMERA_QUALITY', '5'))
+WIDTH = int(os.environ.get('CAMERA_WIDTH', '1280'))
+HEIGHT = int(os.environ.get('CAMERA_HEIGHT', '720'))
+FPS = int(os.environ.get('CAMERA_FPS', '30'))
+QUALITY = int(os.environ.get('CAMERA_QUALITY', '2'))
 PORT = int(os.environ.get('CAMERA_PORT', '9092'))
 
 # ── Thread-safe frame buffer ───────────────────────────────────────────────────

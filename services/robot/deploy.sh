@@ -103,7 +103,7 @@ pm2 start "bash" \
 start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
 
 # Camera stream (MJPEG over HTTP on port 9092)
-CAMERA_ENV="CAMERA_DEVICE=/dev/video0 CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_FPS=15 CAMERA_QUALITY=80 CAMERA_PORT=9092"
+CAMERA_ENV="CAMERA_DEVICE=/dev/video0 CAMERA_WIDTH=1280 CAMERA_HEIGHT=720 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"
 pm2 delete "${SERVICE_NAME_PREFIX}-camera" 2>/dev/null || true
 pm2 start "bash" \
     --name "${SERVICE_NAME_PREFIX}-camera" \

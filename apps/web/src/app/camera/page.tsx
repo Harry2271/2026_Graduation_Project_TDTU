@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Camera, Wifi, WifiOff, Maximize2, Minimize2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 
 const CAMERA_STREAM_URL = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL || 'https://cam.nguyen-robot.io.vn/stream';
@@ -13,10 +13,9 @@ export default function CameraPage() {
   const [isOnline, setIsOnline] = useState(false);
   const [timestamp, setTimestamp] = useState(new Date());
   const [resolution, setResolution] = useState('—');
-  const imgRef = useRef<HTMLImageElement>(null);
   const [streamSrc, setStreamSrc] = useState(CAMERA_STREAM_URL);
 
-  // Poll health endpoint every 5s to update isOnline + resolution
+  // Health check — only for status badge, never blocks the <img> render
   useEffect(() => {
     const checkHealth = async () => {
       try {
@@ -40,16 +39,15 @@ export default function CameraPage() {
     };
 
     checkHealth();
-    const interval = setInterval(checkHealth, 5000);
+    const interval = setInterval(checkHealth, 10000);
     return () => clearInterval(interval);
   }, []);
 
-  // Update timestamp every second when online
+  // Update timestamp every second
   useEffect(() => {
-    if (!isOnline) return;
     const interval = setInterval(() => setTimestamp(new Date()), 1000);
     return () => clearInterval(interval);
-  }, [isOnline]);
+  }, []);
 
   const handleToggleFullscreen = useCallback(() => {
     if (!isFullscreen) {
@@ -62,7 +60,6 @@ export default function CameraPage() {
 
   const handleReconnect = useCallback(() => {
     setIsConnecting(true);
-    // Force-reload MJPEG stream by busting cache with timestamp
     setStreamSrc(`${CAMERA_STREAM_URL}?t=${Date.now()}`);
     setTimeout(() => setIsConnecting(false), 2000);
   }, []);
@@ -92,7 +89,6 @@ export default function CameraPage() {
               >
                 CAMERA ROBOT
               </h1>
-              {/* Mobile compact dot */}
               <span
                 className="md:hidden w-2 h-2 rounded-full"
                 style={{
@@ -122,7 +118,6 @@ export default function CameraPage() {
           </div>
 
           <div className="hidden md:flex items-center gap-3">
-            {/* Status */}
             <div
               className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold border"
               style={
@@ -135,7 +130,6 @@ export default function CameraPage() {
               {isOnline ? 'Đang kết nối' : 'Mất kết nối'}
             </div>
 
-            {/* Resolution */}
             <div
               className="px-3.5 py-2.5 rounded-2xl text-xs font-mono font-bold border"
               style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-dim)', color: 'var(--text-muted)' }}
@@ -207,7 +201,7 @@ export default function CameraPage() {
             </span>
           </div>
 
-          {/* Controls overlay at bottom */}
+          {/* Controls overlay */}
           <div
             className="absolute bottom-3 right-3 md:bottom-4 md:right-4 z-20 flex items-center gap-1.5 md:gap-2 p-1.5 rounded-2xl"
             style={{
@@ -249,22 +243,24 @@ export default function CameraPage() {
             </button>
           </div>
 
-          {/* MJPEG Stream — <img> tag handles multipart/x-mixed-replace natively */}
-          {isOnline && (
-            <img
-              ref={imgRef}
-              src={streamSrc}
-              alt="Camera stream"
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ imageRendering: 'auto' }}
-            />
-          )}
+          {/* MJPEG Stream — ALWAYS rendered, never conditional.
+              The <img> tag natively handles multipart/x-mixed-replace. */}
+          <img
+            key={streamSrc}
+            src={streamSrc}
+            alt="Camera stream"
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{
+              imageRendering: 'auto',
+              opacity: isOnline ? 1 : 0,
+              transition: 'opacity 0.5s ease',
+            }}
+          />
 
-          {/* Center content: offline state */}
+          {/* Offline overlay — sits ON TOP of the <img> */}
           {!isOnline && (
             <div className="absolute inset-0 flex items-center justify-center z-30">
               <div className="text-center">
-                {/* Large icon */}
                 <div
                   className="w-20 h-20 md:w-24 md:h-24 rounded-3xl mx-auto mb-4 md:mb-6 flex items-center justify-center"
                   style={{
@@ -280,16 +276,15 @@ export default function CameraPage() {
                   className="text-lg md:text-xl font-black mb-2"
                   style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', letterSpacing: '-0.02em' }}
                 >
-                  Camera Robot — Chưa kết nối
+                  Camera Robot — Đang chờ kết nối
                 </h2>
                 <p
                   className="text-xs md:text-sm max-w-sm mx-auto px-4"
                   style={{ color: 'var(--text-muted)', lineHeight: 1.6, fontFamily: "'JetBrains Mono', monospace" }}
                 >
-                  Luồng video từ camera gắn trên tay robot sẽ hiển thị tại đây khi camera node hoạt động.
+                  Luồng video từ camera gắn trên tay robot sẽ hiển thị tại đây.
                 </p>
 
-                {/* Connection info */}
                 <div
                   className="mt-6 inline-flex items-center gap-3 px-5 py-3 rounded-2xl"
                   style={{
@@ -302,7 +297,7 @@ export default function CameraPage() {
                     style={{ background: 'var(--danger)', boxShadow: '0 0 8px var(--danger-glow)' }}
                   />
                   <span className="text-xs font-mono" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                    {CAMERA_HEALTH_URL}
+                    {CAMERA_STREAM_URL}
                   </span>
                 </div>
               </div>
