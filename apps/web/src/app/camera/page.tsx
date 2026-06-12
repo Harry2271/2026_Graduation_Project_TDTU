@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Camera, Wifi, WifiOff, Maximize2, Minimize2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 
-const CAMERA_STREAM_URL = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL || 'https://cam.nguyen-robot.io.vn/stream';
-const CAMERA_HEALTH_URL = CAMERA_STREAM_URL.replace('/stream', '/');
+const CAMERA_BASE_URL = (process.env.NEXT_PUBLIC_CAMERA_STREAM_URL || 'https://cam.nguyen-robot.io.vn').replace(/\/stream\/?$/, '');
+const CAMERA_HEALTH_URL = `${CAMERA_BASE_URL}/`;
+const CAMERA_SNAPSHOT_URL = `${CAMERA_BASE_URL}/snapshot`;
 
 export default function CameraPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -13,23 +14,22 @@ export default function CameraPage() {
   const [isOnline, setIsOnline] = useState(false);
   const [timestamp, setTimestamp] = useState(new Date());
   const [resolution, setResolution] = useState('—');
-  const [streamSrc, setStreamSrc] = useState(CAMERA_STREAM_URL);
+  const [snapshotUrl, setSnapshotUrl] = useState(`${CAMERA_SNAPSHOT_URL}?t=0`);
 
-  // Health check — only for status badge, never blocks the <img> render
+  // Snapshot polling — refresh frame every 200ms (~5 fps visual).
+  // Uses ObjectURL for zero-copy, revokes the previous blob to avoid memory leaks.
   useEffect(() => {
-    const checkHealth = async () => {
+    let alive = true;
+
+    const fetchFrame = async () => {
+      if (!alive) return;
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch(CAMERA_HEALTH_URL, {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (res.ok) {
-          const data = await res.json();
-          setIsOnline(data.camera === true);
-          if (data.resolution) setResolution(data.resolution);
+        const res = await fetch(`${CAMERA_SNAPSHOT_URL}?t=${Date.now()}`, { cache: 'no-store' });
+        if (res.ok && alive) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          setSnapshotUrl(prev => { URL.revokeObjectURL(prev); return url; });
+          setIsOnline(true);
         } else {
           setIsOnline(false);
         }
@@ -38,9 +38,23 @@ export default function CameraPage() {
       }
     };
 
-    checkHealth();
-    const interval = setInterval(checkHealth, 10000);
-    return () => clearInterval(interval);
+    // Initial health check to get resolution
+    const init = async () => {
+      try {
+        const res = await fetch(`${CAMERA_HEALTH_URL}?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          const data = await res.json();
+          setIsOnline(data.camera === true);
+          if (data.resolution) setResolution(data.resolution);
+        }
+      } catch { /* ignore */ }
+    };
+    init();
+
+    // Start snapshot loop
+    const interval = setInterval(fetchFrame, 200);
+    fetchFrame(); // first frame immediately
+    return () => { alive = false; clearInterval(interval); };
   }, []);
 
   // Update timestamp every second
@@ -60,7 +74,7 @@ export default function CameraPage() {
 
   const handleReconnect = useCallback(() => {
     setIsConnecting(true);
-    setStreamSrc(`${CAMERA_STREAM_URL}?t=${Date.now()}`);
+    setSnapshotUrl(`${CAMERA_SNAPSHOT_URL}?t=${Date.now()}`);
     setTimeout(() => setIsConnecting(false), 2000);
   }, []);
 
@@ -243,11 +257,10 @@ export default function CameraPage() {
             </button>
           </div>
 
-          {/* MJPEG Stream — ALWAYS rendered, never conditional.
-              The <img> tag natively handles multipart/x-mixed-replace. */}
+          {/* Snapshot polling — each frame is a separate request, never stales */}
           <img
-            key={streamSrc}
-            src={streamSrc}
+            key={snapshotUrl}
+            src={snapshotUrl}
             alt="Camera stream"
             className="absolute inset-0 w-full h-full object-cover"
             style={{
@@ -297,7 +310,7 @@ export default function CameraPage() {
                     style={{ background: 'var(--danger)', boxShadow: '0 0 8px var(--danger-glow)' }}
                   />
                   <span className="text-xs font-mono" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                    {CAMERA_STREAM_URL}
+                    {CAMERA_SNAPSHOT_URL}
                   </span>
                 </div>
               </div>
