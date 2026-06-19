@@ -19,8 +19,10 @@ void ObstacleAvoidance::onObstacleEvent(ObstacleDirection dir, uint32_t now_ms)
     last_obstacle_ms_ = now_ms;
     obstacle_active_ = true;
 
-    if (dir != ObstacleDirection::NONE && dir != last_dir_) {
-        startDodge(dir, now_ms);
+    if (dir != ObstacleDirection::NONE) {
+        if (dir != last_dir_ || !dodging_) {
+            startDodge(dir, now_ms);
+        }
     }
 }
 
@@ -136,6 +138,27 @@ void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
             vy = -120;
             vx = -40;
             omega = -40;
+            break;
+
+        case ObstacleDirection::REAR:
+            // Obstacle behind — stop backward, nudge forward
+            if (vx < 0) vx = 40;
+            vy = 0;
+            omega = 0;
+            break;
+
+        case ObstacleDirection::REAR_LEFT:
+            // Obstacle rear-left — stop backward + strafe right
+            if (vx < 0) vx = 0;
+            vy = 80;
+            omega = 0;
+            break;
+
+        case ObstacleDirection::REAR_RIGHT:
+            // Obstacle rear-right — stop backward + strafe left
+            if (vx < 0) vx = 0;
+            vy = -80;
+            omega = 0;
             break;
 
         default:

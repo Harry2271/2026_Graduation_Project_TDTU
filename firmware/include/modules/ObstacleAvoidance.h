@@ -10,6 +10,9 @@ enum class ObstacleDirection {
     RIGHT,
     FRONT_LEFT,
     FRONT_RIGHT,
+    REAR,
+    REAR_LEFT,
+    REAR_RIGHT,
 };
 
 struct AvoidanceResult {

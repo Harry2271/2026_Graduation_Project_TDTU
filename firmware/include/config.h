@@ -24,23 +24,32 @@ static const char* MOTOR_NAMES[] = {
 
 // ============================================================
 // BTS7960 PIN MAPPING
-// Safe GPIOs: 1-5, 7-8, 12-17, 20-25, 38-42, 47-48
+// ESP32-S3-WROOM-1U-N16R8 (Octal SPI Flash 26-32 + Octal PSRAM 33-37)
+//
+// Module pads available:
+//   Left:  EN, 4,5,6,7,15,16,17,18,8,19,20,3,46,9,10
+//   Right: 43,44,2,1,45,46,0,35,36,37,38,39,40,41,42,47,48,21
+//   Not on module: 22, 23, 24, 25
+// Strapping: 0 (boot), 9, 45, 46
+// USB: 18 (D-), 19 (D+) — safe when CDC disabled
+// UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 // ============================================================
 struct MotorPins {
     uint8_t rpwm;
     uint8_t lpwm;
     uint8_t en;
+    int8_t  dir;  // +1 = normal, -1 = reversed (swap forward/backward)
 };
 
 static const MotorPins MOTOR_PINS[] = {
     // FL: Front-Left
-    { .rpwm = 12, .lpwm = 13, .en = 3  },
-    // FR: Front-Right
-    { .rpwm = 14, .lpwm = 15, .en = 7  },
+    { .rpwm = 12, .lpwm = 13, .en = 3,  .dir =  1 },
+    // FR: Front-Right  — reversed so it spins forward with same PWM
+    { .rpwm = 14, .lpwm = 15, .en = 7,  .dir = -1 },
     // RL: Rear-Left
-    { .rpwm = 16, .lpwm = 17, .en = 48 },
-    // RR: Rear-Right
-    { .rpwm = 38, .lpwm = 39, .en = 21 },
+    { .rpwm = 16, .lpwm = 17, .en = 48, .dir =  1 },
+    // RR: Rear-Right  — reversed so it spins forward with same PWM
+    { .rpwm = 38, .lpwm = 39, .en = 47, .dir = -1 },
 };
 
 // LEDC channels (8 total, 2 per motor)
@@ -59,7 +68,7 @@ static const EncoderPins ENCODER_PINS[] = {
     // FL encoder — PCNT_UNIT_0
     { .cha = 40, .chb = 41 },
     // FR encoder — PCNT_UNIT_1
-    { .cha = 42, .chb = 2  },
+    { .cha = 42, .chb = 6  },
     // RL encoder — PCNT_UNIT_2
     { .cha = 4,  .chb = 5  },
     // RR encoder — PCNT_UNIT_3
@@ -141,3 +150,53 @@ enum MotorState {
 #define DODGE_STRAFE_SPEED      100     // Strafe speed during dodge (-255 to 255)
 #define DODGE_DURATION_MS       800     // How long to maintain dodge maneuver
 #define DODGE_SLOW_FORWARD      60      // Forward speed while dodging
+
+// ============================================================
+// BNO055 IMU (9-DOF, I2C address 0x28)
+// ============================================================
+#define BNO055_I2C_ADDR        0x28
+#define BNO055_SDA_PIN         10       // Module pad 17 (left side)
+#define BNO055_SCL_PIN         11       // Module pad 18 (right side)
+#define BNO055_I2C_FREQ_HZ     400000
+#define IMU_PUBLISH_MS         50       // Publish heading at 20 Hz
+
+// ============================================================
+// INA226 Power Monitor (CJMCU-226, I2C address 0x40)
+// ============================================================
+#define INA226_I2C_ADDR        0x40
+#define INA226_SDA_PIN         10       // Shared I2C bus with BNO055
+#define INA226_SCL_PIN         11       // Shared I2C bus with BNO055
+#define INA226_I2C_FREQ_HZ     400000
+#define INA226_SHUNT_OHMS      0.01f    // 10 mΩ on CJMCU-226
+#define POWER_PUBLISH_MS       5000     // Publish power telemetry every 5 s
+
+// ============================================================
+// Battery — 3S Li-ion (18650) SOC Curve
+// Full = 12.6V (4.2V/cell), Empty = 9.0V (3.0V/cell)
+// ============================================================
+#define BATTERY_VOLTAGE_FULL   12.6f    // 4.2V × 3 cells — 100%
+#define BATTERY_VOLTAGE_NOM    11.1f    // 3.7V × 3 cells — ~50%
+#define BATTERY_VOLTAGE_EMPTY  9.0f     // 3.0V × 3 cells —   0%
+#define BATTERY_LOW_WARN_PCT   20       // Warning threshold (%)
+#define BATTERY_CRITICAL_PCT   10       // Critical — notify Pi for safe stop
+
+// ============================================================
+// E18-D80NK IR Proximity Sensors (digital, active-LOW)
+// ============================================================
+#define IR_SENSOR_COUNT       4
+#define IR_SENSOR_POLL_MS     20       // Read at 50 Hz (same as PID)
+#define IR_DEBOUNCE_MS        50       // Debounce filter
+
+#define IR_REAR_LEFT_PIN      1
+#define IR_REAR_RIGHT_PIN     8
+#define IR_LEFT_PIN           45       // Strapping pin — safe as input after boot
+#define IR_RIGHT_PIN          46       // Strapping pin — safe as input after boot
+
+// ============================================================
+// Sharp GP2Y0A21YK0F — Front-mounted analog distance sensor
+// (10-80 cm range, analog voltage output)
+// ============================================================
+#define SHARP_FRONT_PIN       9        // ADC1_CH8
+#define SHARP_FRONT_THRESHOLD_CM  30   // Hard-stop distance (cm)
+#define SHARP_FRONT_SLOW_CM       60   // Begin slowing down (cm)
+#define SHARP_FRONT_POLL_MS       20   // Read at 50 Hz
