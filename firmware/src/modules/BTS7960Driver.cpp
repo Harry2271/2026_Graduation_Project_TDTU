@@ -15,7 +15,7 @@ void BTS7960Driver::begin()
     gpio_reset_pin((gpio_num_t)en_pin_);
 
     gpio_set_direction((gpio_num_t)en_pin_, GPIO_MODE_OUTPUT);
-    gpio_pullup_en((gpio_num_t)en_pin_);
+    gpio_pullup_dis((gpio_num_t)en_pin_);
     gpio_pulldown_dis((gpio_num_t)en_pin_);
 
     ets_delay_us(10);

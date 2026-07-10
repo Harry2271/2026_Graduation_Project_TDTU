@@ -14,6 +14,7 @@ IRProximitySensor::IRProximitySensor() : prev_any_(false)
     for (int i = 0; i < 4; i++) {
         readings_[i].detected   = false;
         readings_[i].changed_ms = 0;
+        sensor_present_[i]      = true;  // optimistic until begin() probes each pin
     }
 }
 
@@ -37,6 +38,19 @@ void IRProximitySensor::begin()
         Serial.printf("%s=%d ", names[i], raw);
     }
     Serial.println("(LOW=detected, HIGH=clear)");
+
+    // Mark strapping pins (GPIO 45/46) as unavailable if they're floating LOW
+    // at boot — common when the E18-D80NK is not yet wired. Without this guard
+    // the sensor reads as "detected" forever and latches obstacle_active_.
+    for (int i = 0; i < 4; i++) {
+        if (digitalRead(PINS_[i]) == LOW) {
+            sensor_present_[i] = false;
+            Serial.printf("  [WARN] IR[%d] (GPIO %d) reads LOW at boot — sensor absent?\n",
+                i, PINS_[i]);
+        } else {
+            sensor_present_[i] = true;
+        }
+    }
 }
 
 bool IRProximitySensor::update(uint32_t now_ms)
@@ -44,6 +58,10 @@ bool IRProximitySensor::update(uint32_t now_ms)
     bool changed = false;
 
     for (int i = 0; i < 4; i++) {
+        // Skip pins that were detected absent at boot (floating LOW on
+        // strapping pins or unconnected). Prevents latched false obstacles.
+        if (!sensor_present_[i]) continue;
+
         // E18-D80NK: LOW = obstacle detected, HIGH = clear
         bool raw = (digitalRead(PINS_[i]) == LOW);
 
@@ -79,6 +97,7 @@ uint8_t IRProximitySensor::detectedMask() const
 {
     uint8_t mask = 0;
     for (int i = 0; i < 4; i++) {
+        if (!sensor_present_[i]) continue;  // treat absent sensor as "no obstacle"
         if (readings_[i].detected) mask |= (1 << i);
     }
     return mask;

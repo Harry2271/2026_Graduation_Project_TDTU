@@ -32,7 +32,7 @@ void Encoder::begin()
     pcnt_conf.counter_l_lim = -32768;
     pcnt_unit_config(&pcnt_conf);
 
-    pcnt_set_filter_value(unit_, 80);
+    pcnt_set_filter_value(unit_, 1000);  // ~12.5 µs @ 80 MHz, rejects motor-brush ringing
     pcnt_filter_enable(unit_);
 
     pcnt_counter_pause(unit_);
@@ -95,7 +95,14 @@ float Encoder::calculateRPM(uint32_t dt_ms)
 
     if (dt_ms == 0) return 0.0f;
 
-    float rpm = ((float)delta / (float)dt_ms) * (60000.0f / (float)MOTOR_ENCODER_CPR);
+    // counts/rev on OUTPUT SHAFT = encoder CPR × gear ratio
+    // JGB37-520: 11 PPR × 2 (x2 decode) × 30 (gearbox) = 660 counts/output rev
+    constexpr float OUTPUT_CPR = (float)MOTOR_ENCODER_CPR * MOTOR_GEAR_RATIO;
+    float rpm = ((float)delta / (float)dt_ms) * (60000.0f / OUTPUT_CPR);
+
+    // Guard against bogus spikes (e.g. first tick after boot, or wiring noise)
+    if (rpm >  500.0f) rpm =  500.0f;
+    if (rpm < -500.0f) rpm = -500.0f;
 
     const float alpha = 0.3f;
     rpm = last_filtered_rpm_ * (1.0f - alpha) + rpm * alpha;

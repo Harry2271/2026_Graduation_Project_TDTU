@@ -187,6 +187,16 @@ enum MotorState {
 #define IR_SENSOR_POLL_MS     20       // Read at 50 Hz (same as PID)
 #define IR_DEBOUNCE_MS        50       // Debounce filter
 
+// ============================================================
+// AutoRoam — when Pi is disconnected, drive with sensors
+// ============================================================
+#define AUTO_ROAM_BOOT_DELAY_MS  3000   // wait this long on boot before going AUTO_ROAM
+#define AUTO_ROAM_FORWARD_SPEED  70     // base forward PWM (out of 255)
+#define AUTO_ROAM_SLOW_SPEED     30     // forward speed inside Sharp slow-zone
+#define AUTO_ROAM_ESCAPE_STRAFE  90     // IR side-trigger escape
+#define AUTO_ROAM_ESCAPE_ROTATE  70     // IR both-sides-trigger escape
+#define AUTO_ROAM_REVERSE_NUDGE  40     // gentle forward push when rear IR triggers while reversing
+
 #define IR_REAR_LEFT_PIN      1
 #define IR_REAR_RIGHT_PIN     8
 #define IR_LEFT_PIN           45       // Strapping pin — safe as input after boot

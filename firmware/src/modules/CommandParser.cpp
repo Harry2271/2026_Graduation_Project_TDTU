@@ -151,6 +151,11 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
             out.max_speed = clampVal(v, 0, 100);
         } break;
 
+        case 'A': case 'a':
+            // Force AUTO_ROAM mode (sensor-only autonomy, ignores Pi heartbeat)
+            out.type = CMD_FORCE_AUTO_ROAM;
+            break;
+
         case 'T': case 't': {
             out.type = CMD_TEST;
         } break;

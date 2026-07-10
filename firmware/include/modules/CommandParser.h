@@ -38,6 +38,9 @@ enum CommandType {
 
     // Raw motor test (bypass PID + ramp)
     CMD_RAW_MOTOR,     // O<id> <speed> — direct PWM to one motor
+
+    // Force into AUTO_ROAM (sensor-only autonomy, ignores Pi heartbeat)
+    CMD_FORCE_AUTO_ROAM,
 };
 
 struct Command {

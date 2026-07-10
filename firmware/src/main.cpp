@@ -134,6 +134,9 @@ void setupHardware()
         Serial.println("  [OK]   INA226 power monitor ready");
     }
 
+    // Wire sensors into ModeManager for AUTO_ROAM (Pi-less) operation
+    g_modeManager.attachSensors(&g_imu, &g_ir, &g_sharp, &g_power);
+
     // ---- IR proximity sensors ----
     g_ir.begin();
 
@@ -148,7 +151,7 @@ void setupHardware()
     Serial.printf("  PID: %.2f / %.2f / %.2f @ %d Hz\n",
         DEFAULT_KP, DEFAULT_KI, DEFAULT_KD, PID_UPDATE_RATE_HZ);
     Serial.printf("  I2C: SDA=%u SCL=%u @ %u kHz\n", BNO055_SDA_PIN, BNO055_SCL_PIN, BNO055_I2C_FREQ_HZ / 1000);
-    Serial.printf("  IMU:  %s\n", g_imu.isOperational() ? "BNO055 (Euler + temp)" : "NONE");
+    Serial.printf("  IMU:  %s\n", g_imu.isOperational() ? "BNO055 (heading + accel + gyro)" : "NONE");
     Serial.printf("  PWR:  %s\n", g_power.isOperational() ? "INA226 (V + I + P)" : "NONE");
     Serial.printf("  IR:   %d proximity sensors\n", IR_SENSOR_COUNT);
     Serial.printf("  SHARP: GP2Y0A21YK0F front (GPIO %u, < %dcm)\n",
@@ -229,7 +232,17 @@ void applySpeeds()
             int16_t correction = g_pid[i].compute(target_rpm, actual_rpm, PID_UPDATE_MS * 1000);
             int16_t final_pwm = limited + correction;
             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
-            g_motors[i].setSpeed(final_pwm * MOTOR_PINS[i].dir);
+            int16_t motor_cmd = final_pwm * MOTOR_PINS[i].dir;
+            g_motors[i].setSpeed(motor_cmd);
+
+            // Debug: print every motor's signal path (once per second per motor)
+            static uint32_t last_debug_ms[4] = {0, 0, 0, 0};
+            if (millis() - last_debug_ms[i] >= 1000 && abs(g_target_speeds[i]) > 10) {
+                last_debug_ms[i] = millis();
+                Serial.printf("  [%s] tgt=%d ramp=%d lim=%d tgtRPM=%.0f actRPM=%.0f corr=%d pwm=%d cmd=%d dir=%d\n",
+                    MOTOR_NAMES[i], g_target_speeds[i], g_ramped_speeds[i], limited,
+                    target_rpm, actual_rpm, correction, final_pwm, motor_cmd, MOTOR_PINS[i].dir);
+            }
         } else {
             g_motors[i].setSpeed(limited * MOTOR_PINS[i].dir);
         }
@@ -409,6 +422,7 @@ void handleHelp()
     Serial.println("  J           Read Sharp front distance (type 136)");
     Serial.println("  O<id> <pwm> Raw motor test (0=FL,1=FR,2=RL,3=RR, bypass PID)");
     Serial.println("  O0 0        Exit raw test mode");
+    Serial.println("  A           Force AUTO_ROAM (sensor-only, no Pi)");
     Serial.println();
 }
 
@@ -450,6 +464,10 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
         case CMD_E_STOP_CLEAR:
             handleEStopClear();
             break;
+        case CMD_FORCE_AUTO_ROAM:
+            g_modeManager.onPiCommand(cmd, now_ms);
+            Serial.println("ACK: AUTO_ROAM forced (Pi disconnected, sensors driving)");
+            break;
         case CMD_HEARTBEAT:
             g_modeManager.onPiCommand(cmd, now_ms);
             break;
@@ -479,6 +497,7 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             if (g_imu.isOperational()) {
                 g_imu.read();
                 g_imu.printTelemetry();
+                g_imu.printReadable();
             }
             break;
         case CMD_GET_POWER:
@@ -558,30 +577,75 @@ void updateLED(uint32_t) {}
 // ========================================================================
 // Status Print
 // ========================================================================
+// Compact status — printed every 1 s, easy to read
+// Format:
+//   Line 1: header (mode + nav + obstacle)
+//   Line 2: FL + FR
+//   Line 3: RL + RR
+//   Line 4: IR sensors + Sharp
+//   Line 5: IMU + Battery (with values if available)
+// ========================================================================
 void printStatus(uint32_t now_ms)
 {
     static uint32_t last_status_ms = 0;
-    if (now_ms - last_status_ms < 5000) return;
+    if (now_ms - last_status_ms < 1000) return;   // 1 Hz
     last_status_ms = now_ms;
 
     if (g_e_stop_active) {
-        Serial.println("[STATUS] E-STOP ACTIVE");
+        Serial.println("[S] E-STOP");
         return;
     }
 
-    const char* mode_str = g_individual_mode ? "INDIV" : "NAV";
-    Serial.printf("[STATUS] %s | max=%d%% | nav=[%d,%d,%d] | obs=%s | rpm:",
-        mode_str, g_max_speed_pct,
+    // --- Line 1: header ---
+    SystemMode sys_mode = g_modeManager.getMode();
+    Serial.printf("[T=%lu] [%s] nav=(%d,%d,%d) max=%d%% obs=%s\n",
+        now_ms, Watchdog::modeName(sys_mode),
         g_nav_vx, g_nav_vy, g_nav_omega,
+        g_max_speed_pct,
         g_obstacle.hasActiveObstacle() ? "Y" : "N");
-    for (int i = 0; i < MOTOR_COUNT; i++) {
-        Serial.printf(" %.0f", g_encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir);
+
+    // --- Line 2: FL + FR (target PWM | actual RPM | cumulative count) ---
+    const int16_t* tgt = g_modeManager.getRampedSpeeds();
+    Serial.printf("  FL t=%+4d r=%+6.0f c=%+8ld | FR t=%+4d r=%+6.0f c=%+8ld\n",
+        tgt[0], g_encoders[0].getFilteredRPM() * MOTOR_PINS[0].dir,
+        (long)(g_encoders[0].getCumulativeCount() * MOTOR_PINS[0].dir),
+        tgt[1], g_encoders[1].getFilteredRPM() * MOTOR_PINS[1].dir,
+        (long)(g_encoders[1].getCumulativeCount() * MOTOR_PINS[1].dir));
+
+    // --- Line 3: RL + RR ---
+    Serial.printf("  RL t=%+4d r=%+6.0f c=%+8ld | RR t=%+4d r=%+6.0f c=%+8ld\n",
+        tgt[2], g_encoders[2].getFilteredRPM() * MOTOR_PINS[2].dir,
+        (long)(g_encoders[2].getCumulativeCount() * MOTOR_PINS[2].dir),
+        tgt[3], g_encoders[3].getFilteredRPM() * MOTOR_PINS[3].dir,
+        (long)(g_encoders[3].getCumulativeCount() * MOTOR_PINS[3].dir));
+
+    // --- Line 4: IR (4 sensors with names) + Sharp ---
+    uint8_t ir = g_ir.detectedMask();
+    Serial.printf("  IR[R=%d L=%d RR=%d RL=%d] Sharp:%.0fcm %s\n",
+        (ir>>3)&1, (ir>>2)&1, (ir>>1)&1, (ir)&1,
+        g_sharp.getDistanceCm(),
+        g_sharp.isPresent() ? "" : "(absent)");
+
+    // --- Line 5: IMU + Battery (with values if available) ---
+    if (g_imu.isOperational()) {
+        Serial.printf("  IMU: H=%5.1fdeg cal=S%dG%dA%dM%d | ",
+            g_imu.getHeading(),
+            g_imu.getCalSys(), g_imu.getCalGyro(),
+            g_imu.getCalAccel(), g_imu.getCalMag());
+    } else {
+        Serial.printf("  IMU: -- (BNO055 not found) | ");
     }
-    Serial.printf(" | tgt:");
-    for (int i = 0; i < MOTOR_COUNT; i++) {
-        Serial.printf(" %d", g_target_speeds[i]);
+
+    if (g_power.isOperational()) {
+        Serial.printf("Batt: %.2fV %.2fA %.1f%% (%s)\n",
+            g_power.getBusVoltage(),
+            g_power.getCurrent(),
+            g_power.getBatteryPct(),
+            g_power.getBatteryStatus() == 2 ? "CRIT" :
+            g_power.getBatteryStatus() == 1 ? "LOW" : "ok");
+    } else {
+        Serial.println("Batt: -- (INA226 not found)");
     }
-    Serial.println();
 }
 
 // ========================================================================
@@ -619,7 +683,7 @@ void setup()
     g_modeManager.begin();
 
     Serial.println();
-    Serial.println("Ready. Commands: F/B/L/R/Q/E <0-255> | S stop | D e-stop | K clear | M <fl> <fr> <rl> <rr> | V status | I IMU | W power | N IR | J Sharp | T test | ? help");
+    Serial.println("Ready. F/B/L/R/Q/E <0-255> | S stop | D e-stop | K clear | M <fl> <fr> <rl> <rr> | V status | I IMU | W power | N IR | J Sharp | T test | A auto-roam | ? help");
     Serial.println();
 }
 
@@ -673,18 +737,26 @@ void loop()
 
     if (now - g_last_pid_ms >= PID_UPDATE_MS) {
         uint32_t dt = now - g_last_pid_ms;
+        uint32_t dt_us = dt * 1000;
         g_last_pid_ms = now;
 
         for (int i = 0; i < MOTOR_COUNT; i++) {
             g_encoders[i].calculateRPM(dt);
         }
 
-        // Compute motor targets from nav velocity (unless manual per-wheel mode)
-        if (!g_individual_mode) {
-            computeNavTargets();
-        }
+        SystemMode mode = g_modeManager.getMode();
 
-        applySpeeds();
+        if (mode == MODE_AUTO_ROAM) {
+            // AUTO_ROAM: sensor-based autonomy via ModeManager
+            g_modeManager.applyMotorOutputs(g_motors, g_encoders, g_pid,
+                                             &g_mecanum, now, dt_us);
+        } else {
+            // NAV / SAFE / MANUAL: original direct path
+            if (!g_individual_mode) {
+                computeNavTargets();
+            }
+            applySpeeds();
+        }
     }
 
     printStatus(now);

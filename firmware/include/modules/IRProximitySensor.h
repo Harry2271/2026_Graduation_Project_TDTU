@@ -33,5 +33,6 @@ public:
 private:
     static const uint8_t PINS_[4];
     IRReading readings_[4];
+    bool sensor_present_[4];   // false if GPIO reads LOW at boot (sensor absent)
     bool prev_any_;
 };
