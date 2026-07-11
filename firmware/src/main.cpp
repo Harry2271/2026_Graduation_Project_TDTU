@@ -72,6 +72,9 @@ int8_t g_kick_ticks[4] = {0, 0, 0, 0};
 bool g_raw_test_mode = false;
 int16_t g_raw_test_speeds[4] = {0};
 
+// Shared JSON output buffer for status messages (UART to Pi 5)
+static char g_json_buf[1200];
+
 // ========================================================================
 // LEDC Timer Setup
 // ========================================================================
@@ -336,16 +339,11 @@ void handleSetMaxSpeed(int pct)
 
 void handleGetEncoder()
 {
-    Serial.printf("{\"type\":130,\"data\":{\"mode\":\"%s\",\"motors\":[",
-        g_individual_mode ? "INDIV" : "NAV");
-    for (int i = 0; i < MOTOR_COUNT; i++) {
-        Serial.printf("{\"id\":%d,\"name\":\"%s\",\"count\":%ld,\"rpm\":%.1f}",
-            i, MOTOR_NAMES[i],
-            (long)g_encoders[i].getCumulativeCount() * MOTOR_PINS[i].dir,
-            g_encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir);
-        if (i < MOTOR_COUNT - 1) Serial.print(",");
-    }
-    Serial.printf("]}}\n");
+    const int16_t* tgt = g_modeManager.getRampedSpeeds();
+    size_t n = JsonStatus::emitEncoderSnapshot(
+        g_json_buf, sizeof(g_json_buf),
+        tgt, g_encoders);
+    Serial.write(g_json_buf, n);
 }
 
 void handleResetEncoder()
@@ -356,24 +354,14 @@ void handleResetEncoder()
 
 void handleGetStatus()
 {
-    Serial.printf("{\"type\":131,\"data\":{");
-    Serial.printf("\"uptime_ms\":%lu,", millis());
-    Serial.printf("\"mode\":\"%s\",", g_individual_mode ? "INDIV" : "NAV");
-    Serial.printf("\"e_stop\":%s,", g_e_stop_active ? "true" : "false");
-    Serial.printf("\"pid\":%s,", g_pid_enabled ? "true" : "false");
-    Serial.printf("\"max_pct\":%d,", g_max_speed_pct);
-    Serial.printf("\"nav\":[%d,%d,%d],", g_nav_vx, g_nav_vy, g_nav_omega);
-    Serial.printf("\"obstacle\":%s,", g_obstacle.hasActiveObstacle() ? "true" : "false");
-    Serial.printf("\"motors\":[");
-    for (int i = 0; i < MOTOR_COUNT; i++) {
-        Serial.printf("{\"id\":%d,\"name\":\"%s\",\"target\":%d,\"ramped\":%d,\"rpm\":%.1f}",
-            i, MOTOR_NAMES[i],
-            g_target_speeds[i],
-            g_ramped_speeds[i],
-            g_encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir);
-        if (i < MOTOR_COUNT - 1) Serial.print(",");
-    }
-    Serial.printf("]}}\n");
+    size_t n = JsonStatus::emitFullStatus(
+        g_json_buf, sizeof(g_json_buf), millis(),
+        &g_modeManager, &g_mecanum,
+        g_encoders, g_pid, g_motors,
+        &g_imu, &g_power, &g_ir, &g_sharp,
+        g_nav_vx, g_nav_vy, g_nav_omega,
+        g_e_stop_active, g_max_speed_pct);
+    Serial.write(g_json_buf, n);
 }
 
 void handleTestSequence()
@@ -575,101 +563,65 @@ void readSerial()
 void updateLED(uint32_t) {}
 
 // ========================================================================
-// Status Print
-// ========================================================================
-// Compact status — printed every 1 s, easy to read
-// Format:
-//   Line 1: header (mode + nav + obstacle)
-//   Line 2: FL + FR
-//   Line 3: RL + RR
-//   Line 4: IR sensors + Sharp
-//   Line 5: IMU + Battery (with values if available)
+// JSON Status — FULL every 1 s (line-delimited JSON to UART)
+// pi reads line-delimited JSON. tick (5 Hz) and IMU/Power handled by
+// publishSensors() below.
 // ========================================================================
 void printStatus(uint32_t now_ms)
 {
-    static uint32_t last_status_ms = 0;
-    if (now_ms - last_status_ms < 1000) return;   // 1 Hz
-    last_status_ms = now_ms;
-
-    if (g_e_stop_active) {
-        Serial.println("[S] E-STOP");
-        return;
-    }
-
-    // --- Line 1: header ---
-    SystemMode sys_mode = g_modeManager.getMode();
-    Serial.printf("[T=%lu] [%s] nav=(%d,%d,%d) max=%d%% obs=%s\n",
-        now_ms, Watchdog::modeName(sys_mode),
-        g_nav_vx, g_nav_vy, g_nav_omega,
-        g_max_speed_pct,
-        g_obstacle.hasActiveObstacle() ? "Y" : "N");
-
-    // --- Line 2: FL + FR (target PWM | actual RPM | cumulative count) ---
-    const int16_t* tgt = g_modeManager.getRampedSpeeds();
-    Serial.printf("  FL t=%+4d r=%+6.0f c=%+8ld | FR t=%+4d r=%+6.0f c=%+8ld\n",
-        tgt[0], g_encoders[0].getFilteredRPM() * MOTOR_PINS[0].dir,
-        (long)(g_encoders[0].getCumulativeCount() * MOTOR_PINS[0].dir),
-        tgt[1], g_encoders[1].getFilteredRPM() * MOTOR_PINS[1].dir,
-        (long)(g_encoders[1].getCumulativeCount() * MOTOR_PINS[1].dir));
-
-    // --- Line 3: RL + RR ---
-    Serial.printf("  RL t=%+4d r=%+6.0f c=%+8ld | RR t=%+4d r=%+6.0f c=%+8ld\n",
-        tgt[2], g_encoders[2].getFilteredRPM() * MOTOR_PINS[2].dir,
-        (long)(g_encoders[2].getCumulativeCount() * MOTOR_PINS[2].dir),
-        tgt[3], g_encoders[3].getFilteredRPM() * MOTOR_PINS[3].dir,
-        (long)(g_encoders[3].getCumulativeCount() * MOTOR_PINS[3].dir));
-
-    // --- Line 4: IR (4 sensors with names) + Sharp ---
-    uint8_t ir = g_ir.detectedMask();
-    Serial.printf("  IR[R=%d L=%d RR=%d RL=%d] Sharp:%.0fcm %s\n",
-        (ir>>3)&1, (ir>>2)&1, (ir>>1)&1, (ir)&1,
-        g_sharp.getDistanceCm(),
-        g_sharp.isPresent() ? "" : "(absent)");
-
-    // --- Line 5: IMU + Battery (with values if available) ---
-    if (g_imu.isOperational()) {
-        Serial.printf("  IMU: H=%5.1fdeg cal=S%dG%dA%dM%d | ",
-            g_imu.getHeading(),
-            g_imu.getCalSys(), g_imu.getCalGyro(),
-            g_imu.getCalAccel(), g_imu.getCalMag());
-    } else {
-        Serial.printf("  IMU: -- (BNO055 not found) | ");
-    }
-
-    if (g_power.isOperational()) {
-        Serial.printf("Batt: %.2fV %.2fA %.1f%% (%s)\n",
-            g_power.getBusVoltage(),
-            g_power.getCurrent(),
-            g_power.getBatteryPct(),
-            g_power.getBatteryStatus() == 2 ? "CRIT" :
-            g_power.getBatteryStatus() == 1 ? "LOW" : "ok");
-    } else {
-        Serial.println("Batt: -- (INA226 not found)");
+    // --- Full JSON every 1 s (type=131, all fields) ---
+    static uint32_t last_full_ms = 0;
+    if (now_ms - last_full_ms >= 1000) {
+        last_full_ms = now_ms;
+        size_t n = JsonStatus::emitFullStatus(
+            g_json_buf, sizeof(g_json_buf), now_ms,
+            &g_modeManager, &g_mecanum,
+            g_encoders, g_pid, g_motors,
+            &g_imu, &g_power, &g_ir, &g_sharp,
+            g_nav_vx, g_nav_vy, g_nav_omega,
+            g_e_stop_active, g_max_speed_pct);
+        Serial.write(g_json_buf, n);
     }
 }
 
 // ========================================================================
-// Periodic Sensor Publishing
+// Periodic Sensor Publishing — JSON, line-delimited (UART to Pi 5)
+// Tick 5 Hz | IMU 20 Hz | Power 0.2 Hz
 // ========================================================================
 void publishSensors(uint32_t now_ms)
 {
-    // IMU heading at 20 Hz (IMU_PUBLISH_MS = 50)
+    // Tick status at 5 Hz (200 ms) — compact motors + IR
+    static uint32_t last_tick_ms = 0;
+    if (now_ms - last_tick_ms >= 200) {
+        last_tick_ms = now_ms;
+        size_t n = JsonStatus::emitTickStatus(
+            g_json_buf, sizeof(g_json_buf), now_ms,
+            &g_modeManager, g_encoders, g_motors,
+            &g_imu, &g_power, &g_ir, &g_sharp,
+            g_nav_vx, g_nav_vy, g_nav_omega,
+            g_e_stop_active, g_max_speed_pct);
+        Serial.write(g_json_buf, n);
+    }
+
+    // IMU at 20 Hz (50 ms) — type 134
     static uint32_t last_imu_ms = 0;
     if (now_ms - last_imu_ms >= IMU_PUBLISH_MS) {
         last_imu_ms = now_ms;
         if (g_imu.isOperational()) {
             g_imu.read();
-            g_imu.printTelemetry();
+            size_t n = JsonStatus::emitIMU(g_json_buf, sizeof(g_json_buf), &g_imu);
+            Serial.write(g_json_buf, n);
         }
     }
 
-    // Power telemetry at 0.2 Hz (POWER_PUBLISH_MS = 5000)
+    // Power at 0.2 Hz (5 s) — type 133
     static uint32_t last_power_ms = 0;
     if (now_ms - last_power_ms >= POWER_PUBLISH_MS) {
         last_power_ms = now_ms;
         if (g_power.isOperational()) {
             g_power.read();
-            g_power.printTelemetry();
+            size_t n = JsonStatus::emitPower(g_json_buf, sizeof(g_json_buf), &g_power);
+            Serial.write(g_json_buf, n);
         }
     }
 }
