@@ -17,4 +17,6 @@
 #include "INA226Sensor.h"
 #include "IRProximitySensor.h"
 #include "SharpFrontSensor.h"
+#include "VL53L0XSensor.h"
+#include "CylinderActuator.h"
 #include "JsonStatus.h"

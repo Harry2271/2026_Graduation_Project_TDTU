@@ -42,6 +42,8 @@ BNO055Sensor  g_imu;
 INA226Sensor  g_power;
 IRProximitySensor g_ir;
 SharpFrontSensor g_sharp;
+VL53L0XSensor   g_tof;
+CylinderActuator g_cylinder;
 
 // ========================================================================
 // Motor State — single control path
@@ -74,6 +76,9 @@ int16_t g_raw_test_speeds[4] = {0};
 
 // Shared JSON output buffer for status messages (UART to Pi 5)
 static char g_json_buf[1200];
+
+// Unload state tracking (for transition detection → type 140 emit)
+AutoRoam::UnloadState g_last_unload_state = AutoRoam::UNLOAD_IDLE;
 
 // ========================================================================
 // LEDC Timer Setup
@@ -138,13 +143,21 @@ void setupHardware()
     }
 
     // Wire sensors into ModeManager for AUTO_ROAM (Pi-less) operation
-    g_modeManager.attachSensors(&g_imu, &g_ir, &g_sharp, &g_power);
+    g_modeManager.attachSensors(&g_imu, &g_ir, &g_sharp, &g_power, &g_tof, &g_cylinder);
 
     // ---- IR proximity sensors ----
     g_ir.begin();
 
     // ---- Sharp front distance sensor ----
     g_sharp.begin();
+
+    // ---- VL53L0X TOF distance sensor (rear, used for unloading precision) ----
+    if (!g_tof.begin()) {
+        Serial.println("  [WARN] VL53L0X TOF init failed — unloading precision disabled");
+    }
+
+    // ---- Cylinder actuator (12V lift cylinder via L298N) ----
+    g_cylinder.begin();
 
     Serial.printf("\n");
     Serial.printf("=====================================================\n");
@@ -359,8 +372,18 @@ void handleGetStatus()
         &g_modeManager, &g_mecanum,
         g_encoders, g_pid, g_motors,
         &g_imu, &g_power, &g_ir, &g_sharp,
+        &g_tof, &g_cylinder,
         g_nav_vx, g_nav_vy, g_nav_omega,
         g_e_stop_active, g_max_speed_pct);
+    Serial.write(g_json_buf, n);
+}
+
+void handleUnloadState()
+{
+    size_t n = JsonStatus::emitUnloadState(
+        g_json_buf, sizeof(g_json_buf), millis(),
+        &g_modeManager.getAutoRoam(),
+        &g_tof, &g_imu, &g_cylinder);
     Serial.write(g_json_buf, n);
 }
 
@@ -410,7 +433,12 @@ void handleHelp()
     Serial.println("  J           Read Sharp front distance (type 136)");
     Serial.println("  O<id> <pwm> Raw motor test (0=FL,1=FR,2=RL,3=RR, bypass PID)");
     Serial.println("  O0 0        Exit raw test mode");
+    Serial.println("  Y           Read VL53L0X TOF distance (type 138)");
+    Serial.println("  G           Extend cylinder (lift dump body)");
+    Serial.println("  g           Retract cylinder (lower dump body)");
+    Serial.println("  C           Stop cylinder (coast)");
     Serial.println("  A           Force AUTO_ROAM (sensor-only, no Pi)");
+    Serial.println("  JSON: begin_dock, begin_leave_dock, cancel_dock, get_unload_state");
     Serial.println();
 }
 
@@ -503,6 +531,36 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             g_sharp.printStatusJson();
             break;
 
+        case CMD_GET_TOF:
+            g_tof.printStatusJson();
+            break;
+
+        case CMD_CYLINDER_EXTEND:
+            g_cylinder.extend();
+            Serial.println("ACK: cylinder extend");
+            break;
+
+        case CMD_CYLINDER_RETRACT:
+            g_cylinder.retract();
+            Serial.println("ACK: cylinder retract");
+            break;
+
+        case CMD_CYLINDER_STOP:
+            g_cylinder.stop();
+            Serial.println("ACK: cylinder stop");
+            break;
+
+        case CMD_BEGIN_DOCK:
+        case CMD_BEGIN_LEAVE_DOCK:
+        case CMD_CANCEL_DOCK:
+            g_modeManager.onPiCommand(cmd, now_ms);
+            Serial.printf("ACK: dock cmd %d\n", cmd.type);
+            break;
+
+        case CMD_GET_UNLOAD_STATE:
+            handleUnloadState();
+            break;
+
         case CMD_RAW_MOTOR: {
             int id    = cmd.motor_speeds[0];
             int speed = cmd.motor_speeds[1];
@@ -578,6 +636,7 @@ void printStatus(uint32_t now_ms)
             &g_modeManager, &g_mecanum,
             g_encoders, g_pid, g_motors,
             &g_imu, &g_power, &g_ir, &g_sharp,
+            &g_tof, &g_cylinder,
             g_nav_vx, g_nav_vy, g_nav_omega,
             g_e_stop_active, g_max_speed_pct);
         Serial.write(g_json_buf, n);
@@ -598,6 +657,7 @@ void publishSensors(uint32_t now_ms)
             g_json_buf, sizeof(g_json_buf), now_ms,
             &g_modeManager, g_encoders, g_motors,
             &g_imu, &g_power, &g_ir, &g_sharp,
+            &g_tof, &g_cylinder,
             g_nav_vx, g_nav_vy, g_nav_omega,
             g_e_stop_active, g_max_speed_pct);
         Serial.write(g_json_buf, n);
@@ -687,6 +747,10 @@ void loop()
     g_modeManager.update(now);
     pollLocalSensors(now);
 
+    // Poll the slow sensors / actuators (independent of PID tick)
+    g_tof.update(now);
+    g_cylinder.update(now);
+
     if (now - g_last_pid_ms >= PID_UPDATE_MS) {
         uint32_t dt = now - g_last_pid_ms;
         uint32_t dt_us = dt * 1000;
@@ -714,6 +778,15 @@ void loop()
     printStatus(now);
     publishSensors(now);
     updateLED(now);
+
+    // Detect unload state transitions and emit type 140 to Pi
+    {
+        AutoRoam::UnloadState current = g_modeManager.getUnloadState();
+        if (current != g_last_unload_state) {
+            g_last_unload_state = current;
+            handleUnloadState();
+        }
+    }
 
     delay(1);
 }

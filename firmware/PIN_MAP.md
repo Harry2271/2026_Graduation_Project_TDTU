@@ -141,6 +141,83 @@
 
 ---
 
+## VL53L0X V2 — TOF Laser Distance Sensor (Rear, I2C)
+
+| Parameter | Value |
+|-----------|-------|
+| **I2C Address** | **0x29** |
+| **I2C Bus** | Shared with BNO055 (0x28) + INA226 (0x40) on GPIO 10/11 |
+| **Range** | 30 mm – 2000 mm |
+| **Measurement Budget** | 33 ms (high-accuracy mode) |
+| **Poll Rate** | 20 Hz (every 50 ms) |
+| **Target Distance** | **40 mm** (4 cm — runtime configurable via `target_distance_mm` JSON field) |
+| **Tolerance** | ±10 mm (±1 cm) |
+| **Mounting** | Rear of vehicle, pointing at warehouse floor / dock surface |
+
+### VL53L0X Wiring
+
+```
+          VL53L0X V2 Sensor (Pololu)
+            │
+  VIN ◄─────┤ 3.3V or 5V (module-dependent)
+  GND ◄─────┤ Common ground
+  SDA ◄────► ESP32 GPIO 10  ┐ (shared I2C bus)
+  SCL ◄────► ESP32 GPIO 11  ┤
+            │                ├─ BNO055 (0x28)
+          (no new GPIOs)     ├─ INA226 (0x40)
+                             └─ VL53L0X (0x29)
+```
+
+> The VL53L0X adds zero new GPIOs — uses the existing shared I2C bus. Pin-shield on module lets you re-address if needed; default 0x29 works here.
+
+---
+
+## L298N Motor Driver + 12VDC Electric Cylinder (Dump-Body Lift)
+
+| Function | GPIO | Notes |
+|----------|------|-------|
+| **IN1** (L298N extend) | GPIO **2** | HIGH = cylinder extends (lifts dump body) |
+| **IN2** (L298N retract) | GPIO **35** | HIGH = cylinder retracts (lowers dump body) |
+| **ENA** | Tied HIGH on L298N (jumper) | No PWM — full-speed on/off only |
+
+| Parameter | Value |
+|-----------|-------|
+| Cylinder supply | **12 VDC** (from 21→12V buck) |
+| L298N supply | **12 V** (VM) for motor, 5V for logic |
+| Max run time | **8 000 ms** (safety auto-stop) |
+| Hold-at-top time | **3 000 ms** (dump window) |
+| Mounting | Cylinder base on chassis, rod attached to dump body |
+
+### L298N + Cylinder Wiring
+
+```
+          ESP32-S3
+            │
+  IN1  ◄────┤ GPIO 2    (cylinder extend → lift)
+  IN2  ◄────┤ GPIO 35   (cylinder retract → lower)
+            │
+          L298N Driver Board
+            │
+  ENA ──────┤ Tied HIGH (jumper in place)
+            │
+  +12V ◄────┤ 12V rail (from 21→12V buck)
+  GND ◄─────┤ Common ground  ⚠ MUST share with ESP32
+            │
+  OUT1 ─────► Electric Cylinder M1 (+)
+  OUT2 ─────► Electric Cylinder M2 (−)
+```
+
+**Control Logic:**
+- **Extend (lift):** `IN1 = HIGH, IN2 = LOW` → cylinder rod pushes out, dump body rises
+- **Retract (lower):** `IN1 = LOW, IN2 = HIGH` → cylinder rod pulls in, dump body lowers
+- **Stop (brake):** `IN1 = LOW, IN2 = LOW` → both low-side FETs on, motor freewheel
+
+> ⚠️ On ESP32-S3, GPIO **36 and 37** are input-only (no output driver). GPIO **35 is fine** for L298N IN2 (has output driver). Only use 36/37 for ADC / digital input.
+
+---
+
+## UART — ESP32-S3 ↔ Raspberry Pi 5 (Protocol Update)
+
 ## BNO055 IMU — 9-DOF (I2C)
 
 | Function | GPIO | Notes |
@@ -202,6 +279,44 @@
 > WeAct N16R8 has **no USB-UART bridge chip** — UART0 (43/44) is free.
 > USB-C port = native USB CDC (for flashing/debug only, appears as `/dev/ttyACM0` on Pi).
 
+### Docking / Unloading Protocol (added July 2026)
+
+ESP32-side docking state machine triggered by Pi after AprilTag + IR-side alignment.
+
+**Pi → ESP32 (JSON):**
+
+| Command | Purpose | Required Fields | Optional |
+|---------|---------|-----------------|----------|
+| `begin_dock` | Start docking + unloading sequence | `tag_id` (AprilTag ID Pi verified) | `target_distance_mm` (default 40) |
+| `begin_leave_dock` | Skip unloading, just leave | — | — |
+| `cancel_dock` | Abort sequence at any state | — | — |
+| `get_unload_state` | Query current state (returns type 140) | — | — |
+
+Example trigger:
+```json
+{"cmd":"begin_dock","tag_id":42,"target_distance_mm":40}
+```
+
+**ESP32 → Pi (JSON, line-delimited):**
+
+| Type | Trigger | Fields |
+|------|---------|--------|
+| **138** | TOF distance query | `distance_mm`, `distance_cm`, `at_unload`, `present` |
+| **139** | Cylinder state query | `state`, `extended`, `moving` |
+| **140** | On every unload state transition + on query | `state`, `tag_id`, `target_mm`, `current_mm`, `heading_err_deg`, `heading_ok`, `cyl`, `ts` |
+
+State progression in type 140:
+```
+idle → adjusting → extending → holding → retracting → done →
+  leaving → complete → idle
+```
+
+**Safety gates (both must hold to advance from `adjusting` to `extending`):**
+1. VL53L0X distance ≤ `target_distance_mm` ± tolerance (runtime-targetable)
+2. BNO055 heading error ≤ `HEADING_GATE_DEG` (2°)
+
+**Leave-dock reverse:** 30 cm reverse with encoder tracking + heading-hold via BNO055, 8 s safety timeout.
+
 ---
 
 ## USB-C — Native USB CDC (Flashing & Debug)
@@ -219,7 +334,7 @@
 |------|-------------|-----------|-------|
 | **0** | — | Strapping | BOOT button — do not use |
 | **1** | IR REAR_LEFT | INPUT | Proximity sensor |
-| **2** | — | Free | — |
+| **2** | L298N IN1 (cylinder extend) | OUTPUT | Cylinder lift up |
 | **3** | Motor FL EN | OUTPUT | BTS7960 enable |
 | **4** | Encoder RL CHA | INPUT | PCNT unit 2 |
 | **5** | Encoder RL CHB | INPUT | PCNT unit 2 |
@@ -227,22 +342,22 @@
 | **7** | Motor FR EN | OUTPUT | BTS7960 enable |
 | **8** | IR REAR_RIGHT | INPUT | Proximity sensor |
 | **9** | Sharp Front | INPUT (ADC) | Strapping pin — safe after boot |
-| **10** | I2C SDA | BIDIR | BNO055 + INA226 shared bus |
-| **11** | I2C SCL | OUTPUT | BNO055 + INA226 shared bus |
+| **10** | I2C SDA | BIDIR | BNO055 + INA226 + VL53L0X shared bus |
+| **11** | I2C SCL | OUTPUT | BNO055 + INA226 + VL53L0X shared bus |
 | **12** | Motor FL RPWM | OUTPUT | BTS7960 PWM forward |
 | **13** | Motor FL LPWM | OUTPUT | BTS7960 PWM reverse |
 | **14** | Motor FR RPWM | OUTPUT | BTS7960 PWM forward |
 | **15** | Motor FR LPWM | OUTPUT | BTS7960 PWM reverse |
 | **16** | Motor RL RPWM | OUTPUT | BTS7960 PWM forward |
 | **17** | Motor RL LPWM | OUTPUT | BTS7960 PWM reverse |
-| **18** | USB D- | — | Native USB CDC |
-| **19** | USB D+ | — | Native USB CDC |
+| **18** | USB D- | — | Native USB CDC (safe with `CDC_ON_BOOT=0`) |
+| **19** | USB D+ | — | Native USB CDC (safe with `CDC_ON_BOOT=0`) |
 | **20** | Encoder RR CHA | INPUT | PCNT unit 3 |
 | **21** | Encoder RR CHB | INPUT | PCNT unit 3 |
 | **22-25** | — | N/A | **Not available on WROOM-1U module** |
-| **35** | — | Free | — |
-| **36** | — | Free | — |
-| **37** | — | Free | — |
+| **35** | L298N IN2 (cylinder retract) | OUTPUT | Cylinder pull down |
+| **36** | — | Free | ⚠ INPUT-ONLY (no output driver) |
+| **37** | — | Free | ⚠ INPUT-ONLY (no output driver) |
 | **38** | Motor RR RPWM | OUTPUT | BTS7960 PWM forward |
 | **39** | Motor RR LPWM | OUTPUT | BTS7960 PWM reverse |
 | **40** | Encoder FL CHA | INPUT | PCNT unit 0 |
@@ -255,7 +370,7 @@
 | **47** | Motor RR EN | OUTPUT | BTS7960 enable |
 | **48** | Motor RL EN | OUTPUT | BTS7960 enable |
 
-**Summary:** 28 GPIO used, 3 free (35, 36, 37), 4 unavailable (22-25)
+**Summary:** 30 GPIO used, 2 free input-only (36, 37), 4 unavailable (22-25). All 8 LEDC channels consumed by 4 motors.
 
 ---
 

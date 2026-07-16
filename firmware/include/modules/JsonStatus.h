@@ -10,9 +10,12 @@ class BNO055Sensor;
 class INA226Sensor;
 class IRProximitySensor;
 class SharpFrontSensor;
+class VL53L0XSensor;
+class CylinderActuator;
 class PIDController;
 class MecanumDrive;
 class ModeManager;
+class AutoRoam;
 
 // JSON message type IDs (matches CLAUDE.md protocol: 130 / 131 / 133 / 134 / 135 / 136)
 // 130 = encoder snapshot
@@ -22,6 +25,10 @@ class ModeManager;
 // 134 = IMU telemetry
 // 135 = IR proximity
 // 136 = Sharp front
+// 137 = obstacle (IR + Sharp merged)
+// 138 = TOF distance
+// 139 = cylinder actuator state
+// 140 = unload / docking state (transition notify + query response)
 class JsonStatus {
 public:
     /// Emit the full status bundle as a single multi-line JSON
@@ -33,6 +40,7 @@ public:
         BTS7960Driver motors[],
         BNO055Sensor* imu, INA226Sensor* power,
         IRProximitySensor* ir, SharpFrontSensor* sharp,
+        VL53L0XSensor* tof, CylinderActuator* cylinder,
         int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
         bool e_stop, uint8_t max_pct);
 
@@ -43,6 +51,7 @@ public:
         BTS7960Driver motors[],
         BNO055Sensor* imu, INA226Sensor* power,
         IRProximitySensor* ir, SharpFrontSensor* sharp,
+        VL53L0XSensor* tof, CylinderActuator* cylinder,
         int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
         bool e_stop, uint8_t max_pct);
 
@@ -59,4 +68,9 @@ public:
 
     /// Emit power telemetry (type 133)
     static size_t emitPower(char* buf, size_t bufsize, INA226Sensor* power);
+
+    /// Emit unload / docking state (type 140)
+    static size_t emitUnloadState(char* buf, size_t bufsize, uint32_t now_ms,
+        const AutoRoam* auto_roam, VL53L0XSensor* tof,
+        BNO055Sensor* imu, CylinderActuator* cylinder);
 };
