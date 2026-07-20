@@ -4,11 +4,16 @@
 #include "Watchdog.h"
 #include "ObstacleAvoidance.h"
 #include "CommandParser.h"
+#include "AutoRoam.h"
 
 class BTS7960Driver;
 class Encoder;
 class PIDController;
 class MecanumDrive;
+class BNO055Sensor;
+class IRProximitySensor;
+class SharpFrontSensor;
+class INA226Sensor;
 
 class ModeManager {
 public:
@@ -19,6 +24,11 @@ public:
     void update(uint32_t now_ms);
 
     void onPiCommand(const Command& cmd, uint32_t now_ms);
+
+    void attachSensors(BNO055Sensor* imu,
+                       IRProximitySensor* ir,
+                       SharpFrontSensor* sharp,
+                       INA226Sensor* power);
 
     void applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
                             PIDController* pids, MecanumDrive* mecanum,
@@ -31,6 +41,11 @@ public:
     [[nodiscard]] bool isEStopActive() const { return estop_active_; }
     [[nodiscard]] bool isPIDEnabled() const { return pid_enabled_; }
     [[nodiscard]] uint8_t getMaxSpeedPct() const { return max_speed_pct_; }
+    [[nodiscard]] const AutoRoam& getAutoRoam() const { return auto_roam_; }
+
+    /// Per-wheel ramped speeds (after acceleration ramp + speed limit).
+    /// Used by printStatus to show the *actual* speed sent to each motor.
+    [[nodiscard]] const int16_t* getRampedSpeeds() const { return ramped_speeds_; }
 
 private:
     void applyRampAndPID(int16_t target_speeds[4],
@@ -39,6 +54,7 @@ private:
 
     Watchdog watchdog_;
     ObstacleAvoidance obstacle_;
+    AutoRoam auto_roam_;
     SystemMode last_mode_;
 
     int16_t nav_vx_;

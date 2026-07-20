@@ -22,7 +22,16 @@ ModeManager::ModeManager()
 void ModeManager::begin()
 {
     watchdog_.begin();
-    Serial.printf("[ModeManager] Initialized in SAFE mode\n");
+    Serial.printf("[ModeManager] Initialized — AUTO_ROAM pending\n");
+}
+
+void ModeManager::attachSensors(BNO055Sensor* imu,
+                                IRProximitySensor* ir,
+                                SharpFrontSensor* sharp,
+                                INA226Sensor* power)
+{
+    auto_roam_.attachSensors(imu, ir, sharp, power);
+    Serial.println("[ModeManager] AutoRoam sensors attached");
 }
 
 void ModeManager::update(uint32_t now_ms)
@@ -91,6 +100,12 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
             Serial.println("[ModeManager] E-STOP cleared");
             break;
 
+        case CMD_FORCE_AUTO_ROAM:
+            auto_roam_.reset();
+            watchdog_.setMode(MODE_AUTO_ROAM);
+            Serial.println("[ModeManager] FORCED into AUTO_ROAM");
+            break;
+
         case CMD_OBSTACLE_LEFT:
             obstacle_.onObstacleEvent(ObstacleDirection::LEFT, now_ms);
             break;
@@ -120,6 +135,10 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
                                     BTS7960Driver* motors, Encoder* encoders,
                                     PIDController* pids, uint32_t dt_us)
 {
+    // Edge-triggered per-motor debug (only when target changes a lot or PWM saturates)
+    static uint32_t last_dbg_ms = 0;
+    static int16_t  last_pwm[4] = {0, 0, 0, 0};
+
     for (int i = 0; i < MOTOR_COUNT; i++) {
         ramped_speeds_[i] = MecanumDrive::ramp(
             target_speeds[i], ramped_speeds_[i], ACCEL_RAMP_RATE);
@@ -130,15 +149,31 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
         float target_rpm = limited * (MOTOR_NOMINAL_RPM / 255.0f);
 
         if (pid_enabled_) {
-            float actual_rpm = encoders[i].getFilteredRPM();
+            float actual_rpm = encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir;
             int16_t correction = pids[i].compute(target_rpm, actual_rpm, dt_us);
             int16_t final_pwm = limited + correction;
             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
-            motors[i].setSpeed(final_pwm);
+            int16_t motor_cmd = final_pwm * MOTOR_PINS[i].dir;
+            motors[i].setSpeed(motor_cmd);
+
+            // Log when PWM is saturated OR motor won't move —
+            // both signal "something is wrong with this motor".
+            uint32_t now = millis();
+            if (now - last_dbg_ms > 2000) {
+                bool saturated = (abs(final_pwm) >= MOTOR_MAX_DUTY - 2);
+                bool dead_motor = (abs(actual_rpm) < 2.0f && abs(target_rpm) > 50.0f);
+                if (saturated || dead_motor) {
+                    Serial.printf("  [PID %s] tgtRPM=%3.0f actRPM=%+4.0f corr=%+4d pwm=%+4d EN=%d\n",
+                        MOTOR_NAMES[i], target_rpm, actual_rpm, correction, final_pwm,
+                        motors[i].isEnabled() ? 1 : 0);
+                }
+                last_pwm[i] = final_pwm;
+            }
         } else {
-            motors[i].setSpeed(limited);
+            motors[i].setSpeed(limited * MOTOR_PINS[i].dir);
         }
     }
+    if (millis() - last_dbg_ms > 2000) last_dbg_ms = millis();
 }
 
 void ModeManager::applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
@@ -159,7 +194,26 @@ void ModeManager::applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
 
     if (mode == MODE_NAV && (nav_vx_ != 0 || nav_vy_ != 0 || nav_omega_ != 0)) {
         mecanum->compute(nav_vx_, nav_vy_, nav_omega_, target_speeds);
-    } else {
+    }
+    else if (mode == MODE_AUTO_ROAM) {
+        int16_t roam_vx = 0, roam_vy = 0, roam_omega = 0;
+        if (auto_roam_.compute(now_ms, roam_vx, roam_vy, roam_omega)) {
+            mecanum->compute(roam_vx, roam_vy, roam_omega, target_speeds);
+        } else {
+            // Sharp-triggered soft-hold: zero PWM but DO NOT latch EN low.
+            // emergencyStop() would set enabled_=false and stop wheels permanently
+            // until E-STOP is cleared. coast() just zeros PWM and leaves the
+            // driver enabled so the next tick can resume immediately.
+            for (int i = 0; i < MOTOR_COUNT; i++) {
+                motors[i].coast();
+            }
+            for (int i = 0; i < MOTOR_COUNT; i++) {
+                ramped_speeds_[i] = 0;
+            }
+            return;
+        }
+    }
+    else {
         mecanum->stop(target_speeds);
     }
 
@@ -186,7 +240,7 @@ void ModeManager::getTelemetryJson(char* buf, size_t bufsize,
         if (n > 0 && n < left) { p += n; left -= n; }
         for (int i = 0; i < MOTOR_COUNT; i++) {
             n = snprintf(p, left, "%.1f%s",
-                encoders[i].getFilteredRPM(),
+                encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir,
                 i < MOTOR_COUNT - 1 ? "," : "");
             if (n > 0 && n < left) { p += n; left -= n; }
         }

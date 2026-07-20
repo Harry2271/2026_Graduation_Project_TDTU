@@ -13,3 +13,8 @@
 #include "Watchdog.h"
 #include "ObstacleAvoidance.h"
 #include "ModeManager.h"
+#include "BNO055Sensor.h"
+#include "INA226Sensor.h"
+#include "IRProximitySensor.h"
+#include "SharpFrontSensor.h"
+#include "JsonStatus.h"

@@ -1,0 +1,45 @@
+#pragma once
+
+#include <stdint.h>
+
+/**
+ * INA226 — Current/Voltage/Power Monitor via LibDriver
+ *
+ * Measures bus voltage and current through a shunt resistor.
+ * Battery SOC is a simple linear mapping: 21 VDC = 100 %, 0 V = 0 %.
+ */
+
+class INA226Sensor {
+public:
+    INA226Sensor();
+
+    /// Initialize INA226 via LibDriver basic API.
+    bool begin(uint8_t address = 0x40);
+
+    /// Read bus voltage, current, and power. Recomputes battery %.
+    bool read();
+
+    // --- Accessors ---
+    float getBusVoltage()    const { return bus_voltage_; }     // V
+    float getCurrent()       const { return current_; }         // A
+    float getPower()         const { return power_; }           // W
+    float getBatteryPct()    const { return battery_pct_; }     // 0-100 %
+    uint8_t getBatteryStatus() const { return battery_status_; } // 0=ok, 1=low, 2=critical
+
+    /// Print JSON telemetry (type 133).
+    void printTelemetry() const;
+
+    bool isOperational() const { return operational_; }
+    uint32_t getLastReadMs() const { return last_read_ms_; }
+
+private:
+    float bus_voltage_;    // V
+    float shunt_voltage_;  // mV
+    float current_;        // A
+    float power_;          // W
+    float battery_pct_;    // 0-100 %
+    uint8_t battery_status_;
+    bool operational_;
+    uint8_t addr_;
+    uint32_t last_read_ms_;
+};

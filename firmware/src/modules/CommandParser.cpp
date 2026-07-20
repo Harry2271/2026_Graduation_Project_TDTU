@@ -119,6 +119,22 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
             out.type = CMD_GET_STATUS;
         } break;
 
+        case 'I': case 'i': {
+            out.type = CMD_GET_IMU;
+        } break;
+
+        case 'W': case 'w': {
+            out.type = CMD_GET_POWER;
+        } break;
+
+        case 'N': case 'n': {
+            out.type = CMD_GET_IR;
+        } break;
+
+        case 'J': case 'j': {
+            out.type = CMD_GET_SHARP;
+        } break;
+
         case 'P': case 'p': {
             float kp, ki, kd;
             if (sscanf(cmd + 1, "%f %f %f", &kp, &ki, &kd) == 3) {
@@ -135,6 +151,11 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
             out.max_speed = clampVal(v, 0, 100);
         } break;
 
+        case 'A': case 'a':
+            // Force AUTO_ROAM mode (sensor-only autonomy, ignores Pi heartbeat)
+            out.type = CMD_FORCE_AUTO_ROAM;
+            break;
+
         case 'T': case 't': {
             out.type = CMD_TEST;
         } break;
@@ -145,6 +166,16 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
 
         case '?': case 'h': case 'H': {
             out.type = CMD_HELP;
+        } break;
+
+        case 'O': case 'o': {
+            // O<id> <speed> — raw motor test, bypass PID + ramp
+            int id = 0, speed = 0;
+            if (sscanf(cmd + 1, "%d %d", &id, &speed) == 2) {
+                out.type = CMD_RAW_MOTOR;
+                out.motor_speeds[0] = clampVal(id, 0, 3);
+                out.motor_speeds[1] = clampVal(speed, -255, 255);
+            }
         } break;
 
         default:
@@ -239,6 +270,38 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     }
     else if (strcmp(cmd, "obstacle_clear") == 0) {
         out.type = CMD_OBSTACLE_CLEAR;
+    }
+    else if (strcmp(cmd, "get_imu") == 0) {
+        out.type = CMD_GET_IMU;
+    }
+    else if (strcmp(cmd, "get_power") == 0) {
+        out.type = CMD_GET_POWER;
+    }
+    else if (strcmp(cmd, "set_speed") == 0) {
+        int motor_id = doc["motor_id"] | -1;
+        int speed    = doc["speed"]    | 0;
+        if (motor_id >= 0 && motor_id < 4) {
+            out.type = CMD_INDIVIDUAL;
+            for (int i = 0; i < 4; i++) out.motor_speeds[i] = 0;
+            out.motor_speeds[motor_id] = clampVal(speed, -255, 255);
+        }
+    }
+    else if (strcmp(cmd, "set_all_speed") == 0) {
+        out.type = CMD_INDIVIDUAL;
+        ArduinoJson::JsonArray arr = doc["speeds"];
+        if (arr.size() >= 4) {
+            for (int i = 0; i < 4; i++) {
+                out.motor_speeds[i] = clampVal((int)arr[i].as<int>(), -255, 255);
+            }
+        } else {
+            out.type = CMD_UNKNOWN;
+        }
+    }
+    else if (strcmp(cmd, "get_ir") == 0) {
+        out.type = CMD_GET_IR;
+    }
+    else if (strcmp(cmd, "get_sharp") == 0) {
+        out.type = CMD_GET_SHARP;
     }
 
     return out.type;

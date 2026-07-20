@@ -29,6 +29,18 @@ enum CommandType {
     CMD_OBSTACLE_RIGHT,
     CMD_OBSTACLE_FRONT,
     CMD_OBSTACLE_CLEAR,
+
+    // Sensor query commands
+    CMD_GET_IMU,       // IMU heading (type 134)
+    CMD_GET_POWER,     // Power telemetry (type 133)
+    CMD_GET_IR,        // IR proximity (type 135)
+    CMD_GET_SHARP,     // Sharp front distance (type 136)
+
+    // Raw motor test (bypass PID + ramp)
+    CMD_RAW_MOTOR,     // O<id> <speed> — direct PWM to one motor
+
+    // Force into AUTO_ROAM (sensor-only autonomy, ignores Pi heartbeat)
+    CMD_FORCE_AUTO_ROAM,
 };
 
 struct Command {

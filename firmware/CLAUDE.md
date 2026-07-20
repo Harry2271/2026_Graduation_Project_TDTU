@@ -74,7 +74,7 @@ An autonomous warehouse logistics robot capable of:
 | SoC | Xtensa LX7 dual-core |
 | Flash | 16MB |
 | PSRAM | 8MB Octal PSRAM |
-| GPIO | Carefully selected to avoid conflicts (no GPIO 6-11, 18-19, 26-37, 43-46) |
+| GPIO | ESP32-S3-WROOM-1U-N16R8 — pads 1-21, 38-48 (22-25 NOT on module) |
 | Interfaces | USB CDC (native), UART, I2C, SPI |
 
 ### Motor System
@@ -91,6 +91,8 @@ An autonomous warehouse logistics robot capable of:
 | RPLIDAR A1M8-R6 | 360° scan, 0.15-12m range, 8kHz sample rate, UART 115200bps |
 | Webcam | USB camera for QR code scanning |
 | 5DOF Robotic Arm | 3× MG996R + 3× SG90 servos, ~40cm reach |
+| MCU-055 BNO055 | 9-axis accelerometer module (9DOF IMU), integrated with an intelligent sensor processor, supports I2C/UART communication |
+| Sharp GP2Y0A21YK0F | Analog infrared distance sensor (10-80cm range), used for close-range obstacle detection and redundancy backup |
 
 ### Power System
 | Component | Detail |
@@ -98,15 +100,19 @@ An autonomous warehouse logistics robot capable of:
 | Current Supply | 21VDC external PSU |
 | Battery (Planned) | 3S3P 18650 (11.1V nom / 12.6V full) with 40A BMS |
 | Regulation | Buck converters: 21V→12V (motors), 21V→5V (logic) |
-
+| INA226 (CJMCU-226) | Low-error current and voltage sensor, supports I2C communication (for power/battery voltage monitoring) |
 ---
 
-## Pin Mapping — ESP32-S3 (WeAct N16R8)
+## Pin Mapping — ESP32-S3-WROOM-1U-N16R8
 
 ```
-Safe GPIOs: 1-5, 7-8, 12-17, 20-25, 38-42, 47-48
-AVOID:  0 (BOOT), 6-11 (Flash SPI), 18-19 (USB D±),
-        26-37 (PSRAM), 43-44 (UART0), 45-46 (Native USB)
+Module pads available:
+  Left:  EN, 4,5,6,7,15,16,17,18,8,19,20,3,46,9,10
+  Right: 43,44,2,1,45,46,0,35,36,37,38,39,40,41,42,47,48,21
+NOT on module: 22, 23, 24, 25
+Strapping: 0 (boot), 9, 45, 46
+USB: 18 (D-), 19 (D+) — safe when CDC disabled
+UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 ```
 
 
@@ -153,6 +159,8 @@ AVOID:  0 (BOOT), 6-11 (Flash SPI), 18-19 (USB D±),
 | `{"cmd":"get_encoder"}` | Request encoder data (counts + RPM) |
 | `{"cmd":"reset_encoder","motor_id":-1}` | Reset encoder counter (-1 = all) |
 | `{"cmd":"set_pid","motor_id":0,"kp":1.0,"ki":0.1,"kd":0.01}` | Set PID gains for a motor |
+| `{"cmd":"get_imu"}` | Request IMU heading (response type 134) |
+| `{"cmd":"get_power"}` | Request power telemetry (response type 133) |
 
 ### Protocol — ESP32-S3 → Raspberry Pi 5 (Responses)
 
@@ -162,6 +170,8 @@ AVOID:  0 (BOOT), 6-11 (Flash SPI), 18-19 (USB D±),
 | `{"type":129,"data":{"error":"..."}}` | ERROR | Error message |
 | `{"type":130,"data":{"encoders":[{...}]}}` | ENCODER | Encoder data for all 4 motors |
 | `{"type":131,"data":{...}}` | STATUS | Status telemetry |
+| `{"type":133,"data":{"bus_v":...,"current_a":...,"power_w":...}}` | POWER | Battery/power telemetry (INA226) |
+| `{"type":134,"data":{"yaw":...,"pitch":...,"roll":...,"temp":...,"cal":{...}}}` | IMU | IMU heading (BNO055) — published at 20 Hz |
 
 ### Alternative Command Protocol (Simple Serial)
 

@@ -3,9 +3,10 @@
 #include <stdint.h>
 
 enum SystemMode {
-    MODE_SAFE,   // No heartbeat — motors stopped, waiting for connection
-    MODE_NAV,    // Active heartbeat from Pi+LiDAR — autonomous navigation
-    MODE_MANUAL, // Pi disconnected, but web/manual control active
+    MODE_SAFE,      // No heartbeat — motors stopped, waiting for connection
+    MODE_NAV,       // Active heartbeat from Pi+LiDAR — autonomous navigation
+    MODE_MANUAL,    // Pi disconnected, but web/manual control active
+    MODE_AUTO_ROAM, // Pi disconnected — drive autonomously using onboard sensors
 };
 
 class Watchdog {
@@ -26,8 +27,12 @@ public:
     // Call when manual/web control is activated
     void setManualActive(bool active);
 
+    // Force a specific mode (used by ASCII 'A' command to enter AUTO_ROAM on demand)
+    void setMode(SystemMode m);
+
     [[nodiscard]] SystemMode getMode() const { return mode_; }
     [[nodiscard]] bool hasHeartbeat() const { return heartbeat_seen_; }
+    [[nodiscard]] bool isForcedAutoRoam() const { return forced_auto_roam_; }
     [[nodiscard]] uint32_t getLastHeartbeatMs() const { return last_heartbeat_ms_; }
     [[nodiscard]] uint32_t getUptimeMs() const { return startup_ms_; }
 
@@ -37,6 +42,7 @@ private:
     SystemMode mode_;
     bool heartbeat_seen_;
     bool manual_active_;
+    bool forced_auto_roam_;  // true after explicit 'A' command — pins AUTO_ROAM
     uint32_t last_heartbeat_ms_;
     uint32_t startup_ms_;
 };
