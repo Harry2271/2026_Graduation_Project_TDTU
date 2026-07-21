@@ -34,6 +34,7 @@ setup(
             'map_manager = my_robot_controller.map_manager_node:main',
             'april_tag_node = my_robot_controller.april_tag_node:main',
             'camera_stream = my_robot_controller.camera_stream:main',
+            'esp32_telemetry_node = my_robot_controller.esp32_telemetry_node:main',
         ],
     },
 )

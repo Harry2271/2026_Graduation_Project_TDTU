@@ -17,6 +17,8 @@ Messages (Robot → Frontend):
   pose         | robot x, y, theta from TF                         | 10 Hz
   status       | human-readable state string                       | on change
   mode         | machine state (idle / mapping_active / live / etc)| on change
+  esp32_status | raw ESP32 type-131 status frame                   | ~2 Hz
+  esp32_encoder| raw ESP32 type-130 encoder snapshot               | on event
   info         | device availability + current mode                |  0.2 Hz
   ping         | keepalive                                         |  0.2 Hz
   ack          | acknowledgment for every received command         | on event
@@ -86,6 +88,8 @@ class WebBridge(Node):
         self.create_subscription(OccupancyGrid, '/obstacle_layer', self._on_obstacle_layer, 10)
         self.create_subscription(String, '/robot_status', self._on_status, 10)
         self.create_subscription(String, '/mapping_status', self._on_mapping_status, 10)
+        self.create_subscription(String, '/esp32/status', self._on_esp32_status, 10)
+        self.create_subscription(String, '/esp32/encoder', self._on_esp32_encoder, 10)
 
         # ── Timers ──────────────────────────────────────────────────────
         self.create_timer(5.0, self._broadcast_info)
@@ -197,6 +201,24 @@ class WebBridge(Node):
             self.get_logger().info(f'Mode changed → {self.mode}')
         self._emit({'type': 'mode', 'data': self.mode})
         self._emit({'type': 'status', 'data': raw})
+
+    # ── ESP32 telemetry (from esp32_telemetry_node) ───────────────────────
+
+    def _on_esp32_status(self, msg: String) -> None:
+        """Forward ESP32 type-131 status to all WebSocket clients."""
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        self._emit({'type': 'esp32_status', 'data': data})
+
+    def _on_esp32_encoder(self, msg: String) -> None:
+        """Forward ESP32 type-130 encoder snapshot to all WebSocket clients."""
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        self._emit({'type': 'esp32_encoder', 'data': data})
 
     # ── Info ───────────────────────────────────────────────────────────────────
 

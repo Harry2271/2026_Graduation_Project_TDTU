@@ -32,7 +32,8 @@
 1. `rplidar_ros2` — RPLidar driver (apt package `ros-jazzy-rplidar-ros2`), publishes `/scan`
 2. `slam_toolbox` (online_async) — scan-matching, TF, map building
 3. `my_robot_controller/map_manager` — state machine, obstacle awareness zone
-4. `my_robot_controller/web_bridge` — WebSocket server on port 9091
+4. `my_robot_controller/esp32_telemetry_node` — opens `/dev/ttyACM0`, forwards ESP32 type-130/131 frames to `/esp32/encoder` and `/esp32/status`
+5. `my_robot_controller/web_bridge` — WebSocket server on port 9091
                                                 ↓
                                               Browser
 ```
@@ -105,6 +106,7 @@ pm2 restart nexus-robot-lidar
 pm2 restart nexus-robot-slam
 pm2 restart nexus-robot-map-manager
 pm2 restart nexus-robot-web-bridge
+pm2 restart nexus-robot-esp32-telemetry
 ```
 
 **Check node status:**
@@ -215,6 +217,37 @@ Values: `idle` | `mapping_idle` | `mapping_active` | `scan_obstacle` | `live`
 { "type": "info", "data": { "lidar": true, "map": true, "pose": false, "mode": "live" } }
 ```
 
+### `esp32_status` — Raw ESP32 Type-131 Frame (as emitted by firmware)
+
+Forwarded verbatim from `/esp32/status`, which `esp32_telemetry_node.py`
+populates by reading `/dev/ttyACM0` directly. Consumed by the right-side
+"ESP32" tab in the web UI.
+
+```json
+{
+  "type": "esp32_status",
+  "data": {
+    "ts": 1053920, "type": 131, "mode": "AUTO_ROAM",
+    "estop": false, "max_pct": 100, "nav": [0, 0, 0],
+    "motors": [{"t": 30, "r": 0}, {"t": 30, "r": 0}, {"t": 30, "r": 0}, {"t": 30, "r": 0}],
+    "ir": [false, false, false, false],
+    "st": {"imu": false, "pwr": false, "sharp": 22, "obs": false, "tof_mm": 9999, "cyl": "idle"}
+  }
+}
+```
+
+### `esp32_encoder` — Raw ESP32 Type-130 Frame (per-motor encoder counts + RPM)
+
+```json
+{
+  "type": "esp32_encoder",
+  "data": [
+    {"id": 0, "name": "fl", "count": 12345, "rpm": 0},
+    {"id": 1, "name": "fr", "count": 12350, "rpm": 0}
+  ]
+}
+```
+
 ### `ping` — Keepalive (every 5s)
 
 ```json
@@ -250,6 +283,7 @@ ws.send(JSON.stringify({ type: 'cmd', command: 'reset' }));
 | map_manager | `/obstacle_layer` | OccupancyGrid | one-shot | `obstacle_layer.*` |
 | slam_toolbox | TF (`map→base_footprint`) | TransformStamped | ~10 Hz | `pose.*` (via web_bridge TF lookup) |
 | map_manager | `/mapping_status` | String | on change | `status.*`, `mode.*` |
+| ESP32 (`/dev/ttyACM0`) | `/esp32/status`, `/esp32/encoder` | std_msgs/String | ~2 Hz (status), on event (encoder) | `esp32_status.*`, `esp32_encoder.*` |
 | web_bridge | — | — | 5s | `info.*` |
 
 ---

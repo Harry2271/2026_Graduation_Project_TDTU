@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Package, Layers, Map as MapIcon, Camera } from 'lucide-react';
+import { Package, Layers, Map as MapIcon, Camera, Cpu } from 'lucide-react';
 
 const ITEMS = [
   { path: '/inventory', label: 'Kho hàng', icon: Package },
   { path: '/products', label: 'Kiện hàng', icon: Layers },
   { path: '/map', label: 'Bản đồ', icon: MapIcon },
   { path: '/camera', label: 'Camera', icon: Camera },
+  { path: '/telemetry', label: 'ESP32', icon: Cpu },
 ] as const;
 
 export default function BottomTabBar() {

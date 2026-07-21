@@ -91,6 +91,14 @@ BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBO
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
 start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
 
+# ESP32 telemetry bridge — opens /dev/ttyACM0 and forwards type-130/131 frames
+# to /esp32/encoder and /esp32/status, which web_bridge relays to the browser.
+# Must start before web_bridge so subscriptions are live by the time clients
+# connect. Overridable via ESP32_PORT for non-default hardware.
+ESP32_PORT="${ESP32_PORT:-/dev/ttyACM0}"
+sudo chmod 666 "$ESP32_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $ESP32_PORT"
+start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
+
 # Brain node gets extra PM2 settings: exponential backoff on restart so a
 # temporarily-unreachable API doesn't cause a 1500-restart crash loop.
 pm2 delete "${SERVICE_NAME_PREFIX}-brain" 2>/dev/null || true
