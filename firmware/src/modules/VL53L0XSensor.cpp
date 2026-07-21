@@ -75,7 +75,7 @@ bool VL53L0XSensor::isAtUnloadingDistance() const
 
 void VL53L0XSensor::printStatusJson() const
 {
-    Serial.printf(
+    PiSerial.printf(
         "{\"type\":138,\"data\":{\"distance_mm\":%u,\"distance_cm\":%.1f,\"at_unload\":%s,\"present\":%s}}\n",
         distance_mm_,
         getDistanceCm(),

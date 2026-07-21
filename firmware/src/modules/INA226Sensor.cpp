@@ -104,7 +104,7 @@ bool INA226Sensor::read()
 
 void INA226Sensor::printTelemetry() const
 {
-    Serial.printf("{\"type\":133,\"data\":{"
+    PiSerial.printf("{\"type\":133,\"data\":{"
                   "\"bus_v\":%.3f,"
                   "\"current_a\":%.3f,"
                   "\"power_w\":%.3f,"

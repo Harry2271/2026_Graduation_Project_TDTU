@@ -97,7 +97,7 @@ const char* CylinderActuator::stateName(CylinderState s)
 
 void CylinderActuator::printStatusJson() const
 {
-    Serial.printf(
+    PiSerial.printf(
         "{\"type\":139,\"data\":{\"state\":\"%s\",\"extended\":%s,\"moving\":%s}}\n",
         stateName(state_),
         isExtended() ? "true" : "false",

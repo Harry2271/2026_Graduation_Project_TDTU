@@ -134,6 +134,9 @@ private:
     uint32_t leave_start_ms_;
     float    leave_target_heading_;
 
+    // Time the AUTO_ROAM driving loop first started (for Sharp boot-skip)
+    uint32_t drive_start_ms_ = 0;
+
     // Tuning (compile-time defaults)
     static constexpr int16_t BASE_FWD_SPEED     = 70;
     static constexpr int16_t SLOW_FWD_SPEED     = 30;
@@ -143,6 +146,7 @@ private:
     static constexpr int16_t SCAN_ROTATE        = 50;
     static constexpr uint32_t HEADING_HOLD_MS   = 1500;
     static constexpr uint32_t SHARP_HOLD_MS     = 500;
+    static constexpr uint32_t SHARP_BOOT_SKIP_MS = 2000;  // ignore Sharp for 2 s after AUTO_ROAM entry (ADC settling)
     static constexpr int16_t ADJUST_FWD_SPEED   = 40;
     static constexpr uint32_t ADJUST_TIMEOUT_MS = 5000;
 };

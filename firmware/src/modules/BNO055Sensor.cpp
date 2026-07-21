@@ -78,8 +78,15 @@ bool BNO055Sensor::begin(uint8_t address)
     // 3. Re-init Wire (ensure SDA/SCL are correctly configured after
     //    bus reset toggled the pins).
     // ================================================================
+    // NOTE: Wire.end() doesn't always release a stuck bus on ESP32-S3.
+    // If the bus is held low by a slave, re-begin() may hang.
+    // We restore GPIO to a known idle state first, then re-init.
+    pinMode(BNO055_SDA_PIN, INPUT_PULLUP);
+    pinMode(BNO055_SCL_PIN, INPUT_PULLUP);
+    delay(10);
     Wire.end();
-    Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    Wire.setPins(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    Wire.begin();
     Wire.setClock(BNO055_I2C_FREQ_HZ);
     delay(50);
 
@@ -300,7 +307,7 @@ void BNO055Sensor::setTargetHeading(float target_deg)
 
 void BNO055Sensor::printTelemetry() const
 {
-    Serial.printf("{\"type\":134,\"data\":{"
+    PiSerial.printf("{\"type\":134,\"data\":{"
                   "\"heading\":%.2f,"
                   "\"heading_error\":%.2f,"
                   "\"linear_accel_x\":%.2f,"

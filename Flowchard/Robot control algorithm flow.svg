@@ -1,0 +1,398 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1050pt" height="912pt" viewBox="0.00 0.00 1050.00 912.00">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 908)">
+<title>Robot_Control_Algorithm</title>
+<polygon fill="white" stroke="none" points="-4,4 -4,-908 1046.1,-908 1046.1,4 -4,4"/>
+<!-- Start -->
+<g id="node1" class="node">
+<title>Start</title>
+<ellipse fill="none" stroke="black" cx="82.69" cy="-886" rx="27" ry="18"/>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-882.7" font-family="Times,serif" font-size="11.00">Start</text>
+</g>
+<!-- Init -->
+<g id="node3" class="node">
+<title>Init</title>
+<path fill="none" stroke="black" d="M111.38,-818.6C111.38,-818.6 53.99,-818.6 53.99,-818.6 47.99,-818.6 41.99,-812.6 41.99,-806.6 41.99,-806.6 41.99,-677.4 41.99,-677.4 41.99,-671.4 47.99,-665.4 53.99,-665.4 53.99,-665.4 111.38,-665.4 111.38,-665.4 117.38,-665.4 123.38,-671.4 123.38,-677.4 123.38,-677.4 123.38,-806.6 123.38,-806.6 123.38,-812.6 117.38,-818.6 111.38,-818.6"/>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-804.7" font-family="Times,serif" font-size="11.00">Initialize</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-791.5" font-family="Times,serif" font-size="11.00">ESP32-S3</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-778.3" font-family="Times,serif" font-size="11.00">Raspberry Pi 5</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-765.1" font-family="Times,serif" font-size="11.00">Encoder</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-751.9" font-family="Times,serif" font-size="11.00">BNO055</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-738.7" font-family="Times,serif" font-size="11.00">INA226</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-725.5" font-family="Times,serif" font-size="11.00">LiDAR</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-712.3" font-family="Times,serif" font-size="11.00">Camera</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-699.1" font-family="Times,serif" font-size="11.00">E18</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-685.9" font-family="Times,serif" font-size="11.00">Sharp</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-672.7" font-family="Times,serif" font-size="11.00">VL53L0X</text>
+</g>
+<!-- Start&#45;&gt;Init -->
+<g id="edge1" class="edge">
+<title>Start-&gt;Init</title>
+<path fill="none" stroke="black" d="M83.1,-867.76C83.1,-867.76 83.1,-828.32 83.1,-828.32"/>
+<polygon fill="black" stroke="black" points="85.9,-828.32 83.1,-820.32 80.3,-828.32 85.9,-828.32"/>
+</g>
+<!-- End -->
+<g id="node2" class="node">
+<title>End</title>
+<ellipse fill="none" stroke="black" cx="471.03" cy="-18" rx="27" ry="18"/>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-14.7" font-family="Times,serif" font-size="11.00">End</text>
+</g>
+<!-- WaitMission -->
+<g id="node4" class="node">
+<title>WaitMission</title>
+<path fill="none" stroke="black" d="M153.37,-616C153.37,-616 45.84,-616 45.84,-616 39.84,-616 29.73,-611.63 25.62,-607.26 25.62,-607.26 8.22,-588.74 8.22,-588.74 4.11,-584.37 6,-580 12,-580 12,-580 119.53,-580 119.53,-580 125.53,-580 135.64,-584.37 139.75,-588.74 139.75,-588.74 157.15,-607.26 157.15,-607.26 161.26,-611.63 159.37,-616 153.37,-616"/>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-594.7" font-family="Times,serif" font-size="11.00">Wait for Mission</text>
+</g>
+<!-- Init&#45;&gt;WaitMission -->
+<g id="edge2" class="edge">
+<title>Init-&gt;WaitMission</title>
+<path fill="none" stroke="black" d="M83.1,-664.94C83.1,-664.94 83.1,-625.86 83.1,-625.86"/>
+<polygon fill="black" stroke="black" points="85.9,-625.86 83.1,-617.86 80.3,-625.86 85.9,-625.86"/>
+</g>
+<!-- Battery -->
+<g id="node5" class="node">
+<title>Battery</title>
+<path fill="none" stroke="black" d="M107.55,-530C107.55,-530 57.82,-530 57.82,-530 51.82,-530 45.82,-524 45.82,-518 45.82,-518 45.82,-506 45.82,-506 45.82,-500 51.82,-494 57.82,-494 57.82,-494 107.55,-494 107.55,-494 113.55,-494 119.55,-500 119.55,-506 119.55,-506 119.55,-518 119.55,-518 119.55,-524 113.55,-530 107.55,-530"/>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-515.3" font-family="Times,serif" font-size="11.00">Read Battery</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-502.1" font-family="Times,serif" font-size="11.00">(INA226)</text>
+</g>
+<!-- WaitMission&#45;&gt;Battery -->
+<g id="edge3" class="edge">
+<title>WaitMission-&gt;Battery</title>
+<path fill="none" stroke="black" d="M83.1,-579.76C83.1,-579.76 83.1,-539.73 83.1,-539.73"/>
+<polygon fill="black" stroke="black" points="85.9,-539.73 83.1,-531.73 80.3,-539.73 85.9,-539.73"/>
+</g>
+<!-- BatteryCheck -->
+<g id="node6" class="node">
+<title>BatteryCheck</title>
+<path fill="none" stroke="black" d="M72.11,-438.74C72.11,-438.74 29.01,-415.66 29.01,-415.66 23.72,-412.83 23.72,-407.17 29.01,-404.34 29.01,-404.34 72.11,-381.26 72.11,-381.26 77.4,-378.43 87.97,-378.43 93.26,-381.26 93.26,-381.26 136.36,-404.34 136.36,-404.34 141.65,-407.17 141.65,-412.83 136.36,-415.66 136.36,-415.66 93.26,-438.74 93.26,-438.74 87.97,-441.57 77.4,-441.57 72.11,-438.74"/>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-413.3" font-family="Times,serif" font-size="11.00">Battery</text>
+<text xml:space="preserve" text-anchor="middle" x="82.69" y="-400.1" font-family="Times,serif" font-size="11.00">Sufficient?</text>
+</g>
+<!-- Battery&#45;&gt;BatteryCheck -->
+<g id="edge4" class="edge">
+<title>Battery-&gt;BatteryCheck</title>
+<path fill="none" stroke="black" d="M83.1,-493.76C83.1,-493.76 83.1,-454.09 83.1,-454.09"/>
+<polygon fill="black" stroke="black" points="85.9,-454.09 83.1,-446.09 80.3,-454.09 85.9,-454.09"/>
+</g>
+<!-- Charge -->
+<g id="node7" class="node">
+<title>Charge</title>
+<path fill="none" stroke="black" d="M319.34,-183C319.34,-183 252.48,-183 252.48,-183 246.48,-183 240.48,-177 240.48,-171 240.48,-171 240.48,-159 240.48,-159 240.48,-153 246.48,-147 252.48,-147 252.48,-147 319.34,-147 319.34,-147 325.34,-147 331.34,-153 331.34,-159 331.34,-159 331.34,-171 331.34,-171 331.34,-177 325.34,-183 319.34,-183"/>
+<text xml:space="preserve" text-anchor="middle" x="285.91" y="-168.3" font-family="Times,serif" font-size="11.00">Go to</text>
+<text xml:space="preserve" text-anchor="middle" x="285.91" y="-155.1" font-family="Times,serif" font-size="11.00">Charging Station</text>
+</g>
+<!-- BatteryCheck&#45;&gt;Charge -->
+<g id="edge15" class="edge">
+<title>BatteryCheck-&gt;Charge</title>
+<path fill="none" stroke="black" d="M117.65,-394C175.81,-394 286.1,-394 286.1,-394 286.1,-394 286.1,-192.87 286.1,-192.87"/>
+<polygon fill="black" stroke="black" points="288.9,-192.87 286.1,-184.87 283.3,-192.87 288.9,-192.87"/>
+<text xml:space="preserve" text-anchor="middle" x="202.93" y="-365.2" font-family="Times,serif" font-size="14.00">No</text>
+</g>
+<!-- PiPlanning -->
+<g id="node8" class="node">
+<title>PiPlanning</title>
+<path fill="none" stroke="black" d="M741.84,-823.8C741.84,-823.8 688.42,-823.8 688.42,-823.8 682.42,-823.8 676.42,-817.8 676.42,-811.8 676.42,-811.8 676.42,-788.2 676.42,-788.2 676.42,-782.2 682.42,-776.2 688.42,-776.2 688.42,-776.2 741.84,-776.2 741.84,-776.2 747.84,-776.2 753.84,-782.2 753.84,-788.2 753.84,-788.2 753.84,-811.8 753.84,-811.8 753.84,-817.8 747.84,-823.8 741.84,-823.8"/>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-809.9" font-family="Times,serif" font-size="11.00">Pi 5</text>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-796.7" font-family="Times,serif" font-size="11.00">Path Planning</text>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-783.5" font-family="Times,serif" font-size="11.00">(A* / SLAM)</text>
+</g>
+<!-- BatteryCheck&#45;&gt;PiPlanning -->
+<g id="edge17" class="edge">
+<title>BatteryCheck-&gt;PiPlanning</title>
+<path fill="none" stroke="black" d="M113.7,-428.2C149.38,-428.2 203.1,-428.2 203.1,-428.2 203.1,-428.2 203.1,-804.47 203.1,-804.47 203.1,-804.47 666.71,-804.47 666.71,-804.47"/>
+<polygon fill="black" stroke="black" points="666.71,-807.27 674.71,-804.47 666.71,-801.67 666.71,-807.27"/>
+<text xml:space="preserve" text-anchor="middle" x="371.22" y="-551.2" font-family="Times,serif" font-size="14.00">Yes</text>
+</g>
+<!-- Charge&#45;&gt;End -->
+<g id="edge16" class="edge">
+<title>Charge-&gt;End</title>
+<path fill="none" stroke="black" d="M286.1,-146.68C286.1,-107.27 286.1,-18 286.1,-18 286.1,-18 434.23,-18 434.23,-18"/>
+<polygon fill="black" stroke="black" points="434.23,-20.8 442.23,-18 434.23,-15.2 434.23,-20.8"/>
+</g>
+<!-- SendCmd -->
+<g id="node9" class="node">
+<title>SendCmd</title>
+<path fill="none" stroke="black" d="M756.05,-727C756.05,-727 674.21,-727 674.21,-727 668.21,-727 662.21,-721 662.21,-715 662.21,-715 662.21,-703 662.21,-703 662.21,-697 668.21,-691 674.21,-691 674.21,-691 756.05,-691 756.05,-691 762.05,-691 768.05,-697 768.05,-703 768.05,-703 768.05,-715 768.05,-715 768.05,-721 762.05,-727 756.05,-727"/>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-712.3" font-family="Times,serif" font-size="11.00">Send Navigation</text>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-699.1" font-family="Times,serif" font-size="11.00">Command to ESP32</text>
+</g>
+<!-- PiPlanning&#45;&gt;SendCmd -->
+<g id="edge5" class="edge">
+<title>PiPlanning-&gt;SendCmd</title>
+<path fill="none" stroke="black" d="M715.1,-776.09C715.1,-776.09 715.1,-736.8 715.1,-736.8"/>
+<polygon fill="black" stroke="black" points="717.9,-736.8 715.1,-728.8 712.3,-736.8 717.9,-736.8"/>
+</g>
+<!-- Motion -->
+<g id="node10" class="node">
+<title>Motion</title>
+<path fill="none" stroke="black" d="M750.7,-641C750.7,-641 679.57,-641 679.57,-641 673.57,-641 667.57,-635 667.57,-629 667.57,-629 667.57,-617 667.57,-617 667.57,-611 673.57,-605 679.57,-605 679.57,-605 750.7,-605 750.7,-605 756.7,-605 762.7,-611 762.7,-617 762.7,-617 762.7,-629 762.7,-629 762.7,-635 756.7,-641 750.7,-641"/>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-626.3" font-family="Times,serif" font-size="11.00">Mecanum Motion</text>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-613.1" font-family="Times,serif" font-size="11.00">Control</text>
+</g>
+<!-- SendCmd&#45;&gt;Motion -->
+<g id="edge6" class="edge">
+<title>SendCmd-&gt;Motion</title>
+<path fill="none" stroke="black" d="M715.1,-690.76C715.1,-690.76 715.1,-650.73 715.1,-650.73"/>
+<polygon fill="black" stroke="black" points="717.9,-650.73 715.1,-642.73 712.3,-650.73 717.9,-650.73"/>
+</g>
+<!-- Feedback -->
+<g id="node11" class="node">
+<title>Feedback</title>
+<path fill="none" stroke="black" d="M755.17,-555C755.17,-555 675.09,-555 675.09,-555 669.09,-555 663.09,-549 663.09,-543 663.09,-543 663.09,-531 663.09,-531 663.09,-525 669.09,-519 675.09,-519 675.09,-519 755.17,-519 755.17,-519 761.17,-519 767.17,-525 767.17,-531 767.17,-531 767.17,-543 767.17,-543 767.17,-549 761.17,-555 755.17,-555"/>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-540.3" font-family="Times,serif" font-size="11.00">Encoder + BNO055</text>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-527.1" font-family="Times,serif" font-size="11.00">PID Control</text>
+</g>
+<!-- Motion&#45;&gt;Feedback -->
+<g id="edge7" class="edge">
+<title>Motion-&gt;Feedback</title>
+<path fill="none" stroke="black" d="M699.1,-604.76C699.1,-604.76 699.1,-564.73 699.1,-564.73"/>
+<polygon fill="black" stroke="black" points="701.9,-564.73 699.1,-556.73 696.3,-564.73 701.9,-564.73"/>
+</g>
+<!-- SideIR -->
+<g id="node12" class="node">
+<title>SideIR</title>
+<path fill="none" stroke="black" d="M704.75,-463.38C704.75,-463.38 666.15,-441.02 666.15,-441.02 660.96,-438.01 660.96,-431.99 666.15,-428.98 666.15,-428.98 704.75,-406.62 704.75,-406.62 709.94,-403.61 720.32,-403.61 725.52,-406.62 725.52,-406.62 764.12,-428.98 764.12,-428.98 769.31,-431.99 769.31,-438.01 764.12,-441.02 764.12,-441.02 725.52,-463.38 725.52,-463.38 720.32,-466.39 709.94,-466.39 704.75,-463.38"/>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-438.3" font-family="Times,serif" font-size="11.00">Side E18</text>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-425.1" font-family="Times,serif" font-size="11.00">Obstacle?</text>
+</g>
+<!-- Feedback&#45;&gt;SideIR -->
+<g id="edge8" class="edge">
+<title>Feedback-&gt;SideIR</title>
+<path fill="none" stroke="black" d="M715.1,-518.76C715.1,-518.76 715.1,-479.09 715.1,-479.09"/>
+<polygon fill="black" stroke="black" points="717.9,-479.09 715.1,-471.09 712.3,-479.09 717.9,-479.09"/>
+</g>
+<!-- SideAvoid -->
+<g id="node13" class="node">
+<title>SideAvoid</title>
+<path fill="none" stroke="black" d="M985.76,-336C985.76,-336 942.44,-336 942.44,-336 936.44,-336 930.44,-330 930.44,-324 930.44,-324 930.44,-312 930.44,-312 930.44,-306 936.44,-300 942.44,-300 942.44,-300 985.76,-300 985.76,-300 991.76,-300 997.76,-306 997.76,-312 997.76,-312 997.76,-324 997.76,-324 997.76,-330 991.76,-336 985.76,-336"/>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-321.3" font-family="Times,serif" font-size="11.00">Translate</text>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-308.1" font-family="Times,serif" font-size="11.00">Left / Right</text>
+</g>
+<!-- SideIR&#45;&gt;SideAvoid -->
+<g id="edge20" class="edge">
+<title>SideIR-&gt;SideAvoid</title>
+<path fill="none" stroke="black" d="M734.41,-411.3C780.28,-411.3 892.1,-411.3 892.1,-411.3 892.1,-411.3 892.1,-324 892.1,-324 892.1,-324 920.7,-324 920.7,-324"/>
+<polygon fill="black" stroke="black" points="920.7,-326.8 928.7,-324 920.7,-321.2 920.7,-326.8"/>
+<text xml:space="preserve" text-anchor="middle" x="834.74" y="-426.2" font-family="Times,serif" font-size="14.00">Yes</text>
+</g>
+<!-- SharpCheck -->
+<g id="node14" class="node">
+<title>SharpCheck</title>
+<path fill="none" stroke="black" d="M704.42,-346C704.42,-346 657.6,-322.4 657.6,-322.4 652.24,-319.7 652.24,-314.3 657.6,-311.6 657.6,-311.6 704.42,-288 704.42,-288 709.77,-285.3 720.49,-285.3 725.85,-288 725.85,-288 772.67,-311.6 772.67,-311.6 778.02,-314.3 778.02,-319.7 772.67,-322.4 772.67,-322.4 725.85,-346 725.85,-346 720.49,-348.7 709.77,-348.7 704.42,-346"/>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-320.3" font-family="Times,serif" font-size="11.00">Front Sharp</text>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-307.1" font-family="Times,serif" font-size="11.00">Obstacle?</text>
+</g>
+<!-- SideIR&#45;&gt;SharpCheck -->
+<g id="edge9" class="edge">
+<title>SideIR-&gt;SharpCheck</title>
+<path fill="none" stroke="black" d="M695.1,-411.69C695.1,-411.69 695.1,-351 695.1,-351"/>
+<polygon fill="black" stroke="black" points="697.9,-351 695.1,-343 692.3,-351 697.9,-351"/>
+</g>
+<!-- SideIR&#45;&gt;SharpCheck -->
+<g id="edge22" class="edge">
+<title>SideIR-&gt;SharpCheck</title>
+<path fill="none" stroke="black" d="M735.1,-411.69C735.1,-411.69 735.1,-351 735.1,-351"/>
+<polygon fill="black" stroke="black" points="737.9,-351 735.1,-343 732.3,-351 737.9,-351"/>
+</g>
+<!-- SideAvoid&#45;&gt;SharpCheck -->
+<g id="edge21" class="edge">
+<title>SideAvoid-&gt;SharpCheck</title>
+<path fill="none" stroke="black" d="M930,-312C930,-312 783.62,-312 783.62,-312"/>
+<polygon fill="black" stroke="black" points="783.62,-309.2 775.62,-312 783.62,-314.8 783.62,-309.2"/>
+</g>
+<!-- FrontAvoid -->
+<g id="node15" class="node">
+<title>FrontAvoid</title>
+<path fill="none" stroke="black" d="M995.84,-397C995.84,-397 932.36,-397 932.36,-397 926.36,-397 920.36,-391 920.36,-385 920.36,-385 920.36,-373 920.36,-373 920.36,-367 926.36,-361 932.36,-361 932.36,-361 995.84,-361 995.84,-361 1001.84,-361 1007.84,-367 1007.84,-373 1007.84,-373 1007.84,-385 1007.84,-385 1007.84,-391 1001.84,-397 995.84,-397"/>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-382.3" font-family="Times,serif" font-size="11.00">Select Free Side</text>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-369.1" font-family="Times,serif" font-size="11.00">Continue</text>
+</g>
+<!-- SharpCheck&#45;&gt;FrontAvoid -->
+<g id="edge18" class="edge">
+<title>SharpCheck-&gt;FrontAvoid</title>
+<path fill="none" stroke="black" d="M780.1,-319.2C780.1,-329.02 780.1,-368.3 780.1,-368.3 780.1,-368.3 910.52,-368.3 910.52,-368.3"/>
+<polygon fill="black" stroke="black" points="910.52,-371.1 918.52,-368.3 910.52,-365.5 910.52,-371.1"/>
+<text xml:space="preserve" text-anchor="middle" x="834.74" y="-374.2" font-family="Times,serif" font-size="14.00">Yes</text>
+</g>
+<!-- Arrive -->
+<g id="node16" class="node">
+<title>Arrive</title>
+<path fill="none" stroke="black" d="M953.69,-570.43C953.69,-570.43 914.54,-547.97 914.54,-547.97 909.34,-544.99 909.34,-539.01 914.54,-536.03 914.54,-536.03 953.69,-513.57 953.69,-513.57 958.9,-510.59 969.3,-510.59 974.51,-513.57 974.51,-513.57 1013.66,-536.03 1013.66,-536.03 1018.86,-539.01 1018.86,-544.99 1013.66,-547.97 1013.66,-547.97 974.51,-570.43 974.51,-570.43 969.3,-573.41 958.9,-573.41 953.69,-570.43"/>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-545.3" font-family="Times,serif" font-size="11.00">AprilTag</text>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-532.1" font-family="Times,serif" font-size="11.00">Detected?</text>
+</g>
+<!-- SharpCheck&#45;&gt;Arrive -->
+<g id="edge23" class="edge">
+<title>SharpCheck-&gt;Arrive</title>
+<path fill="none" stroke="black" d="M777.1,-320.42C777.1,-346.56 777.1,-513.9 777.1,-513.9 777.1,-513.9 942.6,-513.9 942.6,-513.9"/>
+<polygon fill="black" stroke="black" points="942.6,-516.7 950.6,-513.9 942.6,-511.1 942.6,-516.7"/>
+<text xml:space="preserve" text-anchor="middle" x="834.74" y="-475.2" font-family="Times,serif" font-size="14.00">No</text>
+</g>
+<!-- FrontAvoid&#45;&gt;Motion -->
+<g id="edge19" class="edge">
+<title>FrontAvoid-&gt;Motion</title>
+<path fill="none" stroke="black" d="M920.08,-386.5C907.97,-386.5 898.1,-386.5 898.1,-386.5 898.1,-386.5 898.1,-623 898.1,-623 898.1,-623 772.24,-623 772.24,-623"/>
+<polygon fill="black" stroke="black" points="772.24,-620.2 764.24,-623 772.24,-625.8 772.24,-620.2"/>
+</g>
+<!-- Arrive&#45;&gt;Motion -->
+<g id="edge24" class="edge">
+<title>Arrive-&gt;Motion</title>
+<path fill="none" stroke="black" d="M944.64,-565.7C888.64,-565.7 731.1,-565.7 731.1,-565.7 731.1,-565.7 731.1,-595.04 731.1,-595.04"/>
+<polygon fill="black" stroke="black" points="728.3,-595.04 731.1,-603.04 733.9,-595.04 728.3,-595.04"/>
+<text xml:space="preserve" text-anchor="middle" x="834.74" y="-555.2" font-family="Times,serif" font-size="14.00">Not Yet</text>
+</g>
+<!-- Dock -->
+<g id="node17" class="node">
+<title>Dock</title>
+<path fill="none" stroke="black" d="M996.76,-458C996.76,-458 931.45,-458 931.45,-458 925.45,-458 919.45,-452 919.45,-446 919.45,-446 919.45,-434 919.45,-434 919.45,-428 925.45,-422 931.45,-422 931.45,-422 996.76,-422 996.76,-422 1002.76,-422 1008.76,-428 1008.76,-434 1008.76,-434 1008.76,-446 1008.76,-446 1008.76,-452 1002.76,-458 996.76,-458"/>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-443.3" font-family="Times,serif" font-size="11.00">Reverse to Dock</text>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-430.1" font-family="Times,serif" font-size="11.00">Using Rear E18</text>
+</g>
+<!-- Arrive&#45;&gt;Dock -->
+<g id="edge25" class="edge">
+<title>Arrive-&gt;Dock</title>
+<path fill="none" stroke="black" d="M964.1,-507.18C964.1,-507.18 964.1,-467.87 964.1,-467.87"/>
+<polygon fill="black" stroke="black" points="966.9,-467.87 964.1,-459.87 961.3,-467.87 966.9,-467.87"/>
+</g>
+<!-- Distance -->
+<g id="node18" class="node">
+<title>Distance</title>
+<path fill="none" stroke="black" d="M953.12,-270.56C953.12,-270.56 897.08,-245.84 897.08,-245.84 891.59,-243.42 891.59,-238.58 897.08,-236.16 897.08,-236.16 953.12,-211.44 953.12,-211.44 958.61,-209.02 969.59,-209.02 975.08,-211.44 975.08,-211.44 1031.12,-236.16 1031.12,-236.16 1036.61,-238.58 1036.61,-243.42 1031.12,-245.84 1031.12,-245.84 975.08,-270.56 975.08,-270.56 969.59,-272.98 958.61,-272.98 953.12,-270.56"/>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-244.3" font-family="Times,serif" font-size="11.00">VL53L0X</text>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-231.1" font-family="Times,serif" font-size="11.00">Distance OK?</text>
+</g>
+<!-- Dock&#45;&gt;Distance -->
+<g id="edge26" class="edge">
+<title>Dock-&gt;Distance</title>
+<path fill="none" stroke="black" d="M919.33,-440C914.96,-440 912.1,-440 912.1,-440 912.1,-440 912.1,-262.37 912.1,-262.37"/>
+<polygon fill="black" stroke="black" points="914.9,-262.37 912.1,-254.37 909.3,-262.37 914.9,-262.37"/>
+</g>
+<!-- Adjust -->
+<g id="node19" class="node">
+<title>Adjust</title>
+<path fill="none" stroke="black" d="M989.29,-157C989.29,-157 938.91,-157 938.91,-157 932.91,-157 926.91,-151 926.91,-145 926.91,-145 926.91,-133 926.91,-133 926.91,-127 932.91,-121 938.91,-121 938.91,-121 989.29,-121 989.29,-121 995.29,-121 1001.29,-127 1001.29,-133 1001.29,-133 1001.29,-145 1001.29,-145 1001.29,-151 995.29,-157 989.29,-157"/>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-142.3" font-family="Times,serif" font-size="11.00">Fine Position</text>
+<text xml:space="preserve" text-anchor="middle" x="964.1" y="-129.1" font-family="Times,serif" font-size="11.00">Adjustment</text>
+</g>
+<!-- Distance&#45;&gt;Adjust -->
+<g id="edge27" class="edge">
+<title>Distance-&gt;Adjust</title>
+<path fill="none" stroke="black" d="M952.1,-211.5C952.1,-211.5 952.1,-166.73 952.1,-166.73"/>
+<polygon fill="black" stroke="black" points="954.9,-166.73 952.1,-158.73 949.3,-166.73 954.9,-166.73"/>
+</g>
+<!-- Dump -->
+<g id="node20" class="node">
+<title>Dump</title>
+<path fill="none" stroke="black" d="M518.95,-508.8C518.95,-508.8 423.11,-508.8 423.11,-508.8 417.11,-508.8 411.11,-502.8 411.11,-496.8 411.11,-496.8 411.11,-473.2 411.11,-473.2 411.11,-467.2 417.11,-461.2 423.11,-461.2 423.11,-461.2 518.95,-461.2 518.95,-461.2 524.95,-461.2 530.95,-467.2 530.95,-473.2 530.95,-473.2 530.95,-496.8 530.95,-496.8 530.95,-502.8 524.95,-508.8 518.95,-508.8"/>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-494.9" font-family="Times,serif" font-size="11.00">ESP32 → L298N</text>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-481.7" font-family="Times,serif" font-size="11.00">Extend Linear Actuator</text>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-468.5" font-family="Times,serif" font-size="11.00">Dump Cargo</text>
+</g>
+<!-- Distance&#45;&gt;Dump -->
+<g id="edge29" class="edge">
+<title>Distance-&gt;Dump</title>
+<path fill="none" stroke="black" d="M923.34,-257.9C813.24,-257.9 518.1,-257.9 518.1,-257.9 518.1,-257.9 518.1,-451.61 518.1,-451.61"/>
+<polygon fill="black" stroke="black" points="515.3,-451.61 518.1,-459.61 520.9,-451.61 515.3,-451.61"/>
+<text xml:space="preserve" text-anchor="middle" x="715.13" y="-245.2" font-family="Times,serif" font-size="14.00">Yes</text>
+</g>
+<!-- Adjust&#45;&gt;Distance -->
+<g id="edge28" class="edge">
+<title>Adjust-&gt;Distance</title>
+<path fill="none" stroke="black" d="M976.1,-157.24C976.1,-157.24 976.1,-202.21 976.1,-202.21"/>
+<polygon fill="black" stroke="black" points="973.3,-202.21 976.1,-210.21 978.9,-202.21 973.3,-202.21"/>
+</g>
+<!-- Retract -->
+<g id="node21" class="node">
+<title>Retract</title>
+<path fill="none" stroke="black" d="M486.27,-412C486.27,-412 455.79,-412 455.79,-412 449.79,-412 443.79,-406 443.79,-400 443.79,-400 443.79,-388 443.79,-388 443.79,-382 449.79,-376 455.79,-376 455.79,-376 486.27,-376 486.27,-376 492.27,-376 498.27,-382 498.27,-388 498.27,-388 498.27,-400 498.27,-400 498.27,-406 492.27,-412 486.27,-412"/>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-397.3" font-family="Times,serif" font-size="11.00">Retract</text>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-384.1" font-family="Times,serif" font-size="11.00">Actuator</text>
+</g>
+<!-- Dump&#45;&gt;Retract -->
+<g id="edge10" class="edge">
+<title>Dump-&gt;Retract</title>
+<path fill="none" stroke="black" d="M480.1,-461.09C480.1,-461.09 480.1,-421.8 480.1,-421.8"/>
+<polygon fill="black" stroke="black" points="482.9,-421.8 480.1,-413.8 477.3,-421.8 482.9,-421.8"/>
+</g>
+<!-- Dump&#45;&gt;Retract -->
+<g id="edge30" class="edge">
+<title>Dump-&gt;Retract</title>
+<path fill="none" stroke="black" d="M462.1,-461.09C462.1,-461.09 462.1,-421.8 462.1,-421.8"/>
+<polygon fill="black" stroke="black" points="464.9,-421.8 462.1,-413.8 459.3,-421.8 464.9,-421.8"/>
+</g>
+<!-- Leave -->
+<g id="node22" class="node">
+<title>Leave</title>
+<path fill="none" stroke="black" d="M493.75,-326C493.75,-326 448.31,-326 448.31,-326 442.31,-326 436.31,-320 436.31,-314 436.31,-314 436.31,-302 436.31,-302 436.31,-296 442.31,-290 448.31,-290 448.31,-290 493.75,-290 493.75,-290 499.75,-290 505.75,-296 505.75,-302 505.75,-302 505.75,-314 505.75,-314 505.75,-320 499.75,-326 493.75,-326"/>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-304.7" font-family="Times,serif" font-size="11.00">Leave Dock</text>
+</g>
+<!-- Retract&#45;&gt;Leave -->
+<g id="edge11" class="edge">
+<title>Retract-&gt;Leave</title>
+<path fill="none" stroke="black" d="M462.1,-375.76C462.1,-375.76 462.1,-335.73 462.1,-335.73"/>
+<polygon fill="black" stroke="black" points="464.9,-335.73 462.1,-327.73 459.3,-335.73 464.9,-335.73"/>
+</g>
+<!-- Retract&#45;&gt;Leave -->
+<g id="edge31" class="edge">
+<title>Retract-&gt;Leave</title>
+<path fill="none" stroke="black" d="M480.1,-375.76C480.1,-375.76 480.1,-335.73 480.1,-335.73"/>
+<polygon fill="black" stroke="black" points="482.9,-335.73 480.1,-327.73 477.3,-335.73 482.9,-335.73"/>
+</g>
+<!-- MissionDone -->
+<g id="node23" class="node">
+<title>MissionDone</title>
+<path fill="none" stroke="black" d="M460.68,-234.34C460.68,-234.34 422.61,-212.06 422.61,-212.06 417.44,-209.03 417.44,-202.97 422.61,-199.94 422.61,-199.94 460.68,-177.66 460.68,-177.66 465.85,-174.63 476.21,-174.63 481.39,-177.66 481.39,-177.66 519.45,-199.94 519.45,-199.94 524.63,-202.97 524.63,-209.03 519.45,-212.06 519.45,-212.06 481.39,-234.34 481.39,-234.34 476.21,-237.37 465.85,-237.37 460.68,-234.34"/>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-209.3" font-family="Times,serif" font-size="11.00">Mission</text>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-196.1" font-family="Times,serif" font-size="11.00">Finished?</text>
+</g>
+<!-- Leave&#45;&gt;MissionDone -->
+<g id="edge12" class="edge">
+<title>Leave-&gt;MissionDone</title>
+<path fill="none" stroke="black" d="M459.1,-289.76C459.1,-289.76 459.1,-243.2 459.1,-243.2"/>
+<polygon fill="black" stroke="black" points="461.9,-243.2 459.1,-235.2 456.3,-243.2 461.9,-243.2"/>
+</g>
+<!-- Leave&#45;&gt;MissionDone -->
+<g id="edge32" class="edge">
+<title>Leave-&gt;MissionDone</title>
+<path fill="none" stroke="black" d="M483.1,-289.76C483.1,-289.76 483.1,-243.2 483.1,-243.2"/>
+<polygon fill="black" stroke="black" points="485.9,-243.2 483.1,-235.2 480.3,-243.2 485.9,-243.2"/>
+</g>
+<!-- MissionDone&#45;&gt;PiPlanning -->
+<g id="edge35" class="edge">
+<title>MissionDone-&gt;PiPlanning</title>
+<path fill="none" stroke="black" d="M500.83,-223.5C535.8,-223.5 589.1,-223.5 589.1,-223.5 589.1,-223.5 589.1,-790.33 589.1,-790.33 589.1,-790.33 666.43,-790.33 666.43,-790.33"/>
+<polygon fill="black" stroke="black" points="666.43,-793.13 674.43,-790.33 666.43,-787.53 666.43,-793.13"/>
+<text xml:space="preserve" text-anchor="middle" x="588.92" y="-210.2" font-family="Times,serif" font-size="14.00">Next Task</text>
+</g>
+<!-- NextMission -->
+<g id="node24" class="node">
+<title>NextMission</title>
+<path fill="none" stroke="black" d="M508.89,-122C508.89,-122 433.18,-122 433.18,-122 427.18,-122 421.18,-116 421.18,-110 421.18,-110 421.18,-98 421.18,-98 421.18,-92 427.18,-86 433.18,-86 433.18,-86 508.89,-86 508.89,-86 514.89,-86 520.89,-92 520.89,-98 520.89,-98 520.89,-110 520.89,-110 520.89,-116 514.89,-122 508.89,-122"/>
+<text xml:space="preserve" text-anchor="middle" x="471.03" y="-100.7" font-family="Times,serif" font-size="11.00">Wait Next Mission</text>
+</g>
+<!-- MissionDone&#45;&gt;NextMission -->
+<g id="edge13" class="edge">
+<title>MissionDone-&gt;NextMission</title>
+<path fill="none" stroke="black" d="M454.1,-181.05C454.1,-181.05 454.1,-131.81 454.1,-131.81"/>
+<polygon fill="black" stroke="black" points="456.9,-131.81 454.1,-123.81 451.3,-131.81 456.9,-131.81"/>
+</g>
+<!-- MissionDone&#45;&gt;NextMission -->
+<g id="edge33" class="edge">
+<title>MissionDone-&gt;NextMission</title>
+<path fill="none" stroke="black" d="M488.1,-181.05C488.1,-181.05 488.1,-131.81 488.1,-131.81"/>
+<polygon fill="black" stroke="black" points="490.9,-131.81 488.1,-123.81 485.3,-131.81 490.9,-131.81"/>
+</g>
+<!-- NextMission&#45;&gt;End -->
+<g id="edge14" class="edge">
+<title>NextMission-&gt;End</title>
+<path fill="none" stroke="black" d="M471.1,-85.76C471.1,-85.76 471.1,-45.73 471.1,-45.73"/>
+<polygon fill="black" stroke="black" points="473.9,-45.73 471.1,-37.73 468.3,-45.73 473.9,-45.73"/>
+</g>
+<!-- NextMission&#45;&gt;WaitMission -->
+<g id="edge34" class="edge">
+<title>NextMission-&gt;WaitMission</title>
+<path fill="none" stroke="black" d="M420.78,-104C331.87,-104 156.1,-104 156.1,-104 156.1,-104 156.1,-588.4 156.1,-588.4"/>
+<polygon fill="black" stroke="black" points="153.3,-588.4 156.1,-596.4 158.9,-588.4 153.3,-588.4"/>
+</g>
+</g>
+</svg>

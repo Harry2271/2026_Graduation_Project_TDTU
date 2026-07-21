@@ -129,7 +129,7 @@ bool SharpFrontSensor::isSlowing() const
 
 void SharpFrontSensor::printStatusJson() const
 {
-    Serial.printf(
+    PiSerial.printf(
         "{\"type\":136,\"data\":{\"distance_cm\":%.0f,\"too_close\":%s,\"slowing\":%s,\"present\":%s}}\n",
         distance_cm_,
         isTooClose() ? "true" : "false",

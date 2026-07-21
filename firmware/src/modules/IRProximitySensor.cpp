@@ -105,7 +105,7 @@ uint8_t IRProximitySensor::detectedMask() const
 
 void IRProximitySensor::printStatusJson() const
 {
-    Serial.printf(
+    PiSerial.printf(
         "{\"type\":135,\"data\":{\"rear_left\":%s,\"rear_right\":%s,\"left\":%s,\"right\":%s}}\n",
         isDetected(IRPosition::REAR_LEFT)  ? "true" : "false",
         isDetected(IRPosition::REAR_RIGHT) ? "true" : "false",

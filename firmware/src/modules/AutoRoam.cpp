@@ -67,6 +67,7 @@ void AutoRoam::reset()
     hard_stop_         = false;
     last_obstacle_ms_  = 0;
     sharp_clear_ms_    = 0;
+    drive_start_ms_    = 0;  // re-arm Sharp boot-skip on next AUTO_ROAM entry
 
     // Reset unloading sequence
     unload_state_ = UNLOAD_IDLE;
@@ -341,8 +342,14 @@ bool AutoRoam::compute(uint32_t now_ms,
     // NORMAL ROAMING (heading-hold + obstacle avoidance)
     // ========================================================================
 
+    // Mark the first time we enter the driving loop so we can skip Sharp for
+    // the first SHARP_BOOT_SKIP_MS (lets the ADC settle and any warm-up noise
+    // dissipate before trusting the reading for a hard-stop).
+    if (drive_start_ms_ == 0) drive_start_ms_ = now_ms;
+    bool sharp_warmup = (now_ms - drive_start_ms_) < SHARP_BOOT_SKIP_MS;
+
     // ----- 2) Sharp-front hard stop -----
-    if (sharp_) {
+    if (sharp_ && !sharp_warmup) {
         sharp_->update(now_ms);
         if (sharp_->isTooClose()) {
             if (!hard_stop_) {

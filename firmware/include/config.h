@@ -126,6 +126,20 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define SERIAL_TIMEOUT_MS  100
 #define CMD_TERMINATOR     '\n'
 
+// Pi 5 ↔ ESP32-S3 connection — now uses USB CDC (Type-C cable),
+// not the GPIO 43/44 hardware UART.  USB CDC skips the PL011 DMA
+// (dma2chan2) path on the Pi 5 which was causing system freezes.
+//
+// Baud rate constant kept for protocol consistency, but USB CDC
+// ignores baud — actual throughput is full-speed USB.
+#define PI_UART_BAUD       115200
+
+// Alias: PiSerial goes to the Pi.  On ESP32-S3, Serial = native USB CDC,
+// which appears as /dev/ttyACM0 on the Raspberry Pi 5.
+#ifndef PiSerial
+#define PiSerial Serial
+#endif
+
 // ============================================================
 // Motor State
 // ============================================================
