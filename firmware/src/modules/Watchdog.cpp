@@ -8,6 +8,7 @@ Watchdog::Watchdog()
     , manual_active_(false)
     , forced_auto_roam_(false)
     , last_heartbeat_ms_(0)
+    , last_serial_activity_ms_(0)
     , startup_ms_(0)
 {
 }
@@ -16,6 +17,12 @@ void Watchdog::begin()
 {
     startup_ms_ = millis();
     last_heartbeat_ms_ = startup_ms_;
+    last_serial_activity_ms_ = startup_ms_;
+}
+
+void Watchdog::onSerialActivity(uint32_t now_ms)
+{
+    last_serial_activity_ms_ = now_ms;
 }
 
 void Watchdog::onHeartbeatReceived(uint32_t now_ms)
@@ -35,9 +42,21 @@ void Watchdog::onHeartbeatReceived(uint32_t now_ms)
 
 SystemMode Watchdog::update(uint32_t now_ms)
 {
-    // First boot: after init delay, enter AUTO_ROAM if no Pi connected yet
+    // Helper: wrap-safe elapsed-time (millis() rolls over every ~49.7 days).
+    // Without this, a single rollover event can mask heartbeat timeouts
+    // indefinitely and the robot stays stuck in MODE_NAV forever.
+    auto elapsedSince = [](uint32_t now, uint32_t then) -> uint32_t {
+        return (now >= then) ? (now - then)
+                              : (UINT32_MAX - then + now + 1);
+    };
+
+    // First boot: after init delay, enter AUTO_ROAM if no Pi connected yet.
+    // Note: this only fires on a *fresh* boot (heartbeat_seen_ is false
+    // until the first serial command lands). It does NOT help if the user
+    // had a Pi connected, then yanked the cable — that path is handled by
+    // the heartbeat-timeout branch below.
     if (!heartbeat_seen_ && mode_ == MODE_SAFE && !forced_auto_roam_) {
-        if (now_ms - startup_ms_ >= AUTO_ROAM_BOOT_DELAY_MS) {
+        if (elapsedSince(now_ms, startup_ms_) >= AUTO_ROAM_BOOT_DELAY_MS) {
             mode_ = MODE_AUTO_ROAM;
         }
         return mode_;
@@ -45,17 +64,17 @@ SystemMode Watchdog::update(uint32_t now_ms)
 
     if (!heartbeat_seen_) return mode_;
 
-    // Forced AUTO_ROAM never goes back to NAV
+    // Forced AUTO_ROAM never goes back to NAV (user pressed 'A' explicitly).
     if (forced_auto_roam_) {
         mode_ = MODE_AUTO_ROAM;
         return mode_;
     }
 
-    // Heartbeat timeout from NAV → enter AUTO_ROAM (keep driving with sensors)
-    if (now_ms - last_heartbeat_ms_ >= HEARTBEAT_TIMEOUT_MS) {
-        if (mode_ == MODE_NAV) {
-            mode_ = MODE_AUTO_ROAM;
-        }
+    // Heartbeat timeout from NAV → enter AUTO_ROAM (keep driving with sensors).
+    // This is the path that triggers when the user unplugs the UART cable.
+    if (mode_ == MODE_NAV &&
+        elapsedSince(now_ms, last_heartbeat_ms_) >= HEARTBEAT_TIMEOUT_MS) {
+        mode_ = MODE_AUTO_ROAM;
     }
     return mode_;
 }

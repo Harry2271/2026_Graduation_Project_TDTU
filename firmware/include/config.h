@@ -126,6 +126,20 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define SERIAL_TIMEOUT_MS  100
 #define CMD_TERMINATOR     '\n'
 
+// Pi 5 ↔ ESP32-S3 connection — now uses USB CDC (Type-C cable),
+// not the GPIO 43/44 hardware UART.  USB CDC skips the PL011 DMA
+// (dma2chan2) path on the Pi 5 which was causing system freezes.
+//
+// Baud rate constant kept for protocol consistency, but USB CDC
+// ignores baud — actual throughput is full-speed USB.
+#define PI_UART_BAUD       115200
+
+// Alias: PiSerial goes to the Pi.  On ESP32-S3, Serial = native USB CDC,
+// which appears as /dev/ttyACM0 on the Raspberry Pi 5.
+#ifndef PiSerial
+#define PiSerial Serial
+#endif
+
 // ============================================================
 // Motor State
 // ============================================================
@@ -207,6 +221,38 @@ enum MotorState {
 // (10-80 cm range, analog voltage output)
 // ============================================================
 #define SHARP_FRONT_PIN       9        // ADC1_CH8
-#define SHARP_FRONT_THRESHOLD_CM  30   // Hard-stop distance (cm)
+#define SHARP_FRONT_THRESHOLD_CM  15   // Hard-stop distance (cm)
 #define SHARP_FRONT_SLOW_CM       60   // Begin slowing down (cm)
 #define SHARP_FRONT_POLL_MS       20   // Read at 50 Hz
+
+// ============================================================
+// VL53L0X V2 — TOF Laser Distance Sensor (I2C address 0x29)
+// Rear-mounted, points at ground/shelf for precise alignment
+// before unloading. Used in DistanceCheck (4 cm target).
+// Shares I2C bus with BNO055 (0x28) and INA226 (0x40).
+// ============================================================
+#define VL53L0X_I2C_ADDR         0x29
+#define VL53L0X_UNLOAD_DISTANCE_MM  40    // 4 cm — flowchart target distance
+#define VL53L0X_TOLERANCE_MM       10    // ±1 cm tolerance band
+#define VL53L0X_POLL_MS            50    // 20 Hz (33 ms budget + slack)
+
+// ============================================================
+// Cylinder Actuator — 12VDC electric cylinder + L298N driver
+// Used to LIFT the dump body for unloading at the warehouse
+// (graphviz node: ExtendActuator → DropItem → RetractActuator).
+// ENA on L298N is tied HIGH (jumper); only IN1/IN2 needed.
+// ============================================================
+#define CYLINDER_IN1_PIN         2        // L298N IN1 → extend (HIGH)
+#define CYLINDER_IN2_PIN         35       // L298N IN2 → retract (HIGH)
+#define CYLINDER_MAX_RUN_MS      8000     // Safety auto-stop (8 s full extension)
+#define CYLINDER_HOLD_AT_TOP_MS  3000     // Hold extended while dumping (3 s)
+#define CYLINDER_ADJUST_PWM      40       // Forward nudge speed during position adjust
+#define CYLINDER_ADJUST_TIMEOUT_MS 5000   // Max time spent on alignment loop
+
+// ============================================================
+// Docking Sequence — BNO055 heading gate + leave-dock parameters
+// ============================================================
+#define HEADING_GATE_DEG        2.0f    // ±2° heading error allowed before unload
+#define LEAVE_DOCK_SPEED        50      // PWM for backing out after unload
+#define LEAVE_DOCK_DISTANCE_CM  30      // Distance to reverse away from dock
+#define LEAVE_DOCK_TIMEOUT_MS   8000    // Safety timeout for leave-dock

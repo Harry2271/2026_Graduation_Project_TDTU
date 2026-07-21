@@ -41,6 +41,20 @@ enum CommandType {
 
     // Force into AUTO_ROAM (sensor-only autonomy, ignores Pi heartbeat)
     CMD_FORCE_AUTO_ROAM,
+
+    // VL53L0X TOF distance sensor
+    CMD_GET_TOF,        // Y — query distance (type 138)
+
+    // Cylinder actuator (12V lift via L298N)
+    CMD_CYLINDER_EXTEND,   // H — extend cylinder
+    CMD_CYLINDER_RETRACT,  // h — retract cylinder
+    CMD_CYLINDER_STOP,     // c — stop cylinder
+
+    // Docking sequence (Pi brain → ESP32 actuator hand-off)
+    CMD_BEGIN_DOCK,          // JSON: begin_dock with tag_id + target_distance_mm
+    CMD_BEGIN_LEAVE_DOCK,    // JSON: begin_leave_dock
+    CMD_CANCEL_DOCK,         // JSON: cancel_dock
+    CMD_GET_UNLOAD_STATE,    // JSON: get_unload_state (response type 140)
 };
 
 struct Command {
@@ -54,6 +68,10 @@ struct Command {
     int16_t move_omega;
 
     int16_t motor_speeds[4];
+
+    // Docking command parameters (populated by begin_dock)
+    uint16_t tag_id;
+    uint16_t target_distance_mm;
 };
 
 class CommandParser {

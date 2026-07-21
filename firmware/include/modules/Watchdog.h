@@ -21,6 +21,12 @@ public:
     // Call when any Pi/serial command is received
     void onHeartbeatReceived(uint32_t now_ms);
 
+    // Call when raw bytes have been seen from the Pi, even if the parser
+    // rejected them (e.g. corrupted/partial JSON frame during cable yank).
+    // This prevents the watchdog from getting stuck in MODE_NAV if the
+    // parser can't deliver a clean CMD_HEARTBEAT to onHeartbeatReceived.
+    void onSerialActivity(uint32_t now_ms);
+
     // Call when Pi heartbeat times out
     void onHeartbeatTimeout();
 
@@ -34,6 +40,7 @@ public:
     [[nodiscard]] bool hasHeartbeat() const { return heartbeat_seen_; }
     [[nodiscard]] bool isForcedAutoRoam() const { return forced_auto_roam_; }
     [[nodiscard]] uint32_t getLastHeartbeatMs() const { return last_heartbeat_ms_; }
+    [[nodiscard]] uint32_t getLastSerialActivityMs() const { return last_serial_activity_ms_; }
     [[nodiscard]] uint32_t getUptimeMs() const { return startup_ms_; }
 
     static const char* modeName(SystemMode m);
@@ -44,5 +51,6 @@ private:
     bool manual_active_;
     bool forced_auto_roam_;  // true after explicit 'A' command — pins AUTO_ROAM
     uint32_t last_heartbeat_ms_;
+    uint32_t last_serial_activity_ms_;  // last time any byte arrived from Serial
     uint32_t startup_ms_;
 };

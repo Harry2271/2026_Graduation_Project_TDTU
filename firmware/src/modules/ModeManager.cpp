@@ -28,9 +28,11 @@ void ModeManager::begin()
 void ModeManager::attachSensors(BNO055Sensor* imu,
                                 IRProximitySensor* ir,
                                 SharpFrontSensor* sharp,
-                                INA226Sensor* power)
+                                INA226Sensor* power,
+                                VL53L0XSensor* tof,
+                                CylinderActuator* cylinder)
 {
-    auto_roam_.attachSensors(imu, ir, sharp, power);
+    auto_roam_.attachSensors(imu, ir, sharp, power, tof, cylinder);
     Serial.println("[ModeManager] AutoRoam sensors attached");
 }
 
@@ -126,6 +128,28 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
             max_speed_pct_ = constrain(cmd.max_speed, 0, 100);
             break;
 
+        // ---- Docking / unloading sequence (Pi brain) ----
+        case CMD_BEGIN_DOCK:
+            watchdog_.setMode(MODE_AUTO_ROAM);
+            auto_roam_.startDock(cmd.tag_id, cmd.target_distance_mm);
+            Serial.printf("[ModeManager] CMD_BEGIN_DOCK tag=%u target=%u\n",
+                cmd.tag_id, cmd.target_distance_mm);
+            break;
+
+        case CMD_BEGIN_LEAVE_DOCK:
+            auto_roam_.startLeaveDock();
+            Serial.println("[ModeManager] CMD_BEGIN_LEAVE_DOCK");
+            break;
+
+        case CMD_CANCEL_DOCK:
+            auto_roam_.cancelUnloading();
+            Serial.println("[ModeManager] CMD_CANCEL_DOCK");
+            break;
+
+        case CMD_GET_UNLOAD_STATE:
+            // Pi queries unload state — response handled by caller (main.cpp)
+            break;
+
         default:
             break;
     }
@@ -197,7 +221,7 @@ void ModeManager::applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
     }
     else if (mode == MODE_AUTO_ROAM) {
         int16_t roam_vx = 0, roam_vy = 0, roam_omega = 0;
-        if (auto_roam_.compute(now_ms, roam_vx, roam_vy, roam_omega)) {
+        if (auto_roam_.compute(now_ms, roam_vx, roam_vy, roam_omega, encoders)) {
             mecanum->compute(roam_vx, roam_vy, roam_omega, target_speeds);
         } else {
             // Sharp-triggered soft-hold: zero PWM but DO NOT latch EN low.

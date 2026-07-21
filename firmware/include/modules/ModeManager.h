@@ -14,6 +14,8 @@ class BNO055Sensor;
 class IRProximitySensor;
 class SharpFrontSensor;
 class INA226Sensor;
+class VL53L0XSensor;
+class CylinderActuator;
 
 class ModeManager {
 public:
@@ -25,10 +27,29 @@ public:
 
     void onPiCommand(const Command& cmd, uint32_t now_ms);
 
+    /// Forward proof-of-life from any byte received on the Pi UART, even if
+    /// the command frame was corrupt (e.g. cable yank mid-packet).
+    void onSerialActivity(uint32_t now_ms) { watchdog_.onSerialActivity(now_ms); }
+
     void attachSensors(BNO055Sensor* imu,
                        IRProximitySensor* ir,
                        SharpFrontSensor* sharp,
-                       INA226Sensor* power);
+                       INA226Sensor* power,
+                       VL53L0XSensor* tof,
+                       CylinderActuator* cylinder);
+
+    /// Trigger unloading sequence (forward to Pi via CMD)
+    void startDock(uint16_t tag_id, uint16_t target_distance_mm) {
+        auto_roam_.startDock(tag_id, target_distance_mm);
+    }
+
+    /// Manually trigger the leave-dock reverse phase
+    void startLeaveDock() { auto_roam_.startLeaveDock(); }
+
+    /// Cancel unloading sequence
+    void cancelUnloading() { auto_roam_.cancelUnloading(); }
+
+    [[nodiscard]] AutoRoam::UnloadState getUnloadState() const { return auto_roam_.getUnloadState(); }
 
     void applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
                             PIDController* pids, MecanumDrive* mecanum,

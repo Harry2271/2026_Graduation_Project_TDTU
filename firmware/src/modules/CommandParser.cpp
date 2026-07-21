@@ -160,6 +160,23 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
             out.type = CMD_TEST;
         } break;
 
+        case 'Y': case 'y': {
+            out.type = CMD_GET_TOF;
+        } break;
+
+        case 'G': case 'g': {
+            // G = extend (uppercase), g = retract (lowercase)
+            if (first == 'G') {
+                out.type = CMD_CYLINDER_EXTEND;
+            } else {
+                out.type = CMD_CYLINDER_RETRACT;
+            }
+        } break;
+
+        case 'C': case 'c': {
+            out.type = CMD_CYLINDER_STOP;
+        } break;
+
         case 'Z': case 'z': {
             out.type = CMD_HEARTBEAT;
         } break;
@@ -302,6 +319,32 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     }
     else if (strcmp(cmd, "get_sharp") == 0) {
         out.type = CMD_GET_SHARP;
+    }
+    else if (strcmp(cmd, "get_tof") == 0) {
+        out.type = CMD_GET_TOF;
+    }
+    else if (strcmp(cmd, "cylinder_extend") == 0) {
+        out.type = CMD_CYLINDER_EXTEND;
+    }
+    else if (strcmp(cmd, "cylinder_retract") == 0) {
+        out.type = CMD_CYLINDER_RETRACT;
+    }
+    else if (strcmp(cmd, "cylinder_stop") == 0) {
+        out.type = CMD_CYLINDER_STOP;
+    }
+    else if (strcmp(cmd, "begin_dock") == 0) {
+        out.type               = CMD_BEGIN_DOCK;
+        out.tag_id             = doc["tag_id"]             | 0;
+        out.target_distance_mm = doc["target_distance_mm"] | VL53L0X_UNLOAD_DISTANCE_MM;
+    }
+    else if (strcmp(cmd, "begin_leave_dock") == 0) {
+        out.type = CMD_BEGIN_LEAVE_DOCK;
+    }
+    else if (strcmp(cmd, "cancel_dock") == 0) {
+        out.type = CMD_CANCEL_DOCK;
+    }
+    else if (strcmp(cmd, "get_unload_state") == 0) {
+        out.type = CMD_GET_UNLOAD_STATE;
     }
 
     return out.type;

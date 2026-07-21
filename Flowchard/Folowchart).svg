@@ -1,0 +1,355 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="852pt" height="930pt" viewBox="0.00 0.00 852.00 930.00">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 926)">
+<title>AGV_Warehouse</title>
+<polygon fill="white" stroke="none" points="-4,4 -4,-926 847.68,-926 847.68,4 -4,4"/>
+<!-- Start -->
+<g id="node1" class="node">
+<title>Start</title>
+<ellipse fill="none" stroke="black" cx="84.63" cy="-904" rx="64.8" ry="18"/>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-900.7" font-family="Times,serif" font-size="11.00">Bắt đầu</text>
+</g>
+<!-- Init -->
+<g id="node2" class="node">
+<title>Init</title>
+<path fill="none" stroke="black" d="M137.43,-836.8C137.43,-836.8 31.83,-836.8 31.83,-836.8 25.83,-836.8 19.83,-830.8 19.83,-824.8 19.83,-824.8 19.83,-735.2 19.83,-735.2 19.83,-729.2 25.83,-723.2 31.83,-723.2 31.83,-723.2 137.43,-723.2 137.43,-723.2 143.43,-723.2 149.43,-729.2 149.43,-735.2 149.43,-735.2 149.43,-824.8 149.43,-824.8 149.43,-830.8 143.43,-836.8 137.43,-836.8"/>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-822.9" font-family="Times,serif" font-size="11.00">Khởi tạo</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-809.7" font-family="Times,serif" font-size="11.00">ESP32-S3</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-796.5" font-family="Times,serif" font-size="11.00">Encoder</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-783.3" font-family="Times,serif" font-size="11.00">BNO055</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-770.1" font-family="Times,serif" font-size="11.00">INA226</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-756.9" font-family="Times,serif" font-size="11.00">4×E18</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-743.7" font-family="Times,serif" font-size="11.00">Sharp</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-730.5" font-family="Times,serif" font-size="11.00">VL53L0X</text>
+</g>
+<!-- Start&#45;&gt;Init -->
+<g id="edge1" class="edge">
+<title>Start-&gt;Init</title>
+<path fill="none" stroke="black" d="M84.68,-885.7C84.68,-885.7 84.68,-848.61 84.68,-848.61"/>
+<polygon fill="black" stroke="black" points="88.18,-848.61 84.68,-838.61 81.18,-848.61 88.18,-848.61"/>
+</g>
+<!-- WaitTask -->
+<g id="node3" class="node">
+<title>WaitTask</title>
+<path fill="none" stroke="black" d="M157.27,-674C157.27,-674 46.63,-674 46.63,-674 40.63,-674 30.47,-669.68 26.31,-665.35 26.31,-665.35 8.32,-646.65 8.32,-646.65 4.16,-642.32 6,-638 12,-638 12,-638 122.63,-638 122.63,-638 128.63,-638 138.79,-642.32 142.95,-646.65 142.95,-646.65 160.95,-665.35 160.95,-665.35 165.11,-669.68 163.27,-674 157.27,-674"/>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-652.7" font-family="Times,serif" font-size="11.00">Nhận nhiệm vụ</text>
+</g>
+<!-- Init&#45;&gt;WaitTask -->
+<g id="edge2" class="edge">
+<title>Init-&gt;WaitTask</title>
+<path fill="none" stroke="black" d="M84.68,-722.72C84.68,-722.72 84.68,-685.81 84.68,-685.81"/>
+<polygon fill="black" stroke="black" points="88.18,-685.81 84.68,-675.81 81.18,-685.81 88.18,-685.81"/>
+</g>
+<!-- ReadBattery -->
+<g id="node4" class="node">
+<title>ReadBattery</title>
+<path fill="none" stroke="black" d="M137.43,-588C137.43,-588 31.83,-588 31.83,-588 25.83,-588 19.83,-582 19.83,-576 19.83,-576 19.83,-564 19.83,-564 19.83,-558 25.83,-552 31.83,-552 31.83,-552 137.43,-552 137.43,-552 143.43,-552 149.43,-558 149.43,-564 149.43,-564 149.43,-576 149.43,-576 149.43,-582 143.43,-588 137.43,-588"/>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-573.3" font-family="Times,serif" font-size="11.00">Đọc điện áp</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-560.1" font-family="Times,serif" font-size="11.00">INA226</text>
+</g>
+<!-- WaitTask&#45;&gt;ReadBattery -->
+<g id="edge3" class="edge">
+<title>WaitTask-&gt;ReadBattery</title>
+<path fill="none" stroke="black" d="M84.68,-637.76C84.68,-637.76 84.68,-599.73 84.68,-599.73"/>
+<polygon fill="black" stroke="black" points="88.18,-599.73 84.68,-589.73 81.18,-599.73 88.18,-599.73"/>
+</g>
+<!-- BatteryCheck -->
+<g id="node5" class="node">
+<title>BatteryCheck</title>
+<path fill="none" stroke="black" d="M74.79,-495.74C74.79,-495.74 26.23,-461.86 26.23,-461.86 21.31,-458.43 21.31,-451.57 26.23,-448.14 26.23,-448.14 74.79,-414.26 74.79,-414.26 79.71,-410.83 89.56,-410.83 94.48,-414.26 94.48,-414.26 143.04,-448.14 143.04,-448.14 147.96,-451.57 147.96,-458.43 143.04,-461.86 143.04,-461.86 94.48,-495.74 94.48,-495.74 89.56,-499.17 79.71,-499.17 74.79,-495.74"/>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-464.9" font-family="Times,serif" font-size="11.00">Pin đủ</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-451.7" font-family="Times,serif" font-size="11.00">thực hiện</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-438.5" font-family="Times,serif" font-size="11.00">nhiệm vụ?</text>
+</g>
+<!-- ReadBattery&#45;&gt;BatteryCheck -->
+<g id="edge4" class="edge">
+<title>ReadBattery-&gt;BatteryCheck</title>
+<path fill="none" stroke="black" d="M84.68,-551.52C84.68,-551.52 84.68,-514.22 84.68,-514.22"/>
+<polygon fill="black" stroke="black" points="88.18,-514.22 84.68,-504.22 81.18,-514.22 88.18,-514.22"/>
+</g>
+<!-- GoCharge -->
+<g id="node6" class="node">
+<title>GoCharge</title>
+<path fill="none" stroke="black" d="M137.43,-262C137.43,-262 31.83,-262 31.83,-262 25.83,-262 19.83,-256 19.83,-250 19.83,-250 19.83,-238 19.83,-238 19.83,-232 25.83,-226 31.83,-226 31.83,-226 137.43,-226 137.43,-226 143.43,-226 149.43,-232 149.43,-238 149.43,-238 149.43,-250 149.43,-250 149.43,-256 143.43,-262 137.43,-262"/>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-247.3" font-family="Times,serif" font-size="11.00">Đến</text>
+<text xml:space="preserve" text-anchor="middle" x="84.63" y="-234.1" font-family="Times,serif" font-size="11.00">trạm sạc</text>
+</g>
+<!-- BatteryCheck&#45;&gt;GoCharge -->
+<g id="edge5" class="edge">
+<title>BatteryCheck-&gt;GoCharge</title>
+<path fill="none" stroke="black" d="M84.68,-406.86C84.68,-406.86 84.68,-273.95 84.68,-273.95"/>
+<polygon fill="black" stroke="black" points="88.18,-273.95 84.68,-263.95 81.18,-273.95 88.18,-273.95"/>
+</g>
+<!-- PlanPath -->
+<g id="node7" class="node">
+<title>PlanPath</title>
+<path fill="none" stroke="black" d="M355.94,-627.8C355.94,-627.8 250.34,-627.8 250.34,-627.8 244.34,-627.8 238.34,-621.8 238.34,-615.8 238.34,-615.8 238.34,-592.2 238.34,-592.2 238.34,-586.2 244.34,-580.2 250.34,-580.2 250.34,-580.2 355.94,-580.2 355.94,-580.2 361.94,-580.2 367.94,-586.2 367.94,-592.2 367.94,-592.2 367.94,-615.8 367.94,-615.8 367.94,-621.8 361.94,-627.8 355.94,-627.8"/>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-613.9" font-family="Times,serif" font-size="11.00">Pi 5</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-600.7" font-family="Times,serif" font-size="11.00">Tính toán</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-587.5" font-family="Times,serif" font-size="11.00">đường đi</text>
+</g>
+<!-- BatteryCheck&#45;&gt;PlanPath -->
+<g id="edge7" class="edge">
+<title>BatteryCheck-&gt;PlanPath</title>
+<path fill="none" stroke="black" d="M99.3,-492.9C121.4,-492.9 160.68,-492.9 160.68,-492.9 160.68,-492.9 160.68,-584.1 160.68,-584.1 160.68,-584.1 226.65,-584.1 226.65,-584.1"/>
+<polygon fill="black" stroke="black" points="226.65,-587.6 236.65,-584.1 226.65,-580.6 226.65,-587.6"/>
+<text xml:space="preserve" text-anchor="middle" x="200.1" y="-532" font-family="Times,serif" font-size="10.00">Có</text>
+</g>
+<!-- End -->
+<g id="node23" class="node">
+<title>End</title>
+<ellipse fill="none" stroke="black" cx="754.88" cy="-18" rx="64.8" ry="18"/>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-14.7" font-family="Times,serif" font-size="11.00">Kết thúc</text>
+</g>
+<!-- GoCharge&#45;&gt;End -->
+<g id="edge6" class="edge">
+<title>GoCharge-&gt;End</title>
+<path fill="none" stroke="black" d="M84.68,-225.51C84.68,-171.53 84.68,-18 84.68,-18 84.68,-18 678.19,-18 678.19,-18"/>
+<polygon fill="black" stroke="black" points="678.19,-21.5 688.19,-18 678.19,-14.5 678.19,-21.5"/>
+</g>
+<!-- MoveAGV -->
+<g id="node8" class="node">
+<title>MoveAGV</title>
+<path fill="none" stroke="black" d="M355.94,-530.8C355.94,-530.8 250.34,-530.8 250.34,-530.8 244.34,-530.8 238.34,-524.8 238.34,-518.8 238.34,-518.8 238.34,-495.2 238.34,-495.2 238.34,-489.2 244.34,-483.2 250.34,-483.2 250.34,-483.2 355.94,-483.2 355.94,-483.2 361.94,-483.2 367.94,-489.2 367.94,-495.2 367.94,-495.2 367.94,-518.8 367.94,-518.8 367.94,-524.8 361.94,-530.8 355.94,-530.8"/>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-516.9" font-family="Times,serif" font-size="11.00">ESP32 điều khiển</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-503.7" font-family="Times,serif" font-size="11.00">4 bánh</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-490.5" font-family="Times,serif" font-size="11.00">Mecanum</text>
+</g>
+<!-- PlanPath&#45;&gt;MoveAGV -->
+<g id="edge8" class="edge">
+<title>PlanPath-&gt;MoveAGV</title>
+<path fill="none" stroke="black" d="M302.68,-580.02C302.68,-580.02 302.68,-542.55 302.68,-542.55"/>
+<polygon fill="black" stroke="black" points="306.18,-542.55 302.68,-532.55 299.18,-542.55 306.18,-542.55"/>
+</g>
+<!-- Feedback -->
+<g id="node9" class="node">
+<title>Feedback</title>
+<path fill="none" stroke="black" d="M355.94,-433.4C355.94,-433.4 250.34,-433.4 250.34,-433.4 244.34,-433.4 238.34,-427.4 238.34,-421.4 238.34,-421.4 238.34,-384.6 238.34,-384.6 238.34,-378.6 244.34,-372.6 250.34,-372.6 250.34,-372.6 355.94,-372.6 355.94,-372.6 361.94,-372.6 367.94,-378.6 367.94,-384.6 367.94,-384.6 367.94,-421.4 367.94,-421.4 367.94,-427.4 361.94,-433.4 355.94,-433.4"/>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-419.5" font-family="Times,serif" font-size="11.00">Encoder</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-406.3" font-family="Times,serif" font-size="11.00">+</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-393.1" font-family="Times,serif" font-size="11.00">BNO055</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-379.9" font-family="Times,serif" font-size="11.00">PID</text>
+</g>
+<!-- MoveAGV&#45;&gt;Feedback -->
+<g id="edge9" class="edge">
+<title>MoveAGV-&gt;Feedback</title>
+<path fill="none" stroke="black" d="M302.68,-482.88C302.68,-482.88 302.68,-445.22 302.68,-445.22"/>
+<polygon fill="black" stroke="black" points="306.18,-445.22 302.68,-435.22 299.18,-445.22 306.18,-445.22"/>
+</g>
+<!-- SideCheck -->
+<g id="node10" class="node">
+<title>SideCheck</title>
+<path fill="none" stroke="black" d="M293.12,-316C293.12,-316 240.96,-281.6 240.96,-281.6 235.95,-278.3 235.95,-271.7 240.96,-268.4 240.96,-268.4 293.12,-234 293.12,-234 298.13,-230.7 308.15,-230.7 313.16,-234 313.16,-234 365.33,-268.4 365.33,-268.4 370.33,-271.7 370.33,-278.3 365.33,-281.6 365.33,-281.6 313.16,-316 313.16,-316 308.15,-319.3 298.13,-319.3 293.12,-316"/>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-284.9" font-family="Times,serif" font-size="11.00">E18</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-271.7" font-family="Times,serif" font-size="11.00">trái/phải</text>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-258.5" font-family="Times,serif" font-size="11.00">có vật cản?</text>
+</g>
+<!-- Feedback&#45;&gt;SideCheck -->
+<g id="edge10" class="edge">
+<title>Feedback-&gt;SideCheck</title>
+<path fill="none" stroke="black" d="M302.68,-372.34C302.68,-372.34 302.68,-333.92 302.68,-333.92"/>
+<polygon fill="black" stroke="black" points="306.18,-333.92 302.68,-323.92 299.18,-333.92 306.18,-333.92"/>
+</g>
+<!-- SideAvoid -->
+<g id="node11" class="node">
+<title>SideAvoid</title>
+<path fill="none" stroke="black" d="M355.94,-178C355.94,-178 250.34,-178 250.34,-178 244.34,-178 238.34,-172 238.34,-166 238.34,-166 238.34,-154 238.34,-154 238.34,-148 244.34,-142 250.34,-142 250.34,-142 355.94,-142 355.94,-142 361.94,-142 367.94,-148 367.94,-154 367.94,-154 367.94,-166 367.94,-166 367.94,-172 361.94,-178 355.94,-178"/>
+<text xml:space="preserve" text-anchor="middle" x="303.14" y="-156.7" font-family="Times,serif" font-size="11.00">Dịch ngang</text>
+</g>
+<!-- SideCheck&#45;&gt;SideAvoid -->
+<g id="edge11" class="edge">
+<title>SideCheck-&gt;SideAvoid</title>
+<path fill="none" stroke="black" d="M302.68,-227.23C302.68,-227.23 302.68,-189.77 302.68,-189.77"/>
+<polygon fill="black" stroke="black" points="306.18,-189.77 302.68,-179.77 299.18,-189.77 306.18,-189.77"/>
+</g>
+<!-- FrontCheck -->
+<g id="node12" class="node">
+<title>FrontCheck</title>
+<path fill="none" stroke="black" d="M523.04,-692.5C523.04,-692.5 477.58,-659.1 477.58,-659.1 472.75,-655.55 472.75,-648.45 477.58,-644.9 477.58,-644.9 523.04,-611.5 523.04,-611.5 527.88,-607.95 537.55,-607.95 542.38,-611.5 542.38,-611.5 587.84,-644.9 587.84,-644.9 592.68,-648.45 592.68,-655.55 587.84,-659.1 587.84,-659.1 542.38,-692.5 542.38,-692.5 537.55,-696.05 527.88,-696.05 523.04,-692.5"/>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-661.9" font-family="Times,serif" font-size="11.00">Sharp</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-648.7" font-family="Times,serif" font-size="11.00">phát hiện</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-635.5" font-family="Times,serif" font-size="11.00">vật cản?</text>
+</g>
+<!-- SideCheck&#45;&gt;FrontCheck -->
+<g id="edge13" class="edge">
+<title>SideCheck-&gt;FrontCheck</title>
+<path fill="none" stroke="black" d="M371.68,-278C371.68,-311.91 371.68,-621.95 371.68,-621.95 371.68,-621.95 496.74,-621.95 496.74,-621.95"/>
+<polygon fill="black" stroke="black" points="496.74,-625.45 506.74,-621.95 496.74,-618.45 496.74,-625.45"/>
+<text xml:space="preserve" text-anchor="middle" x="413.95" y="-446" font-family="Times,serif" font-size="10.00">Không</text>
+</g>
+<!-- SideAvoid&#45;&gt;FrontCheck -->
+<g id="edge12" class="edge">
+<title>SideAvoid-&gt;FrontCheck</title>
+<path fill="none" stroke="black" d="M368.2,-167C383.11,-167 394.68,-167 394.68,-167 394.68,-167 394.68,-616.1 394.68,-616.1 394.68,-616.1 504.55,-616.1 504.55,-616.1"/>
+<polygon fill="black" stroke="black" points="504.55,-619.6 514.55,-616.1 504.55,-612.6 504.55,-619.6"/>
+</g>
+<!-- FrontAvoid -->
+<g id="node13" class="node">
+<title>FrontAvoid</title>
+<path fill="none" stroke="black" d="M585.51,-192C585.51,-192 479.91,-192 479.91,-192 473.91,-192 467.91,-186 467.91,-180 467.91,-180 467.91,-168 467.91,-168 467.91,-162 473.91,-156 479.91,-156 479.91,-156 585.51,-156 585.51,-156 591.51,-156 597.51,-162 597.51,-168 597.51,-168 597.51,-180 597.51,-180 597.51,-186 591.51,-192 585.51,-192"/>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-177.3" font-family="Times,serif" font-size="11.00">Chọn hướng</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-164.1" font-family="Times,serif" font-size="11.00">trống</text>
+</g>
+<!-- FrontCheck&#45;&gt;FrontAvoid -->
+<g id="edge14" class="edge">
+<title>FrontCheck-&gt;FrontAvoid</title>
+<path fill="none" stroke="black" d="M523.92,-610.25C499.69,-610.25 433.68,-610.25 433.68,-610.25 433.68,-610.25 433.68,-187.33 433.68,-187.33 433.68,-187.33 455.97,-187.33 455.97,-187.33"/>
+<polygon fill="black" stroke="black" points="455.97,-190.83 465.97,-187.33 455.97,-183.83 455.97,-190.83"/>
+<text xml:space="preserve" text-anchor="middle" x="413.95" y="-242" font-family="Times,serif" font-size="10.00">Có</text>
+</g>
+<!-- Arrive -->
+<g id="node14" class="node">
+<title>Arrive</title>
+<path fill="none" stroke="black" d="M522.9,-547.69C522.9,-547.69 474.9,-513.91 474.9,-513.91 469.99,-510.45 469.99,-503.55 474.9,-500.09 474.9,-500.09 522.9,-466.31 522.9,-466.31 527.81,-462.85 537.62,-462.85 542.53,-466.31 542.53,-466.31 590.53,-500.09 590.53,-500.09 595.43,-503.55 595.43,-510.45 590.53,-513.91 590.53,-513.91 542.53,-547.69 542.53,-547.69 537.62,-551.15 527.81,-551.15 522.9,-547.69"/>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-516.9" font-family="Times,serif" font-size="11.00">Camera Pi5</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-503.7" font-family="Times,serif" font-size="11.00">nhận diện</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-490.5" font-family="Times,serif" font-size="11.00">AprilTag?</text>
+</g>
+<!-- FrontCheck&#45;&gt;Arrive -->
+<g id="edge16" class="edge">
+<title>FrontCheck-&gt;Arrive</title>
+<path fill="none" stroke="black" d="M532.68,-604.12C532.68,-604.12 532.68,-566.34 532.68,-566.34"/>
+<polygon fill="black" stroke="black" points="536.18,-566.34 532.68,-556.34 529.18,-566.34 536.18,-566.34"/>
+</g>
+<!-- FrontAvoid&#45;&gt;MoveAGV -->
+<g id="edge15" class="edge">
+<title>FrontAvoid-&gt;MoveAGV</title>
+<path fill="none" stroke="black" d="M467.62,-182.67C439.84,-182.67 413.68,-182.67 413.68,-182.67 413.68,-182.67 413.68,-499.07 413.68,-499.07 413.68,-499.07 379.91,-499.07 379.91,-499.07"/>
+<polygon fill="black" stroke="black" points="379.91,-495.57 369.91,-499.07 379.91,-502.57 379.91,-495.57"/>
+</g>
+<!-- Arrive&#45;&gt;MoveAGV -->
+<g id="edge17" class="edge">
+<title>Arrive-&gt;MoveAGV</title>
+<path fill="none" stroke="black" d="M475.67,-514.93C475.67,-514.93 379.93,-514.93 379.93,-514.93"/>
+<polygon fill="black" stroke="black" points="379.93,-511.43 369.93,-514.93 379.93,-518.43 379.93,-511.43"/>
+<text xml:space="preserve" text-anchor="middle" x="413.95" y="-510" font-family="Times,serif" font-size="10.00">Chưa</text>
+</g>
+<!-- Dock -->
+<g id="node15" class="node">
+<title>Dock</title>
+<path fill="none" stroke="black" d="M585.51,-409.8C585.51,-409.8 479.91,-409.8 479.91,-409.8 473.91,-409.8 467.91,-403.8 467.91,-397.8 467.91,-397.8 467.91,-374.2 467.91,-374.2 467.91,-368.2 473.91,-362.2 479.91,-362.2 479.91,-362.2 585.51,-362.2 585.51,-362.2 591.51,-362.2 597.51,-368.2 597.51,-374.2 597.51,-374.2 597.51,-397.8 597.51,-397.8 597.51,-403.8 591.51,-409.8 585.51,-409.8"/>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-395.9" font-family="Times,serif" font-size="11.00">Lùi vào kho</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-382.7" font-family="Times,serif" font-size="11.00">2 E18 sau</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-369.5" font-family="Times,serif" font-size="11.00">căn vuông</text>
+</g>
+<!-- Arrive&#45;&gt;Dock -->
+<g id="edge18" class="edge">
+<title>Arrive-&gt;Dock</title>
+<path fill="none" stroke="black" d="M532.68,-458.83C532.68,-458.83 532.68,-421.6 532.68,-421.6"/>
+<polygon fill="black" stroke="black" points="536.18,-421.6 532.68,-411.6 529.18,-421.6 536.18,-421.6"/>
+</g>
+<!-- Distance -->
+<g id="node16" class="node">
+<title>Distance</title>
+<path fill="none" stroke="black" d="M522.4,-306.47C522.4,-306.47 462.88,-271.13 462.88,-271.13 457.72,-268.06 457.72,-261.94 462.88,-258.87 462.88,-258.87 522.4,-223.53 522.4,-223.53 527.55,-220.46 537.87,-220.46 543.03,-223.53 543.03,-223.53 602.54,-258.87 602.54,-258.87 607.7,-261.94 607.7,-268.06 602.54,-271.13 602.54,-271.13 543.03,-306.47 543.03,-306.47 537.87,-309.54 527.55,-309.54 522.4,-306.47"/>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-274.9" font-family="Times,serif" font-size="11.00">VL53L0X</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-261.7" font-family="Times,serif" font-size="11.00">đúng</text>
+<text xml:space="preserve" text-anchor="middle" x="532.71" y="-248.5" font-family="Times,serif" font-size="11.00">khoảng cách?</text>
+</g>
+<!-- Dock&#45;&gt;Distance -->
+<g id="edge19" class="edge">
+<title>Dock-&gt;Distance</title>
+<path fill="none" stroke="black" d="M532.68,-361.8C532.68,-361.8 532.68,-324.19 532.68,-324.19"/>
+<polygon fill="black" stroke="black" points="536.18,-324.19 532.68,-314.19 529.18,-324.19 536.18,-324.19"/>
+</g>
+<!-- Adjust -->
+<g id="node17" class="node">
+<title>Adjust</title>
+<path fill="none" stroke="black" d="M807.68,-355C807.68,-355 702.08,-355 702.08,-355 696.08,-355 690.08,-349 690.08,-343 690.08,-343 690.08,-331 690.08,-331 690.08,-325 696.08,-319 702.08,-319 702.08,-319 807.68,-319 807.68,-319 813.68,-319 819.68,-325 819.68,-331 819.68,-331 819.68,-343 819.68,-343 819.68,-349 813.68,-355 807.68,-355"/>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-340.3" font-family="Times,serif" font-size="11.00">Hiệu chỉnh</text>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-327.1" font-family="Times,serif" font-size="11.00">Tiến/Lùi</text>
+</g>
+<!-- Distance&#45;&gt;Adjust -->
+<g id="edge20" class="edge">
+<title>Distance-&gt;Adjust</title>
+<path fill="none" stroke="black" d="M606.68,-268.82C606.68,-284.64 606.68,-344.2 606.68,-344.2 606.68,-344.2 678.37,-344.2 678.37,-344.2"/>
+<polygon fill="black" stroke="black" points="678.37,-347.7 688.37,-344.2 678.36,-340.7 678.37,-347.7"/>
+<text xml:space="preserve" text-anchor="middle" x="651.47" y="-294" font-family="Times,serif" font-size="10.00">Chưa</text>
+</g>
+<!-- Unload -->
+<g id="node18" class="node">
+<title>Unload</title>
+<path fill="none" stroke="black" d="M807.68,-526.4C807.68,-526.4 702.08,-526.4 702.08,-526.4 696.08,-526.4 690.08,-520.4 690.08,-514.4 690.08,-514.4 690.08,-477.6 690.08,-477.6 690.08,-471.6 696.08,-465.6 702.08,-465.6 702.08,-465.6 807.68,-465.6 807.68,-465.6 813.68,-465.6 819.68,-471.6 819.68,-477.6 819.68,-477.6 819.68,-514.4 819.68,-514.4 819.68,-520.4 813.68,-526.4 807.68,-526.4"/>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-512.5" font-family="Times,serif" font-size="11.00">ESP32 → L298N</text>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-499.3" font-family="Times,serif" font-size="11.00">Điều khiển</text>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-486.1" font-family="Times,serif" font-size="11.00">xy lanh</text>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-472.9" font-family="Times,serif" font-size="11.00">Đổ hàng</text>
+</g>
+<!-- Distance&#45;&gt;Unload -->
+<g id="edge22" class="edge">
+<title>Distance-&gt;Unload</title>
+<path fill="none" stroke="black" d="M603.68,-270.71C603.68,-306.28 603.68,-496 603.68,-496 603.68,-496 678.37,-496 678.37,-496"/>
+<polygon fill="black" stroke="black" points="678.37,-499.5 688.37,-496 678.37,-492.5 678.37,-499.5"/>
+<text xml:space="preserve" text-anchor="middle" x="651.47" y="-473" font-family="Times,serif" font-size="10.00">Đúng</text>
+</g>
+<!-- Adjust&#45;&gt;Distance -->
+<g id="edge21" class="edge">
+<title>Adjust-&gt;Distance</title>
+<path fill="none" stroke="black" d="M689.93,-333.4C651.27,-333.4 609.68,-333.4 609.68,-333.4 609.68,-333.4 609.68,-278.79 609.68,-278.79"/>
+<polygon fill="black" stroke="black" points="613.18,-278.79 609.68,-268.79 606.18,-278.79 613.18,-278.79"/>
+</g>
+<!-- Leave -->
+<g id="node19" class="node">
+<title>Leave</title>
+<path fill="none" stroke="black" d="M807.68,-416C807.68,-416 702.08,-416 702.08,-416 696.08,-416 690.08,-410 690.08,-404 690.08,-404 690.08,-392 690.08,-392 690.08,-386 696.08,-380 702.08,-380 702.08,-380 807.68,-380 807.68,-380 813.68,-380 819.68,-386 819.68,-392 819.68,-392 819.68,-404 819.68,-404 819.68,-410 813.68,-416 807.68,-416"/>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-401.3" font-family="Times,serif" font-size="11.00">Thu xy lanh</text>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-388.1" font-family="Times,serif" font-size="11.00">Rời kho</text>
+</g>
+<!-- Unload&#45;&gt;Leave -->
+<g id="edge23" class="edge">
+<title>Unload-&gt;Leave</title>
+<path fill="none" stroke="black" d="M754.68,-465.26C754.68,-465.26 754.68,-427.88 754.68,-427.88"/>
+<polygon fill="black" stroke="black" points="758.18,-427.88 754.68,-417.88 751.18,-427.88 758.18,-427.88"/>
+</g>
+<!-- BatteryUpdate -->
+<g id="node20" class="node">
+<title>BatteryUpdate</title>
+<path fill="none" stroke="black" d="M807.68,-294C807.68,-294 702.08,-294 702.08,-294 696.08,-294 690.08,-288 690.08,-282 690.08,-282 690.08,-270 690.08,-270 690.08,-264 696.08,-258 702.08,-258 702.08,-258 807.68,-258 807.68,-258 813.68,-258 819.68,-264 819.68,-270 819.68,-270 819.68,-282 819.68,-282 819.68,-288 813.68,-294 807.68,-294"/>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-279.3" font-family="Times,serif" font-size="11.00">Cập nhật</text>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-266.1" font-family="Times,serif" font-size="11.00">mức pin</text>
+</g>
+<!-- Leave&#45;&gt;BatteryUpdate -->
+<g id="edge24" class="edge">
+<title>Leave-&gt;BatteryUpdate</title>
+<path fill="none" stroke="black" d="M819.88,-398C833.43,-398 843.68,-398 843.68,-398 843.68,-398 843.68,-276 843.68,-276 843.68,-276 831.4,-276 831.4,-276"/>
+<polygon fill="black" stroke="black" points="831.4,-272.5 821.4,-276 831.4,-279.5 831.4,-272.5"/>
+</g>
+<!-- BatteryLow -->
+<g id="node21" class="node">
+<title>BatteryLow</title>
+<path fill="none" stroke="black" d="M743.32,-204.79C743.32,-204.79 701.64,-193.21 701.64,-193.21 695.86,-191.61 695.86,-188.39 701.64,-186.79 701.64,-186.79 743.32,-175.21 743.32,-175.21 749.1,-173.61 760.66,-173.61 766.44,-175.21 766.44,-175.21 808.12,-186.79 808.12,-186.79 813.9,-188.39 813.9,-191.61 808.12,-193.21 808.12,-193.21 766.44,-204.79 766.44,-204.79 760.66,-206.39 749.1,-206.39 743.32,-204.79"/>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-186.7" font-family="Times,serif" font-size="11.00">Pin thấp?</text>
+</g>
+<!-- BatteryUpdate&#45;&gt;BatteryLow -->
+<g id="edge25" class="edge">
+<title>BatteryUpdate-&gt;BatteryLow</title>
+<path fill="none" stroke="black" d="M754.68,-257.76C754.68,-257.76 754.68,-219.73 754.68,-219.73"/>
+<polygon fill="black" stroke="black" points="758.18,-219.73 754.68,-209.73 751.18,-219.73 758.18,-219.73"/>
+</g>
+<!-- ReturnCharge -->
+<g id="node22" class="node">
+<title>ReturnCharge</title>
+<path fill="none" stroke="black" d="M807.68,-122C807.68,-122 702.08,-122 702.08,-122 696.08,-122 690.08,-116 690.08,-110 690.08,-110 690.08,-98 690.08,-98 690.08,-92 696.08,-86 702.08,-86 702.08,-86 807.68,-86 807.68,-86 813.68,-86 819.68,-92 819.68,-98 819.68,-98 819.68,-110 819.68,-110 819.68,-116 813.68,-122 807.68,-122"/>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-107.3" font-family="Times,serif" font-size="11.00">Về</text>
+<text xml:space="preserve" text-anchor="middle" x="754.88" y="-94.1" font-family="Times,serif" font-size="11.00">trạm sạc</text>
+</g>
+<!-- BatteryLow&#45;&gt;ReturnCharge -->
+<g id="edge26" class="edge">
+<title>BatteryLow-&gt;ReturnCharge</title>
+<path fill="none" stroke="black" d="M754.68,-171.76C754.68,-171.76 754.68,-133.73 754.68,-133.73"/>
+<polygon fill="black" stroke="black" points="758.18,-133.73 754.68,-123.73 751.18,-133.73 758.18,-133.73"/>
+</g>
+<!-- BatteryLow&#45;&gt;End -->
+<g id="edge28" class="edge">
+<title>BatteryLow-&gt;End</title>
+<path fill="none" stroke="black" d="M821.32,-190C827.6,-190 831.68,-190 831.68,-190 831.68,-190 831.68,-18 831.68,-18 831.68,-18 830.51,-18 830.51,-18"/>
+<polygon fill="black" stroke="black" points="831.53,-14.5 821.53,-18 831.53,-21.5 831.53,-14.5"/>
+<text xml:space="preserve" text-anchor="middle" x="651.47" y="-138" font-family="Times,serif" font-size="10.00">Không</text>
+</g>
+<!-- ReturnCharge&#45;&gt;End -->
+<g id="edge27" class="edge">
+<title>ReturnCharge-&gt;End</title>
+<path fill="none" stroke="black" d="M754.68,-85.76C754.68,-85.76 754.68,-47.73 754.68,-47.73"/>
+<polygon fill="black" stroke="black" points="758.18,-47.73 754.68,-37.73 751.18,-47.73 758.18,-47.73"/>
+</g>
+</g>
+</svg>

@@ -1,5 +1,6 @@
 #include "JsonStatus.h"
 #include "ModeManager.h"
+#include "AutoRoam.h"
 #include "MecanumDrive.h"
 #include "BTS7960Driver.h"
 #include "Encoder.h"
@@ -8,6 +9,8 @@
 #include "INA226Sensor.h"
 #include "IRProximitySensor.h"
 #include "SharpFrontSensor.h"
+#include "VL53L0XSensor.h"
+#include "CylinderActuator.h"
 #include "Watchdog.h"
 #include "config.h"
 
@@ -22,6 +25,7 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
     BTS7960Driver motors[],
     BNO055Sensor* imu, INA226Sensor* power,
     IRProximitySensor* ir, SharpFrontSensor* sharp,
+    VL53L0XSensor* tof, CylinderActuator* cylinder,
     int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
     bool e_stop, uint8_t max_pct)
 {
@@ -98,6 +102,17 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
         pwr["ok"] = false;
     }
 
+    JsonObject tof_obj = doc.createNestedObject("tof");
+    tof_obj["present"]   = tof->isPresent();
+    tof_obj["dist_mm"]   = tof->getDistanceMm();
+    tof_obj["dist_cm"]   = tof->getDistanceCm();
+    tof_obj["at_unload"] = tof->isAtUnloadingDistance();
+
+    JsonObject cyl = doc.createNestedObject("cyl");
+    cyl["state"]    = CylinderActuator::stateName(cylinder->getState());
+    cyl["extended"] = cylinder->isExtended();
+    cyl["moving"]   = cylinder->isMoving();
+
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) {
         buf[n]     = '\n';
@@ -116,6 +131,7 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     BTS7960Driver motors[],
     BNO055Sensor* imu, INA226Sensor* power,
     IRProximitySensor* ir, SharpFrontSensor* sharp,
+    VL53L0XSensor* tof, CylinderActuator* cylinder,
     int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
     bool e_stop, uint8_t max_pct)
 {
@@ -151,6 +167,8 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     st["pwr"] = power->isOperational();
     st["sharp"] = sharp->getDistanceCm();
     st["obs"] = sharp->isTooClose() || (ir->detectedMask() != 0);
+    st["tof_mm"] = tof->getDistanceMm();
+    st["cyl"]    = CylinderActuator::stateName(cylinder->getState());
 
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) {
@@ -253,6 +271,52 @@ size_t JsonStatus::emitPower(char* buf, size_t bufsize, INA226Sensor* power)
     } else {
         doc["ok"] = false;
     }
+    size_t n = serializeJson(doc, buf, bufsize);
+    if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }
+    return n;
+}
+
+// =======================================================================
+// Type 140 — unload / docking state
+//
+// Emitted on every state transition AND on explicit query.
+// Lets Pi observe: distance vs target, heading gate, cylinder sub-state.
+// =======================================================================
+size_t JsonStatus::emitUnloadState(char* buf, size_t bufsize, uint32_t now_ms,
+    const AutoRoam* auto_roam, VL53L0XSensor* tof,
+    BNO055Sensor* imu, CylinderActuator* cylinder)
+{
+    JsonDocument doc;
+    doc["type"] = 140;
+    doc["ts"]   = now_ms;
+
+    // State name lookup (index matches AutoRoam::UnloadState enum)
+    static const char* STATE_NAMES[] = {
+        "idle", "adjusting", "extending", "holding",
+        "retracting", "done", "leaving", "complete"
+    };
+    uint8_t s = (uint8_t)auto_roam->getUnloadState();
+    doc["state"] = (s < sizeof(STATE_NAMES) / sizeof(STATE_NAMES[0]))
+                   ? STATE_NAMES[s] : "unknown";
+
+    doc["tag_id"]    = auto_roam->getDockTagId();
+    doc["target_mm"] = auto_roam->getDockTargetMm();
+
+    if (tof && tof->isPresent()) {
+        doc["current_mm"] = tof->getDistanceMm();
+    } else {
+        doc["current_mm"] = -1;
+    }
+
+    doc["heading_err_deg"] = auto_roam->getHeadingErrDeg();
+    doc["heading_ok"]      = auto_roam->isHeadingOk();
+
+    if (cylinder) {
+        doc["cyl"] = CylinderActuator::stateName(cylinder->getState());
+    } else {
+        doc["cyl"] = "unknown";
+    }
+
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }
     return n;

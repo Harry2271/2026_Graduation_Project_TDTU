@@ -22,5 +22,6 @@ private:
     float distance_cm_;
     float prev_distance_cm_;
     uint32_t last_read_ms_;
-    bool sensor_present_;  // false if ADC reads garbage at boot (sensor absent)
+    bool sensor_present_;
+    int num_samples_;  // oversampling count for averaging
 };

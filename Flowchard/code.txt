@@ -1,0 +1,116 @@
+digraph AGV_Warehouse {
+
+    rankdir=TB;
+
+    Start [shape=ellipse,label="Bắt đầu"];
+
+    Init [shape=rectangle,label="Khởi tạo ESP32-S3\nEncoder\nBNO055\nINA226\n4 E18-D80NK\nSharp GP2Y0A21\nVL53L0X"];
+
+    WaitTask [shape=parallelogram,label="Nhận nhiệm vụ"];
+
+    ReadBattery [shape=rectangle,label="Đọc điện áp & dòng pin\nbằng INA226"];
+
+    BatteryCheck [shape=diamond,label="Pin đủ để thực hiện\nnhiệm vụ?"];
+
+    GoCharge [shape=rectangle,label="Di chuyển đến\ntrạm sạc"];
+
+    PlanPath [shape=rectangle,label="Tính toán đường đi"];
+
+    MoveAGV [shape=rectangle,label="Điều khiển 4 bánh Mecanum"];
+
+    ReadEncoder [shape=rectangle,label="Đọc Encoder"];
+
+    ReadIMU [shape=rectangle,label="Đọc BNO055"];
+
+    PIDControl [shape=rectangle,label="PID giữ đúng hướng"];
+
+    SideCheck [shape=diamond,label="E18 phát hiện\nvật cản bên trái/phải?"];
+
+    SideAvoid [shape=rectangle,label="Dịch ngang bằng\nbánh Mecanum"];
+
+    FrontCheck [shape=diamond,label="Sharp phát hiện\nvật cản phía trước?"];
+
+    FrontAvoid [shape=rectangle,label="Tìm phía trống\nvà tránh vật cản"];
+
+    ArriveShelf [shape=diamond,label="Đến khu vực\nkho hàng?"];
+
+    AlignDock [shape=rectangle,label="Lùi vào kho\nbằng 2 E18 phía sau"];
+
+    DistanceCheck [shape=diamond,label="VL53L0X đạt\nkhoảng cách đổ hàng?"];
+
+    AdjustPosition [shape=rectangle,label="Tiến/Lùi\nhiệu chỉnh vị trí"];
+
+    ExtendActuator [shape=rectangle,label="Đẩy/Nâng\nxy lanh điện"];
+
+    DropItem [shape=rectangle,label="Đổ hàng"];
+
+    RetractActuator [shape=rectangle,label="Thu\nxy lanh điện"];
+
+    LeaveDock [shape=rectangle,label="Rời khỏi kho"];
+
+    BatteryUpdate [shape=rectangle,label="Cập nhật pin"];
+
+    BatteryLow [shape=diamond,label="Pin thấp?"];
+
+    ReturnCharge [shape=rectangle,label="Về trạm sạc"];
+
+    End [shape=ellipse,label="Kết thúc"];
+
+    Start -> Init;
+    Init -> WaitTask;
+
+    WaitTask -> ReadBattery;
+    ReadBattery -> BatteryCheck;
+
+    BatteryCheck -> GoCharge [label="Không"];
+    GoCharge -> End;
+
+    BatteryCheck -> PlanPath [label="Có"];
+
+    PlanPath -> MoveAGV;
+
+    MoveAGV -> ReadEncoder;
+    ReadEncoder -> ReadIMU;
+    ReadIMU -> PIDControl;
+
+    PIDControl -> SideCheck;
+
+    SideCheck -> SideAvoid [label="Có"];
+    SideAvoid -> FrontCheck;
+
+    SideCheck -> FrontCheck [label="Không"];
+
+    FrontCheck -> FrontAvoid [label="Có"];
+    FrontAvoid -> MoveAGV;
+
+    FrontCheck -> ArriveShelf [label="Không"];
+
+    ArriveShelf -> MoveAGV [label="Chưa"];
+
+    ArriveShelf -> AlignDock [label="Đã tới"];
+
+    AlignDock -> DistanceCheck;
+
+    DistanceCheck -> AdjustPosition [label="Chưa đúng"];
+
+    AdjustPosition -> DistanceCheck;
+
+    DistanceCheck -> ExtendActuator [label="Đúng"];
+
+    ExtendActuator -> DropItem;
+
+    DropItem -> RetractActuator;
+
+    RetractActuator -> LeaveDock;
+
+    LeaveDock -> BatteryUpdate;
+
+    BatteryUpdate -> BatteryLow;
+
+    BatteryLow -> ReturnCharge [label="Có"];
+
+    ReturnCharge -> End;
+
+    BatteryLow -> End [label="Không"];
+
+}

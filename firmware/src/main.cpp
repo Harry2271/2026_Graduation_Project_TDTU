@@ -42,6 +42,8 @@ BNO055Sensor  g_imu;
 INA226Sensor  g_power;
 IRProximitySensor g_ir;
 SharpFrontSensor g_sharp;
+VL53L0XSensor   g_tof;
+CylinderActuator g_cylinder;
 
 // ========================================================================
 // Motor State — single control path
@@ -75,6 +77,9 @@ int16_t g_raw_test_speeds[4] = {0};
 // Shared JSON output buffer for status messages (UART to Pi 5)
 static char g_json_buf[1200];
 
+// Unload state tracking (for transition detection → type 140 emit)
+AutoRoam::UnloadState g_last_unload_state = AutoRoam::UNLOAD_IDLE;
+
 // ========================================================================
 // LEDC Timer Setup
 // ========================================================================
@@ -92,18 +97,45 @@ void setupLEDC()
 // ========================================================================
 // Hardware Initialization
 // ========================================================================
+
+// Helper: log sensor init result with timing
+#define LOG_SENSOR_INIT_RESULT(name, ok_call) \
+    do { \
+        Serial.printf("  [INIT] %s starting...\n", name); \
+        uint32_t _t0 = millis(); \
+        bool _ok = (ok_call); \
+        Serial.printf("  [INIT] %s %s (%lu ms)\n", name, \
+                      _ok ? "OK" : "FAILED", millis() - _t0); \
+    } while (0)
+
 void setupHardware()
 {
-    Serial.setTimeout(1);
+    // --- USB CDC: start IMMEDIATELY so all subsequent prints are visible ---
     Serial.begin(SERIAL_BAUD);
-    delay(500);
 
+    // Short delay for USB enumeration on Windows (host needs ~500 ms to
+    // recognize the CDC device after firmware re-enumerates).
+    delay(1500);
+
+    Serial.println();
+    Serial.println("=====================================================");
+    Serial.println("  ESP32-S3 Mecanum Controller — booting...");
+    Serial.println("=====================================================");
+
+    // Pi 5 <-> ESP32-S3 link is now USB CDC (Type-C cable).
+    // Serial.begin() above already started it.  No UART1 init needed.
+    // Pi reads this stream as /dev/ttyACM0 on Linux.
+    Serial.println("  [OK]   PiSerial = USB CDC (Type-C cable -> /dev/ttyACM0)");
+    PiSerial.setTimeout(1);
+
+    pinMode(2, OUTPUT);
     digitalWrite(2, LOW);  // LED off — ESP32-S3 WeAct built-in
-    digitalWrite(2, LOW);
 
-    // ---- I2C bus (shared: BNO055 + INA226) ----
+    // ---- I2C bus (shared: BNO055 + INA226 + VL53L0X) ----
+    Serial.println("  [INIT] I2C bus SDA=GPIO10 SCL=GPIO11 @ 400kHz...");
     Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
     Wire.setClock(BNO055_I2C_FREQ_HZ);
+    Serial.println("  [OK]   I2C bus started");
 
     setupLEDC();
 
@@ -124,27 +156,35 @@ void setupHardware()
         g_pid[i].setGains(DEFAULT_KP, DEFAULT_KI, DEFAULT_KD);
     }
 
-    // ---- I2C sensors ----
-    if (!g_imu.begin(BNO055_I2C_ADDR)) {
-        Serial.println("  [WARN] BNO055 not found — IMU telemetry disabled");
-    } else {
-        Serial.println("  [OK]   BNO055 IMU ready");
-    }
+    // ---- I2C sensors (with progress logging) ----
+    // Each sensor init logs its own start/end so if one hangs you know which one.
+    Serial.println("  [INIT] BNO055 IMU...");
+    bool imu_ok = g_imu.begin(BNO055_I2C_ADDR);
+    Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
 
-    if (!g_power.begin(INA226_I2C_ADDR)) {
-        Serial.println("  [WARN] INA226 not found — power telemetry disabled");
-    } else {
-        Serial.println("  [OK]   INA226 power monitor ready");
-    }
+    Serial.println("  [INIT] INA226 power monitor...");
+    bool pwr_ok = g_power.begin(INA226_I2C_ADDR);
+    Serial.printf("  [%s] INA226\n", pwr_ok ? "OK  " : "WARN");
 
     // Wire sensors into ModeManager for AUTO_ROAM (Pi-less) operation
-    g_modeManager.attachSensors(&g_imu, &g_ir, &g_sharp, &g_power);
+    g_modeManager.attachSensors(&g_imu, &g_ir, &g_sharp, &g_power, &g_tof, &g_cylinder);
 
     // ---- IR proximity sensors ----
     g_ir.begin();
+    Serial.println("  [OK]   IR proximity sensors");
 
     // ---- Sharp front distance sensor ----
     g_sharp.begin();
+    Serial.println("  [OK]   Sharp front distance sensor");
+
+    // ---- VL53L0X TOF distance sensor (rear, used for unloading precision) ----
+    Serial.println("  [INIT] VL53L0X TOF sensor...");
+    bool tof_ok = g_tof.begin();
+    Serial.printf("  [%s] VL53L0X\n", tof_ok ? "OK  " : "WARN");
+
+    // ---- Cylinder actuator (12V lift cylinder via L298N) ----
+    g_cylinder.begin();
+    Serial.println("  [OK]   Cylinder actuator");
 
     Serial.printf("\n");
     Serial.printf("=====================================================\n");
@@ -262,7 +302,7 @@ void handleForward(int speed)
     g_nav_vx    = constrain(speed, 0, 255);
     g_nav_vy    = 0;
     g_nav_omega = 0;
-    Serial.printf("ACK: forward %d\n", speed);
+    PiSerial.printf("ACK: forward %d\n", speed);
 }
 
 void handleBackward(int speed)
@@ -272,7 +312,7 @@ void handleBackward(int speed)
     g_nav_vx    = -constrain(speed, 0, 255);
     g_nav_vy    = 0;
     g_nav_omega = 0;
-    Serial.printf("ACK: backward %d\n", speed);
+    PiSerial.printf("ACK: backward %d\n", speed);
 }
 
 void handleStop()
@@ -288,7 +328,7 @@ void handleStop()
         g_kick_ticks[i] = 0;
         g_motors[i].brake();
     }
-    Serial.println("ACK: stopped");
+    PiSerial.println("ACK: stopped");
 }
 
 void handleEStop()
@@ -303,7 +343,7 @@ void handleEStop()
         g_ramped_speeds[i] = 0;
         g_motors[i].emergencyStop();
     }
-    Serial.println("ACK: E-STOP activated");
+    PiSerial.println("ACK: E-STOP activated");
 }
 
 void handleEStopClear()
@@ -319,7 +359,7 @@ void handleEStopClear()
         g_ramped_speeds[i]  = 0;
         g_target_speeds[i]  = 0;
     }
-    Serial.println("ACK: E-STOP cleared");
+    PiSerial.println("ACK: E-STOP cleared");
 }
 
 void handleSetPID(float kp, float ki, float kd)
@@ -328,13 +368,13 @@ void handleSetPID(float kp, float ki, float kd)
         g_pid[i].setGains(kp, ki, kd);
     }
     g_pid_enabled = true;
-    Serial.printf("ACK: PID kp=%.2f ki=%.2f kd=%.2f\n", kp, ki, kd);
+    PiSerial.printf("ACK: PID kp=%.2f ki=%.2f kd=%.2f\n", kp, ki, kd);
 }
 
 void handleSetMaxSpeed(int pct)
 {
     g_max_speed_pct = constrain(pct, 0, 100);
-    Serial.printf("ACK: max_speed=%d%%\n", g_max_speed_pct);
+    PiSerial.printf("ACK: max_speed=%d%%\n", g_max_speed_pct);
 }
 
 void handleGetEncoder()
@@ -343,13 +383,13 @@ void handleGetEncoder()
     size_t n = JsonStatus::emitEncoderSnapshot(
         g_json_buf, sizeof(g_json_buf),
         tgt, g_encoders);
-    Serial.write(g_json_buf, n);
+    PiSerial.write(g_json_buf, n);
 }
 
 void handleResetEncoder()
 {
     for (int i = 0; i < MOTOR_COUNT; i++) g_encoders[i].reset();
-    Serial.println("ACK: encoders reset");
+    PiSerial.println("ACK: encoders reset");
 }
 
 void handleGetStatus()
@@ -359,28 +399,38 @@ void handleGetStatus()
         &g_modeManager, &g_mecanum,
         g_encoders, g_pid, g_motors,
         &g_imu, &g_power, &g_ir, &g_sharp,
+        &g_tof, &g_cylinder,
         g_nav_vx, g_nav_vy, g_nav_omega,
         g_e_stop_active, g_max_speed_pct);
-    Serial.write(g_json_buf, n);
+    PiSerial.write(g_json_buf, n);
+}
+
+void handleUnloadState()
+{
+    size_t n = JsonStatus::emitUnloadState(
+        g_json_buf, sizeof(g_json_buf), millis(),
+        &g_modeManager.getAutoRoam(),
+        &g_tof, &g_imu, &g_cylinder);
+    PiSerial.write(g_json_buf, n);
 }
 
 void handleTestSequence()
 {
-    Serial.printf("ACK: test sequence starting...\n");
+    PiSerial.printf("ACK: test sequence starting...\n");
     handleStop();
     delay(500);
 
     g_individual_mode = false;
     int16_t steps[] = { 50, 100, 150, 200, 150, 100, 50, 0 };
     for (size_t i = 0; i < sizeof(steps)/sizeof(steps[0]); i++) {
-        Serial.printf("TEST: forward %d\n", steps[i]);
+        PiSerial.printf("TEST: forward %d\n", steps[i]);
         g_nav_vx = steps[i];
         g_nav_vy = 0;
         g_nav_omega = 0;
         delay(1000);
     }
     handleStop();
-    Serial.println("ACK: test sequence complete");
+    PiSerial.println("ACK: test sequence complete");
 }
 
 void handleHelp()
@@ -410,7 +460,12 @@ void handleHelp()
     Serial.println("  J           Read Sharp front distance (type 136)");
     Serial.println("  O<id> <pwm> Raw motor test (0=FL,1=FR,2=RL,3=RR, bypass PID)");
     Serial.println("  O0 0        Exit raw test mode");
+    Serial.println("  Y           Read VL53L0X TOF distance (type 138)");
+    Serial.println("  G           Extend cylinder (lift dump body)");
+    Serial.println("  g           Retract cylinder (lower dump body)");
+    Serial.println("  C           Stop cylinder (coast)");
     Serial.println("  A           Force AUTO_ROAM (sensor-only, no Pi)");
+    Serial.println("  JSON: begin_dock, begin_leave_dock, cancel_dock, get_unload_state");
     Serial.println();
 }
 
@@ -454,7 +509,7 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             break;
         case CMD_FORCE_AUTO_ROAM:
             g_modeManager.onPiCommand(cmd, now_ms);
-            Serial.println("ACK: AUTO_ROAM forced (Pi disconnected, sensors driving)");
+            PiSerial.println("ACK: AUTO_ROAM forced (Pi disconnected, sensors driving)");
             break;
         case CMD_HEARTBEAT:
             g_modeManager.onPiCommand(cmd, now_ms);
@@ -503,6 +558,36 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             g_sharp.printStatusJson();
             break;
 
+        case CMD_GET_TOF:
+            g_tof.printStatusJson();
+            break;
+
+        case CMD_CYLINDER_EXTEND:
+            g_cylinder.extend();
+            PiSerial.println("ACK: cylinder extend");
+            break;
+
+        case CMD_CYLINDER_RETRACT:
+            g_cylinder.retract();
+            PiSerial.println("ACK: cylinder retract");
+            break;
+
+        case CMD_CYLINDER_STOP:
+            g_cylinder.stop();
+            PiSerial.println("ACK: cylinder stop");
+            break;
+
+        case CMD_BEGIN_DOCK:
+        case CMD_BEGIN_LEAVE_DOCK:
+        case CMD_CANCEL_DOCK:
+            g_modeManager.onPiCommand(cmd, now_ms);
+            PiSerial.printf("ACK: dock cmd %d\n", cmd.type);
+            break;
+
+        case CMD_GET_UNLOAD_STATE:
+            handleUnloadState();
+            break;
+
         case CMD_RAW_MOTOR: {
             int id    = cmd.motor_speeds[0];
             int speed = cmd.motor_speeds[1];
@@ -514,7 +599,7 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             g_raw_test_speeds[id] = speed;
             g_nav_vx = 0; g_nav_vy = 0; g_nav_omega = 0;
             if (speed == 0) g_raw_test_mode = false;
-            Serial.printf("ACK: raw motor[%d] = %d (PID OFF)\n", id, speed);
+            PiSerial.printf("ACK: raw motor[%d] = %d (PID OFF)\n", id, speed);
         } break;
 
         default:
@@ -530,8 +615,14 @@ void readSerial()
     static char linebuf[256];
     static size_t pos = 0;
 
-    while (Serial.available() > 0) {
-        int byte = Serial.read();
+    while (PiSerial.available() > 0) {
+        int byte = PiSerial.read();
+
+        // Any byte from the Pi is proof-of-life, even if the parser later
+        // rejects the frame (e.g. a truncated JSON line left behind when the
+        // UART cable is yanked mid-transmission). This keeps the watchdog from
+        // being fooled into MODE_NAV when the Pi has actually gone silent.
+        g_modeManager.onSerialActivity(millis());
 
         if (byte == '\r') continue;
 
@@ -578,52 +669,40 @@ void printStatus(uint32_t now_ms)
             &g_modeManager, &g_mecanum,
             g_encoders, g_pid, g_motors,
             &g_imu, &g_power, &g_ir, &g_sharp,
+            &g_tof, &g_cylinder,
             g_nav_vx, g_nav_vy, g_nav_omega,
             g_e_stop_active, g_max_speed_pct);
-        Serial.write(g_json_buf, n);
+        PiSerial.write(g_json_buf, n);
     }
 }
 
 // ========================================================================
 // Periodic Sensor Publishing — JSON, line-delimited (UART to Pi 5)
-// Tick 5 Hz | IMU 20 Hz | Power 0.2 Hz
+// All telemetry unified into ONE message every 500 ms to keep the
+// pipe quiet (USB CDC already adds +1 ms latency per transfer; we
+// don't need to spam at 20 Hz).
 // ========================================================================
+#define TELEMETRY_PUBLISH_MS  500   // Send full unified telemetry every 500 ms
+
 void publishSensors(uint32_t now_ms)
 {
-    // Tick status at 5 Hz (200 ms) — compact motors + IR
-    static uint32_t last_tick_ms = 0;
-    if (now_ms - last_tick_ms >= 200) {
-        last_tick_ms = now_ms;
-        size_t n = JsonStatus::emitTickStatus(
-            g_json_buf, sizeof(g_json_buf), now_ms,
-            &g_modeManager, g_encoders, g_motors,
-            &g_imu, &g_power, &g_ir, &g_sharp,
-            g_nav_vx, g_nav_vy, g_nav_omega,
-            g_e_stop_active, g_max_speed_pct);
-        Serial.write(g_json_buf, n);
-    }
+    static uint32_t last_tel_ms = 0;
+    if (now_ms - last_tel_ms < TELEMETRY_PUBLISH_MS) return;
+    last_tel_ms = now_ms;
 
-    // IMU at 20 Hz (50 ms) — type 134
-    static uint32_t last_imu_ms = 0;
-    if (now_ms - last_imu_ms >= IMU_PUBLISH_MS) {
-        last_imu_ms = now_ms;
-        if (g_imu.isOperational()) {
-            g_imu.read();
-            size_t n = JsonStatus::emitIMU(g_json_buf, sizeof(g_json_buf), &g_imu);
-            Serial.write(g_json_buf, n);
-        }
-    }
+    // Read fresh IMU + power values once, then emit a single compact
+    // status line.  Saves bandwidth vs. separate tick / IMU / power frames.
+    if (g_imu.isOperational())     g_imu.read();
+    if (g_power.isOperational())   g_power.read();
 
-    // Power at 0.2 Hz (5 s) — type 133
-    static uint32_t last_power_ms = 0;
-    if (now_ms - last_power_ms >= POWER_PUBLISH_MS) {
-        last_power_ms = now_ms;
-        if (g_power.isOperational()) {
-            g_power.read();
-            size_t n = JsonStatus::emitPower(g_json_buf, sizeof(g_json_buf), &g_power);
-            Serial.write(g_json_buf, n);
-        }
-    }
+    size_t n = JsonStatus::emitTickStatus(
+        g_json_buf, sizeof(g_json_buf), now_ms,
+        &g_modeManager, g_encoders, g_motors,
+        &g_imu, &g_power, &g_ir, &g_sharp,
+        &g_tof, &g_cylinder,
+        g_nav_vx, g_nav_vy, g_nav_omega,
+        g_e_stop_active, g_max_speed_pct);
+    PiSerial.write(g_json_buf, n);
 }
 
 // ========================================================================
@@ -687,6 +766,10 @@ void loop()
     g_modeManager.update(now);
     pollLocalSensors(now);
 
+    // Poll the slow sensors / actuators (independent of PID tick)
+    g_tof.update(now);
+    g_cylinder.update(now);
+
     if (now - g_last_pid_ms >= PID_UPDATE_MS) {
         uint32_t dt = now - g_last_pid_ms;
         uint32_t dt_us = dt * 1000;
@@ -714,6 +797,15 @@ void loop()
     printStatus(now);
     publishSensors(now);
     updateLED(now);
+
+    // Detect unload state transitions and emit type 140 to Pi
+    {
+        AutoRoam::UnloadState current = g_modeManager.getUnloadState();
+        if (current != g_last_unload_state) {
+            g_last_unload_state = current;
+            handleUnloadState();
+        }
+    }
 
     delay(1);
 }
