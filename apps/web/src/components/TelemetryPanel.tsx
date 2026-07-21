@@ -30,9 +30,8 @@ const MOTOR_NAMES = ['FL', 'FR', 'RL', 'RR'] as const;
 
 function PanelHeader() {
   const { wsStatus, lastReceivedAt } = useRobotTelemetry();
-  const [now, setNow] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
@@ -432,7 +431,7 @@ export function TelemetryPanel() {
   const [tab, setTab] = useState<TabKey>('status');
   return (
     <div
-      className="flex flex-col h-full"
+      className="flex flex-col h-full w-full"
       style={{
         background: 'var(--bg-void)',
         borderLeft: '1px solid var(--border-dim)',

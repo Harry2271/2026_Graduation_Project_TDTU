@@ -16,7 +16,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     <RobotTelemetryProvider>
       {isDesktop ? (
         <div
-          className="flex h-screen overflow-hidden"
+          className="flex h-screen w-full overflow-hidden"
           style={{ background: 'var(--bg-void)' }}
         >
           <Sidebar />
@@ -34,22 +34,19 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             {children}
           </main>
           <aside
-            className="hidden xl:flex w-80 shrink-0 h-full"
-            style={{ background: 'var(--bg-void)' }}
+            className="hidden xl:flex w-80 shrink-0 h-full overflow-hidden bg-[#080b10]"
           >
             <TelemetryPanel />
           </aside>
         </div>
       ) : (
         <div
-          className="flex flex-col min-h-dvh"
-          style={{ background: 'var(--bg-void)' }}
+          className="flex flex-col min-h-dvh w-full bg-[#080b10]"
         >
           <MobileTopBar onMenu={() => setDrawerOpen(true)} />
           <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
           <main
-            className="flex-1 flex flex-col relative pb-16 md:pb-0"
-            style={{ background: 'var(--bg-void)' }}
+            className="flex-1 flex flex-col relative w-full pb-16 md:pb-0 bg-[#080b10]"
           >
             <div
               className="absolute top-0 inset-x-0 h-64 pointer-events-none"
