@@ -17,9 +17,9 @@ function formatUptime(ts: number | undefined): string {
   return `${s}s`;
 }
 
-function formatRate(lastAt: number): string {
-  if (!lastAt) return '—';
-  const elapsed = (Date.now() - lastAt) / 1000;
+function formatRate(lastAt: number, now: number): string {
+  if (!lastAt || !now) return '—';
+  const elapsed = (now - lastAt) / 1000;
   if (elapsed > 5) return '0.0 Hz';
   return '2.0 Hz';
 }
@@ -30,14 +30,15 @@ const MOTOR_NAMES = ['FL', 'FR', 'RL', 'RR'] as const;
 
 function PanelHeader() {
   const { wsStatus, lastReceivedAt } = useRobotTelemetry();
-  const [, tick] = useState(0);
+  const [now, setNow] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => tick((n) => n + 1), 1000);
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
 
   const linkOk = wsStatus === 'connected';
-  const dataOk = lastReceivedAt > 0 && Date.now() - lastReceivedAt < 5000;
+  const dataOk = lastReceivedAt > 0 && now - lastReceivedAt < 5000;
 
   return (
     <div
@@ -95,7 +96,7 @@ function PanelHeader() {
             fontFamily: "'JetBrains Mono', monospace",
           }}
         >
-          {dataOk ? formatRate(lastReceivedAt) : '— Hz'}
+          {dataOk ? formatRate(lastReceivedAt, now) : '— Hz'}
         </div>
       </div>
     </div>
@@ -407,7 +408,7 @@ function StateChip({
 
 function EmptyState({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-8 px-4 text-center">
+    <div className="h-full flex flex-col items-center justify-center gap-2 px-4 text-center">
       <div style={{ color: 'var(--text-muted)' }}>{icon}</div>
       <span
         className="text-[10px]"
