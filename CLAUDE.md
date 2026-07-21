@@ -255,6 +255,8 @@ Each app has a `deploy.sh` in its own folder. The Pi's self-hosted runner is che
 
 The legacy `tools/deploy/` folder keeps the manual SSH toolkit (`deploy-all.sh`, `stop-all.sh`, `install-pi.sh`, etc.) for deploys from a dev machine. These still reference the new monorepo paths.
 
+**After a Pi reboot** when services did not auto-restore: run `tools/deploy/scripts/start-all.sh` instead of re-deploying everything. It checks the existing production builds (backend `dist/main.js`, frontend `.next/standalone/...`), restores the saved PM2 list, starts/restart the backend and frontend, then runs the robot `deploy.sh` (rebuilds the colcon workspace) before printing a `pm2 status` summary. It is idempotent — safe to run repeatedly.
+
 ---
 
 ## Cross-Project Conventions

@@ -66,6 +66,16 @@ pm2 save
 ./deploy.sh          # robot: git pull + colcon build + restart nodes
 ```
 
+### Manual recovery after a Pi reboot
+
+If PM2 did not restore the production services after reboot, run this from the monorepo root on the Pi:
+
+```bash
+./tools/deploy/scripts/start-all.sh
+```
+
+The script validates the existing backend/frontend builds, restores the saved PM2 list, starts or restarts the backend and frontend, then runs `services/robot/deploy.sh` to rebuild the ROS workspace and restart all robot nodes. It finishes with `pm2 status` and the Web/API/WebSocket/camera URLs. Running it again is safe; it does not create duplicate PM2 processes.
+
 ## Configuration
 
 ### Backend (`nguyen-tdtu/.env`)
