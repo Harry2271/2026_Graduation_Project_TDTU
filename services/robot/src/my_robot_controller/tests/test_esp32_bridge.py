@@ -102,3 +102,51 @@ async def test_real_bridge_encodes_move_as_json_line() -> None:
     assert written_bytes.endswith(b'\n')
     payload = json.loads(written_bytes.decode('utf-8').strip())
     assert payload == {'cmd': 'move', 'vx': 100, 'vy': 0, 'omega': 0}
+
+
+def test_real_bridge_handles_flat_type_131_status_frame() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    bridge.on_status_update = received.append
+
+    bridge._handle_line(
+        b'{"ts":14844896,"type":131,"mode":"AUTO_ROAM",'
+        b'"estop":false,"max_pct":100,"nav":[0,0,0],'
+        b'"motors":[{"t":30,"r":0}],"ir":[false],'
+        b'"st":{"imu":false,"pwr":false,"sharp":22,"obs":false,'
+        b'"tof_mm":9999,"cyl":"idle"}}\n'
+    )
+
+    assert received == [
+        {
+            'ts': 14844896,
+            'type': 131,
+            'mode': 'AUTO_ROAM',
+            'estop': False,
+            'max_pct': 100,
+            'nav': [0, 0, 0],
+            'motors': [{'t': 30, 'r': 0}],
+            'ir': [False],
+            'st': {
+                'imu': False,
+                'pwr': False,
+                'sharp': 22,
+                'obs': False,
+                'tof_mm': 9999,
+                'cyl': 'idle',
+            },
+        }
+    ]
+
+
+def test_real_bridge_handles_envelope_type_131_status_frame() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    bridge.on_status_update = received.append
+    payload = {'mode': 'AUTO_ROAM', 'e_stop': False, 'max_pct': 100}
+
+    bridge._handle_line(
+        json.dumps({'type': 131, 'data': payload}).encode('utf-8') + b'\n'
+    )
+
+    assert received == [payload]

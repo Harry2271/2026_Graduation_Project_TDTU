@@ -371,12 +371,23 @@ class RealEsp32Bridge:
         if msg_type is None:
             return  # no type field — not a valid protocol frame
 
-        data = msg.get('data') or {}
+        # ── Flat vs envelope format ────────────────────────────────────────
+        # The firmware sends flat frames:
+        #   {"ts":1053920,"type":131,"mode":"AUTO_ROAM","estop":false,...}
+        # The brain node and older code expect envelope frames:
+        #   {"type":131,"data":{"mode":"AUTO_ROAM","estop":false,...}}
+        # To support both, prefer `msg["data"]` if present; otherwise use the
+        # full message dict as the payload — fields like "ts" are harmless.
+        data = msg.get('data') or msg
 
         if msg_type == self.TYPE_STATUS:
             self.on_status_update(data)
         elif msg_type == self.TYPE_ENCODER:
-            motors = data.get('motors') or []
+            # Flat encoder frame: {"ts":...,"type":130,"motors":[...]}
+            # Envelope frame:     {"type":130,"data":{"motors":[...]}}
+            motors = data.get('motors') if 'motors' in data else data
+            if not isinstance(motors, list):
+                motors = []
             self.on_encoder_update(motors)
         elif msg_type == self.TYPE_ERROR:
             self.on_error(str(data.get('error', 'unknown')))
