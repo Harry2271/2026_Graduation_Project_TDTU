@@ -156,13 +156,13 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
       const bytes =
         data instanceof ArrayBuffer ? new Uint8Array(data) : null;
 
-      // ── Pre-parse filter: skip map_layer / obstacle_layer early ─────────
-      // gzip payloads begin with 0x1f 0x8b; raw JSON for status/encoder/info
+      // ── Pre-parse filter: skip map_layer/obstacle_layer early ───────────
+      // gzip payloads begin with 0x1f 0x8b; raw JSON for status/encoder
       // starts with '{'. The robot's web_bridge emits ~1.5 MB gzip map_layer
       // frames every 200 ms — decompressing them only to discard them
-      // pushed the browser to OOM within a couple of minutes. Use the small
-      // "type" prefix as a cheap sniff instead:
-      //   * "{...\"type\":\"esp32_..." → keep
+      // pushed the browser to OOM within a couple of minutes. Use a small
+      // JSON prefix sniff instead:
+      //   * {"type": "esp32_..." → keep
       //   * everything else (incl. gzip) → drop
       if (bytes) {
         // gzip magic: skip everything gzip-compressed. map_layer + obstacle_layer
@@ -170,15 +170,16 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
         if (bytes[0] === 0x1f && bytes[1] === 0x8b) return;
 
         const text = new TextDecoder().decode(bytes);
-        // Quick prefix check: keep only frames whose JSON opens with
-        // `{"type":"esp32_`. Faster than full JSON.parse + dispatch.
-        if (!text.startsWith('{"type":"esp32_')) return;
+        // json.dumps() in web_bridge.py inserts a space after the colon by
+        // default. Allow optional JSON whitespace so valid ESP32 envelopes
+        // are not discarded before JSON.parse().
+        if (!/^\{"type"\s*:\s*"esp32_/.test(text)) return;
         dispatch(text);
         return;
       }
 
       if (typeof data === 'string') {
-        if (!data.startsWith('{"type":"esp32_')) return;
+        if (!/^\{"type"\s*:\s*"esp32_/.test(data)) return;
         dispatch(data);
       }
     }
