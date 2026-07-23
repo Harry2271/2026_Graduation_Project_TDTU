@@ -105,7 +105,7 @@ mkdir -p /home/pi/.pm2/logs
 pm2 delete "$SERVICE_NAME" 2>/dev/null || true
 
 if [ -f "$APP_DIR/ecosystem.json" ]; then
-    (cd "$APP_DIR" && pm2 start ecosystem.json)
+    (cd "$APP_DIR" && pm2 start ecosystem.json --cwd "$APP_DIR")
 else
     # Fallback: run the standalone server directly.
     PORT="${PORT:-3000}" pm2 start "$APP_DIR/.next/standalone/apps/web/server.js" --name "$SERVICE_NAME"
