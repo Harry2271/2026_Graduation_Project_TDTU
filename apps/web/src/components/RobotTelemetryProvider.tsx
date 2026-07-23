@@ -155,22 +155,32 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
       }
       const bytes =
         data instanceof ArrayBuffer ? new Uint8Array(data) : null;
-      const isGzip = bytes !== null && bytes[0] === 0x1f && bytes[1] === 0x8b;
-      let text: string;
-      if (isGzip && bytes) {
-        const ds = new (globalThis as { DecompressionStream?: typeof DecompressionStream })
-          .DecompressionStream!('gzip');
-        const writer = ds.writable.getWriter();
-        writer.write(bytes);
-        await writer.close();
-        text = await new Response(ds.readable).text();
-      } else {
-        text =
-          typeof data === 'string'
-            ? data
-            : new TextDecoder().decode(data as ArrayBuffer);
+
+      // ── Pre-parse filter: skip map_layer / obstacle_layer early ─────────
+      // gzip payloads begin with 0x1f 0x8b; raw JSON for status/encoder/info
+      // starts with '{'. The robot's web_bridge emits ~1.5 MB gzip map_layer
+      // frames every 200 ms — decompressing them only to discard them
+      // pushed the browser to OOM within a couple of minutes. Use the small
+      // "type" prefix as a cheap sniff instead:
+      //   * "{...\"type\":\"esp32_..." → keep
+      //   * everything else (incl. gzip) → drop
+      if (bytes) {
+        // gzip magic: skip everything gzip-compressed. map_layer + obstacle_layer
+        // are the only gzipped types; neither is needed by this panel.
+        if (bytes[0] === 0x1f && bytes[1] === 0x8b) return;
+
+        const text = new TextDecoder().decode(bytes);
+        // Quick prefix check: keep only frames whose JSON opens with
+        // `{"type":"esp32_`. Faster than full JSON.parse + dispatch.
+        if (!text.startsWith('{"type":"esp32_')) return;
+        dispatch(text);
+        return;
       }
-      dispatch(text);
+
+      if (typeof data === 'string') {
+        if (!data.startsWith('{"type":"esp32_')) return;
+        dispatch(data);
+      }
     }
 
     function connect() {
