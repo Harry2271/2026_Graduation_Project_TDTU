@@ -1,0 +1,27 @@
+Do PM2 nexus-robot-esp32-telemetry đã mở /dev/robot-esp32, không chạy thêm picocom hoặc Python monitor cùng lúc. Kiểm tra log của chính PM2:
+
+
+pm2 logs nexus-robot-esp32-telemetry --lines 100
+Hoặc kiểm tra process đang giữ port:
+
+
+sudo lsof /dev/robot-esp32
+Mong đợi chỉ thấy process ESP32 telemetry, không thấy rplidar_n.
+
+Nếu muốn dùng picocom để xem trực tiếp, dừng PM2 telemetry trước:
+
+
+pm2 stop nexus-robot-esp32-telemetry
+sleep 2
+sudo lsof /dev/robot-esp32
+picocom -b 115200 --flow n --nolock /dev/robot-esp32
+Sau khi test xong, thoát picocom rồi bật lại service:
+
+
+pm2 start nexus-robot-esp32-telemetry
+pm2 save --force
+Nếu muốn chạy production, giữ PM2 telemetry chạy và xem output bằng:
+
+
+pm2 logs nexus-robot-esp32-telemetry
+Đừng mở thêm chương trình serial thứ hai trên /dev/robot-esp32; một cổng serial chỉ nên có một reader.

@@ -1,0 +1,41 @@
+# /etc/udev/rules.d/99-robot-ports.rules
+#
+# Cố định tên thiết bị cho robot — mỗi USB device luôn có cùng 1 symlink,
+# không phụ thuộc thứ tự cắm.
+#
+# Cách dùng trên Pi 5:
+#   sudo cp 99-robot-ports.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# Sau đó cắm lại USB devices → symlink sẽ xuất hiện:
+#   /dev/robot-esp32   → ESP32-S3 USB CDC (ttyACM)
+#   /dev/robot-lidar   → RPLidar adapter (ttyUSB hoặc ttyACM)
+
+# ============================================================
+# ESP32-S3 WeAct N16R8 — USB CDC
+# WCH CH9102 UART-to-USB bridge: 1A86:55D3
+# (confirmed on Pi 5 via lsusb — "QinHeng Electronics USB Single Serial")
+# ============================================================
+SUBSYSTEM=="tty", \
+  ATTRS{idVendor}=="1a86", \
+  ATTRS{idProduct}=="55d3", \
+  SYMLINK+="robot-esp32", \
+  MODE="0666"
+
+# ============================================================
+# RPLiDAR A1M8 — USB-UART adapter
+# CP2102 silicon labs: 10C4:EA60
+# ============================================================
+SUBSYSTEM=="tty", \
+  ATTRS{idVendor}=="10c4", \
+  ATTRS{idProduct}=="ea60", \
+  SYMLINK+="robot-lidar", \
+  MODE="0666"
+
+# CH340: 1A86:7523
+SUBSYSTEM=="tty", \
+  ATTRS{idVendor}=="1a86", \
+  ATTRS{idProduct}=="7523", \
+  SYMLINK+="robot-lidar", \
+  MODE="0666"

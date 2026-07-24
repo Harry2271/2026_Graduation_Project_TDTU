@@ -21,11 +21,25 @@ VL53L0XSensor::VL53L0XSensor()
 
 bool VL53L0XSensor::begin()
 {
+    // Probe known address first — VL53L0X default = 0x29 (config.h).
+    // If nothing ACKs, skip Pololu init entirely (it scans all 127
+    // addresses internally, which can hang on ESP32-S3).
+    Wire.beginTransmission(VL53L0X_I2C_ADDR);
+    if (Wire.endTransmission() != 0) {
+        Serial.printf("  [WARN] VL53L0X no ACK at 0x%02X — sensor absent\n",
+                      VL53L0X_I2C_ADDR);
+        return false;
+    }
+    Serial.printf("  [OK]   VL53L0X ACK at 0x%02X\n", VL53L0X_I2C_ADDR);
+
     sensor_ = new VL53L0X();
     sensor_->setBus(&Wire);
 
+    // Set address BEFORE init — prevents Pololu library from scanning.
+    sensor_->setAddress(VL53L0X_I2C_ADDR);
+
     if (!sensor_->init()) {
-        Serial.println("  [WARN] VL53L0X not found — TOF distance disabled");
+        Serial.println("  [WARN] VL53L0X init failed — sensor disabled");
         delete sensor_;
         sensor_ = nullptr;
         sensor_present_ = false;
@@ -37,7 +51,7 @@ bool VL53L0XSensor::begin()
     sensor_->startContinuous();
 
     sensor_present_ = true;
-    Serial.println("  [OK]   VL53L0X TOF sensor ready (I2C 0x29)");
+    Serial.printf("  [OK]   VL53L0X TOF sensor ready (I2C 0x%02X)\n", VL53L0X_I2C_ADDR);
     return true;
 }
 

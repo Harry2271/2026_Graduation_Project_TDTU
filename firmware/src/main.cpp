@@ -3,6 +3,7 @@
 #include <driver/gpio.h>
 #include <string.h>
 #include <Wire.h>
+#include <esp_task_wdt.h>
 
 #include "config.h"
 #include "modules.h"
@@ -45,6 +46,10 @@ SharpFrontSensor g_sharp;
 VL53L0XSensor   g_tof;
 CylinderActuator g_cylinder;
 
+// Module health monitor — detects stuck I2C sensors, triggers recovery,
+// emits type 142 health report every 1s + on state change
+HealthMonitor   g_health;
+
 // ========================================================================
 // Motor State — single control path
 // ========================================================================
@@ -79,6 +84,17 @@ static char g_json_buf[1200];
 
 // Unload state tracking (for transition detection → type 140 emit)
 AutoRoam::UnloadState g_last_unload_state = AutoRoam::UNLOAD_IDLE;
+
+// Heartbeat counter — bumped every successful "alive" publish.  Pi
+// monitor uses this to detect that ESP32 firmware is still ticking;
+// if the counter freezes, the host knows to reconnect even though no
+// transport-level error occurred.
+static uint32_t g_alive_counter = 0;
+
+// Slow sensor read timer — keeps I2C off the 500 ms hot path so a
+// stuck sensor cannot wedge the publish loop.
+static uint32_t g_last_sensor_read_ms = 0;
+#define SLOW_SENSOR_READ_MS  1000
 
 // ========================================================================
 // LEDC Timer Setup
@@ -482,6 +498,15 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             g_nav_vx    = cmd.move_vx;
             g_nav_vy    = cmd.move_vy;
             g_nav_omega = cmd.move_omega;
+            // Emit type 132 move ACK if Pi included a seq number
+            if (cmd.has_move_seq) {
+                const char* ack_status = g_e_stop_active ? "rejected" : "accepted";
+                const char* ack_reason = g_e_stop_active ? "e_stop_active" : nullptr;
+                size_t n = JsonStatus::emitMoveAck(
+                    g_json_buf, sizeof(g_json_buf),
+                    cmd.move_seq, ack_status, ack_reason);
+                PiSerial.write(g_json_buf, n);
+            }
             break;
 
         // ---- Direct per-wheel (bypasses mecanum) ----
@@ -489,6 +514,13 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             g_individual_mode = true;
             for (int i = 0; i < MOTOR_COUNT; i++) {
                 g_target_speeds[i] = cmd.motor_speeds[i];
+            }
+            // Emit type 132 ACK if Pi included seq
+            if (cmd.has_move_seq) {
+                size_t n = JsonStatus::emitMoveAck(
+                    g_json_buf, sizeof(g_json_buf),
+                    cmd.move_seq, "accepted");
+                PiSerial.write(g_json_buf, n);
             }
             break;
 
@@ -578,6 +610,13 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             break;
 
         case CMD_BEGIN_DOCK:
+            g_modeManager.onPiCommand(cmd, now_ms);
+            // Also pass facing_theta to AutoRoam for heading gate
+            g_modeManager.startDock(cmd.tag_id, cmd.target_distance_mm,
+                                    cmd.facing_theta_deg);
+            PiSerial.printf("ACK: dock cmd %d\n", cmd.type);
+            break;
+
         case CMD_BEGIN_LEAVE_DOCK:
         case CMD_CANCEL_DOCK:
             g_modeManager.onPiCommand(cmd, now_ms);
@@ -586,6 +625,16 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
 
         case CMD_GET_UNLOAD_STATE:
             handleUnloadState();
+            break;
+
+        case CMD_RESTART:
+            // Graceful reboot.  Send an ACK first so the host knows
+            // the command was accepted, then call ESP.restart() to
+            // reload firmware without touching the BOOT button.
+            PiSerial.println("{\"type\":128,\"data\":{\"status\":\"restarting\"}}");
+            PiSerial.flush();
+            delay(20);
+            ESP.restart();
             break;
 
         case CMD_RAW_MOTOR: {
@@ -655,45 +704,94 @@ void updateLED(uint32_t) {}
 
 // ========================================================================
 // JSON Status — FULL every 1 s (line-delimited JSON to UART)
-// pi reads line-delimited JSON. tick (5 Hz) and IMU/Power handled by
-// publishSensors() below.
+// DISABLED: emitFullStatus allocates through ArduinoJson every second,
+// which fragments the heap on long-running sessions.  publishSensors()
+// below emits the same fields on the 500 ms tick — one fewer allocation
+// path is enough.
 // ========================================================================
-void printStatus(uint32_t now_ms)
+void printStatus(uint32_t /*now_ms*/)
 {
-    // --- Full JSON every 1 s (type=131, all fields) ---
-    static uint32_t last_full_ms = 0;
-    if (now_ms - last_full_ms >= 1000) {
-        last_full_ms = now_ms;
-        size_t n = JsonStatus::emitFullStatus(
-            g_json_buf, sizeof(g_json_buf), now_ms,
-            &g_modeManager, &g_mecanum,
-            g_encoders, g_pid, g_motors,
-            &g_imu, &g_power, &g_ir, &g_sharp,
-            &g_tof, &g_cylinder,
-            g_nav_vx, g_nav_vy, g_nav_omega,
-            g_e_stop_active, g_max_speed_pct);
-        PiSerial.write(g_json_buf, n);
-    }
+    // Intentionally empty: full status type-131 was causing heap
+    // fragmentation when running >10 minutes (ESP32 silently rebooted,
+    // Pi saw "ESP32 stopped sending data").  Use type-141 (alive) and
+    // the 500 ms tick from publishSensors() instead — same fields,
+    // no extra alloc path.
 }
 
 // ========================================================================
-// Periodic Sensor Publishing — JSON, line-delimited (UART to Pi 5)
-// All telemetry unified into ONE message every 500 ms to keep the
-// pipe quiet (USB CDC already adds +1 ms latency per transfer; we
-// don't need to spam at 20 Hz).
+// Periodic Sensor Publishing — JSON, line-delimited (USB CDC to Pi)
+//
+// The hot path (every 500 ms) only emits JSON built from cached state.
+// All I2C sensor reads happen on a separate slow timer (every 1 s).
+// This means a stuck sensor (BNO055 / INA226) CANNOT silence the
+// telemetry — the brain still sees alive + uptime + e_stop advance
+// and can react.
 // ========================================================================
-#define TELEMETRY_PUBLISH_MS  500   // Send full unified telemetry every 500 ms
+#define TELEMETRY_PUBLISH_MS  500   // Always-fire tick (alive + cached state)
 
-void publishSensors(uint32_t now_ms)
+// Cheap read of slow sensors.  Each read is gated so a single stuck
+// sensor can't lock up the loop.  Failure is non-fatal — the next
+// tick will retry.
+static void readSensorsSlow(uint32_t now_ms)
 {
-    static uint32_t last_tel_ms = 0;
-    if (now_ms - last_tel_ms < TELEMETRY_PUBLISH_MS) return;
-    last_tel_ms = now_ms;
+    if (now_ms - g_last_sensor_read_ms < SLOW_SENSOR_READ_MS) return;
+    g_last_sensor_read_ms = now_ms;
 
-    // Read fresh IMU + power values once, then emit a single compact
-    // status line.  Saves bandwidth vs. separate tick / IMU / power frames.
-    if (g_imu.isOperational())     g_imu.read();
-    if (g_power.isOperational())   g_power.read();
+    // IMU read — Bosch driver does ~7 I2C transactions per call.  If
+    // BNO055 hangs on the bus (e.g. motor-induced glitch), the
+    // surrounding "if operational" gate won't help — we only added
+    // the slow timer to keep this OFF the publish hot path.
+    if (g_imu.isOperational()) {
+        g_imu.read();
+    }
+    if (g_power.isOperational()) {
+        g_power.read();
+    }
+}
+
+// Reliable fire-every-500ms tick.  Even if I2C wedges, this still
+// emits a small JSON frame so the host sees motion and knows the
+// firmware is alive.  Type 141 is a custom "alive" frame.
+static void publishAlive(uint32_t now_ms)
+{
+    static uint32_t last_ms = 0;
+    if (now_ms - last_ms < TELEMETRY_PUBLISH_MS) return;
+    last_ms = now_ms;
+    g_alive_counter++;
+
+    // Emit JSON manually (no I2C, no encoder reads, no locks) so this
+    // cannot block.  ~120 bytes per line at 500 ms = ~240 B/s.
+    int n = snprintf(g_json_buf, sizeof(g_json_buf),
+        "{\"type\":141,\"data\":{\"uptime_ms\":%lu,\"alive\":%lu,"
+        "\"e_stop\":%s,\"mode\":\"%s\"}}\n",
+        (unsigned long)now_ms,
+        (unsigned long)g_alive_counter,
+        g_e_stop_active ? "true" : "false",
+        Watchdog::modeName(g_modeManager.getMode()));
+    if (n > 0 && n < (int)sizeof(g_json_buf)) {
+        PiSerial.write((uint8_t*)g_json_buf, (size_t)n);
+    }
+    // Yield to RTOS — important when host doesn't drain fast enough to
+    // keep the USB endpoint clear.  Without this, repeated writes can
+    // hit a queued-full endpoint stall and back-pressure the loop.
+    yield();
+}
+
+// Full telemetry — same 500 ms cadence but with motor + sensor data.
+// Runs in addition to publishAlive, so the host gets BOTH a stream of
+// frames (alive) and richer detail (tick).
+static void publishTelemetry(uint32_t now_ms)
+{
+    static uint32_t last_ms = 0;
+    if (now_ms - last_ms < TELEMETRY_PUBLISH_MS) return;
+    last_ms = now_ms;
+
+    // NOTE: g_imu.read() / g_power.read() are NOT called here — they
+    // run in readSensorsSlow() at1 Hz.  Mixing I2C reads into the
+    // publish path caused occasional USB CDC stalls when the Bosch
+    // BNO055 driver held Wire for >100 ms (even when "not operational",
+    // the driver sometimes pings the bus on stale state).
+    // Here we only emit cached values — pure memcpy + JSON, no I2C.
 
     size_t n = JsonStatus::emitTickStatus(
         g_json_buf, sizeof(g_json_buf), now_ms,
@@ -703,6 +801,91 @@ void publishSensors(uint32_t now_ms)
         g_nav_vx, g_nav_vy, g_nav_omega,
         g_e_stop_active, g_max_speed_pct);
     PiSerial.write(g_json_buf, n);
+    yield();
+}
+
+void publishSensors(uint32_t now_ms)
+{
+    readSensorsSlow(now_ms);
+    publishAlive(now_ms);
+    publishTelemetry(now_ms);
+
+    // ---- Periodic sensor types (independent cadences) ----
+    // Each type runs at its own Hz.  All use cached values from
+    // readSensorsSlow() so no I2C reads block the publish path.
+
+    static uint32_t last_imu_ms   = 0;
+    static uint32_t last_pwr_ms   = 0;
+    static uint32_t last_enc_ms   = 0;
+    static uint32_t last_tof_ms   = 0;
+    static uint32_t last_ir_ms    = 0;
+    static uint32_t last_sharp_ms = 0;
+
+    // IMU — 20 Hz (50 ms)
+    if (now_ms - last_imu_ms >= 50) {
+        last_imu_ms = now_ms;
+        if (g_imu.isOperational()) {
+            size_t n = JsonStatus::emitIMU(g_json_buf, sizeof(g_json_buf), &g_imu);
+            PiSerial.write(g_json_buf, n);
+            yield();
+        }
+    }
+
+    // Power — 1 Hz (1000 ms)
+    if (now_ms - last_pwr_ms >= 1000) {
+        last_pwr_ms = now_ms;
+        if (g_power.isOperational()) {
+            size_t n = JsonStatus::emitPower(g_json_buf, sizeof(g_json_buf), &g_power);
+            PiSerial.write(g_json_buf, n);
+            yield();
+        }
+    }
+
+    // Encoder — 10 Hz (100 ms)
+    if (now_ms - last_enc_ms >= 100) {
+        last_enc_ms = now_ms;
+        size_t n = JsonStatus::emitEncoderSnapshot(
+            g_json_buf, sizeof(g_json_buf),
+            g_modeManager.getRampedSpeeds(), g_encoders);
+        PiSerial.write(g_json_buf, n);
+        yield();
+    }
+
+    // TOF — 10 Hz (100 ms)
+    if (now_ms - last_tof_ms >= 100) {
+        last_tof_ms = now_ms;
+        if (g_tof.isPresent()) {
+            g_tof.printStatusJson();
+            yield();
+        }
+    }
+
+    // IR proximity — 20 Hz (50 ms)
+    if (now_ms - last_ir_ms >= 50) {
+        last_ir_ms = now_ms;
+        g_ir.printStatusJson();
+        yield();
+    }
+
+    // Sharp front — 20 Hz (50 ms)
+    if (now_ms - last_sharp_ms >= 50) {
+        last_sharp_ms = now_ms;
+        g_sharp.printStatusJson();
+        yield();
+    }
+
+    // ---- Module health report (type 142) ----
+    // 1 Hz periodic + immediate on state change
+    static uint32_t last_health_ms = 0;
+    bool health_changed = g_health.hasChanged();
+    if (health_changed || (now_ms - last_health_ms >= 1000)) {
+        last_health_ms = now_ms;
+        const char* mode_name = Watchdog::modeName(g_modeManager.getMode());
+        size_t n = g_health.emitHealthJson(g_json_buf, sizeof(g_json_buf),
+                                          now_ms, g_e_stop_active, mode_name);
+        PiSerial.write(g_json_buf, n);
+        yield();
+    }
 }
 
 // ========================================================================
@@ -710,7 +893,14 @@ void publishSensors(uint32_t now_ms)
 // ========================================================================
 void setup()
 {
+    // Hardware watchdog — if loop() blocks for >5s (e.g. Wire hang),
+    // esp_task_wdt triggers a full chip restart.  This is the ultimate
+    // safety net when software recovery cannot unstick the I2C bus.
+    esp_task_wdt_init(5, true);
+    esp_task_wdt_add(NULL);
+
     setupHardware();
+    g_health.begin();
     g_modeManager.begin();
 
     Serial.println();
@@ -756,6 +946,70 @@ void pollLocalSensors(uint32_t now)
     if (g_sharp.isTooClose() || g_sharp.isSlowing()) {
         g_obstacle.onObstacleEvent(ObstacleDirection::FRONT, now);
     }
+
+    // ---- Battery safety monitoring ----
+    // Critical battery → auto E-stop; warning → slow down.
+    // Only run when power sensor is present and was recently read.
+    if (g_power.isOperational() && g_power.getLastReadMs() > 0) {
+        uint8_t bstatus = g_power.getBatteryStatus();
+        if (bstatus == 2) {
+            g_health.reportError(MOD_BATTERY, 3, now);
+            if (!g_e_stop_active) {
+                Serial.println("[POWER] Battery CRITICAL — auto e-stop");
+                handleEStop();
+            }
+        } else {
+            if (bstatus == 1) {
+                if (g_max_speed_pct > 50) {
+                    g_max_speed_pct = 50;
+                    Serial.println("[POWER] Battery low — max speed capped to 50%");
+                }
+            }
+            g_health.reportOk(MOD_BATTERY, now);
+        }
+    }
+
+    // ---- Motor driver health ----
+    // Check if any motor has target but no response
+    if (!g_e_stop_active) {
+        bool motor_ok = true;
+        for (int i = 0; i < MOTOR_COUNT; i++) {
+            if (abs(g_target_speeds[i]) > 50) {
+                // Motor has a target — check encoder responds
+                float actual = abs(g_encoders[i].getFilteredRPM());
+                if (actual < 2) {
+                    motor_ok = false;
+                    break;
+                }
+            }
+        }
+        if (motor_ok) g_health.reportOk(MOD_MOTOR_DRIVER, now);
+        else          g_health.reportError(MOD_MOTOR_DRIVER, 2, now);
+    }
+
+    // ---- Encoder health (PID tick runs every 20ms = 50Hz) ----
+    // Only flag when motors are actually commanded and encoders don't respond.
+    bool enc_ok = true;
+    for (int i = 0; i < MOTOR_COUNT; i++) {
+        if (abs(g_target_speeds[i]) > 50) {
+            float actual = abs(g_encoders[i].getFilteredRPM());
+            if (actual < 2) {
+                g_health.reportError(MOD_ENCODERS, 1, now);
+                enc_ok = false;
+                break;
+            }
+        }
+    }
+    if (enc_ok) g_health.reportOk(MOD_ENCODERS, now);
+
+    // ---- Pi link health — only report if we actually checked recently ----
+    // Watchdog last_serial_activity is updated in readSerial().
+    if (now > 4000 && (now - g_modeManager.getLastSerialActivityMs()) < 4000) {
+        g_health.reportOk(MOD_Pi_LINK, now);
+    } else if (now > 5000) {
+        // No activity for 5+ seconds — report stale
+        g_health.reportError(MOD_Pi_LINK, 1, now);
+    }
 }
 
 void loop()
@@ -764,6 +1018,54 @@ void loop()
 
     readSerial();
     g_modeManager.update(now);
+
+    // ---- Health monitor tick (staleness check + state transitions) ----
+    g_health.tick(now);
+
+    // ---- Per-module recovery attempts ----
+    // If any I2C module is RECOVERING and retry interval elapsed,
+    // call begin() again.  Failures bump retry_count toward FAILED.
+    if (g_health.recoveryDue(MOD_IMU, now)) {
+        Serial.println("[HEALTH] IMU recovery attempt...");
+        bool ok = g_imu.begin(BNO055_I2C_ADDR);
+        if (ok) g_health.reportOk(MOD_IMU, now);
+        else    g_health.reportRecoveryFailure(MOD_IMU, 1, now);
+    }
+    if (g_health.recoveryDue(MOD_TOF, now)) {
+        Serial.println("[HEALTH] TOF recovery attempt...");
+        bool ok = g_tof.begin();
+        if (ok) g_health.reportOk(MOD_TOF, now);
+        else    g_health.reportRecoveryFailure(MOD_TOF, 2, now);
+    }
+
+    // ---- Bus-level recovery ----
+    // If 2+ I2C modules are simultaneously WARNING, treat as bus fault.
+    {
+        uint8_t i2c_warnings = 0;
+        const ModuleId i2c_mods[] = {MOD_IMU, MOD_TOF};
+        for (ModuleId id : i2c_mods) {
+            if (g_health.get(id).state == ST_WARNING ||
+                g_health.get(id).state == ST_FAILED) {
+                i2c_warnings++;
+            }
+        }
+        static uint32_t last_bus_reset_ms = 0;
+        if (i2c_warnings >= 2 && (now - last_bus_reset_ms) > 5000) {
+            Serial.println("[HEALTH] I2C bus fault detected — full reset");
+            I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+            bool ok = I2CBus::reinitialize(BNO055_SDA_PIN, BNO055_SCL_PIN,
+                                          BNO055_I2C_FREQ_HZ);
+            if (ok) {
+                // Re-init all I2C devices
+                g_imu.begin(BNO055_I2C_ADDR);
+                g_power.begin(INA226_I2C_ADDR);
+                g_tof.begin();
+                Serial.println("[HEALTH] I2C bus reinit OK");
+            }
+            last_bus_reset_ms = now;
+        }
+    }
+
     pollLocalSensors(now);
 
     // Poll the slow sensors / actuators (independent of PID tick)
@@ -808,4 +1110,8 @@ void loop()
     }
 
     delay(1);
+
+    // Reset hardware watchdog — if loop() blocks for >5s (e.g. Wire
+    // held SDA low), esp_task_wdt triggers esp_restart().
+    esp_task_wdt_reset();
 }

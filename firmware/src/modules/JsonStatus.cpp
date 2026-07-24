@@ -321,3 +321,26 @@ size_t JsonStatus::emitUnloadState(char* buf, size_t bufsize, uint32_t now_ms,
     if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }
     return n;
 }
+
+// =====================================================================
+// Type 132 — Move ACK (Pi command echo with optional seq)
+// =====================================================================
+size_t JsonStatus::emitMoveAck(char* buf, size_t bufsize,
+                               uint16_t seq, const char* status,
+                               const char* reason)
+{
+    if (!buf || bufsize == 0) return 0;
+
+    StaticJsonDocument<192> doc;
+    doc["type"] = 132;
+    JsonObject data = doc.createNestedObject("data");
+    data["seq"] = seq;
+    data["status"] = status ? status : "accepted";
+    if (reason && reason[0] != '\0') {
+        data["reason"] = reason;
+    }
+
+    size_t n = serializeJson(doc, buf, bufsize);
+    if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }
+    return n;
+}

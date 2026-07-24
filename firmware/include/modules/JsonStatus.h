@@ -17,18 +17,20 @@ class MecanumDrive;
 class ModeManager;
 class AutoRoam;
 
-// JSON message type IDs (matches CLAUDE.md protocol: 130 / 131 / 133 / 134 / 135 / 136)
+// JSON message type IDs (matches CLAUDE.md protocol)
+// 128 = generic ACK
+// 129 = error
 // 130 = encoder snapshot
-// 131 = full status
-// 132 = move-ack (unused in JSON status stream)
+// 131 = full/tick status
+// 132 = move ACK with optional seq (Pi → ESP32 → Pi echo)
 // 133 = power telemetry
 // 134 = IMU telemetry
 // 135 = IR proximity
 // 136 = Sharp front
-// 137 = obstacle (IR + Sharp merged)
 // 138 = TOF distance
-// 139 = cylinder actuator state
 // 140 = unload / docking state (transition notify + query response)
+// 141 = alive heartbeat (500 ms)
+// 142 = module health report (1 s periodic + on-change)
 class JsonStatus {
 public:
     /// Emit the full status bundle as a single multi-line JSON
@@ -73,4 +75,11 @@ public:
     static size_t emitUnloadState(char* buf, size_t bufsize, uint32_t now_ms,
         const AutoRoam* auto_roam, VL53L0XSensor* tof,
         BNO055Sensor* imu, CylinderActuator* cylinder);
+
+    /// Emit move ACK (type 132).  `seq` echoes the sequence number
+    /// from the originating Pi command (0 means no seq supplied).
+    /// `status` is "accepted" or "rejected".  `reason` is only
+    /// included when status == "rejected".
+    static size_t emitMoveAck(char* buf, size_t bufsize,
+        uint16_t seq, const char* status, const char* reason = nullptr);
 };

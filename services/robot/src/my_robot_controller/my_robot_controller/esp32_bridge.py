@@ -51,6 +51,7 @@ class Esp32Bridge(Protocol):
     on_encoder_update: Callable[[list[dict]], None]
     on_e_stop: Callable[[], None]
     on_error: Callable[[str], None]
+    on_alive: Callable[[dict], None]
 
 
 # ---------- Helpers ------------------------------------------------------
@@ -115,6 +116,18 @@ class FakeEsp32Bridge:
         self.on_encoder_update: Callable[[list[dict]], None] = lambda _data: None
         self.on_e_stop: Callable[[], None] = lambda: None
         self.on_error: Callable[[str], None] = lambda _msg: None
+        self.on_alive: Callable[[dict], None] = lambda _data: None
+
+        self._alive_streak = 0
+        self._last_alive_counter = -1
+
+    def is_alive(self) -> bool:
+        """Fake is always alive once connected."""
+        return self._connected
+
+    @property
+    def last_alive_counter(self) -> int:
+        return self._last_alive_counter
 
     async def connect(self) -> None:
         self._connected = True
@@ -165,6 +178,11 @@ class FakeEsp32Bridge:
 
     def inject_error(self, message: str) -> None:
         self.on_error(message)
+
+    def inject_alive(self, data: dict) -> None:
+        self._last_alive_counter = data.get('alive', -1)
+        self._alive_streak += 1
+        self.on_alive(data)
 
     async def _send(self, cmd: dict) -> None:
         async with self._lock:
@@ -217,11 +235,17 @@ class RealEsp32Bridge:
     TYPE_SHARP       = 136
     TYPE_TOF         = 138
     TYPE_UNLOAD_STATE = 140
+    TYPE_ALIVE       = 141  # Always-fire 500 ms heartbeat from ESP32
 
     # Best-effort cap on a single JSON line — keeps memory bounded if ESP32
     # ever goes into a runaway write loop.  Status JSON is ~700 bytes; power
     # telemetry fits in 200.
     _MAX_LINE_BYTES = 2048
+
+    # If no alive frame arrives within this window, the bridge reports
+    # the ESP32 as frozen (is_alive() == False).  ESP32 emits every
+    # 500 ms, so 3 s gives 6x safety margin for transient jitter.
+    _ALIVE_TIMEOUT_S = 3.0
 
     def __init__(self, writer: Any, reader: Any) -> None:
         self._writer = writer
@@ -233,11 +257,15 @@ class RealEsp32Bridge:
         self._heartbeat_interval = 0.05
 
         self._last_e_stop = False  # track rising edge for on_e_stop callback
+        self._last_alive_monotonic: Optional[float] = None
+        self._last_alive_counter: int = -1
+        self._alive_streak: int = 0  # consecutive alive frames received
 
         self.on_status_update: Callable[[dict], None] = lambda _data: None
         self.on_encoder_update: Callable[[list[dict]], None] = lambda _data: None
         self.on_e_stop: Callable[[], None] = lambda: None
         self.on_error: Callable[[str], None] = lambda _msg: None
+        self.on_alive: Callable[[dict], None] = lambda _data: None
 
     # ----- lifecycle -----
 
@@ -286,6 +314,26 @@ class RealEsp32Bridge:
     async def get_encoder(self) -> list[dict]:
         """Synchronous placeholder — use on_encoder_update callback instead."""
         return []
+
+    # ----- liveness -----
+
+    def is_alive(self) -> bool:
+        """True if the ESP32 alive heartbeat has been seen recently.
+
+        Returns False until the first alive frame arrives, after which it
+        reflects whether frames are still flowing.  A False result means the
+        firmware is hung (likely a stuck I2C sensor or USB stall) and the
+        host should treat telemetry as stale.
+        """
+        if self._last_alive_monotonic is None:
+            return False
+        import time as _t
+        return (_t.monotonic() - self._last_alive_monotonic) < self._ALIVE_TIMEOUT_S
+
+    @property
+    def last_alive_counter(self) -> int:
+        """The most recent alive counter value seen, or -1 if none yet."""
+        return self._last_alive_counter
 
     # ----- internals -----
 
@@ -373,17 +421,26 @@ class RealEsp32Bridge:
 
         data = msg.get('data') or {}
 
-        if msg_type == self.TYPE_STATUS:
-            self.on_status_update(data)
+if msg_type == self.TYPE_STATUS:
+            self._safe_call(self.on_status_update, data)
         elif msg_type == self.TYPE_ENCODER:
             motors = data.get('motors') or []
-            self.on_encoder_update(motors)
+            self._safe_call(self.on_encoder_update, motors)
         elif msg_type == self.TYPE_ERROR:
-            self.on_error(str(data.get('error', 'unknown')))
+            self._safe_call(self.on_error, str(data.get('error', 'unknown')))
         elif msg_type == self.TYPE_MOVE_ACK:
             status = data.get('status')
             if status == 'rejected':
-                self.on_error(f"move rejected: {data.get('reason', '?')}")
+                self._safe_call(self.on_error, f"move rejected: {data.get('reason', '?')}")
+        elif msg_type == self.TYPE_ALIVE:
+            # Always-fire heartbeat.  Update liveness state FIRST so
+            # the callback can't observe inconsistent state.
+            import time as _t
+            self._last_alive_monotonic = _t.monotonic()
+            counter = data.get('alive', -1)
+            self._last_alive_counter = counter
+            self._alive_streak += 1
+            self._safe_call(self.on_alive, data)
         else:
             # IMU, POWER, IR, SHARP, TOF, UNLOAD_STATE, ACK, … — ignore
             # by default.  Hosts that want them can subclass or wrap.
@@ -393,25 +450,37 @@ class RealEsp32Bridge:
         if msg_type == self.TYPE_STATUS:
             e_stop = bool(data.get('e_stop', False))
             if e_stop and not self._last_e_stop:
-                try:
-                    self.on_e_stop()
-                except Exception:  # noqa: BLE001
-                    LOG.exception('on_e_stop handler raised')
+                self._safe_call(self.on_e_stop)
             self._last_e_stop = e_stop
+
+    def _safe_call(self, fn: Callable, *args: Any) -> None:
+        """Invoke a user callback without letting exceptions escape.
+
+        User callbacks run on the same task as the read loop.  A bug in
+        a handler must NOT kill the reader.
+        """
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001
+            LOG.exception('callback %s raised', getattr(fn, '__name__', repr(fn)))
 
 
 # ---------- Convenience factory ------------------------------------------
 
 
 async def open_esp32_bridge(
-    port: str = '/dev/ttyACM0',
+    port: str = '/dev/robot-esp32',
     baudrate: int = 115200,
 ) -> RealEsp32Bridge:
-    """Open /dev/ttyACM0 (or any port) and return a connected RealEsp32Bridge.
+    """Open the ESP32 USB CDC link and return a connected RealEsp32Bridge.
 
-    Default port is /dev/ttyACM0 — the USB CDC device the WeAct ESP32-S3
-    creates.  Pass '/dev/ttyAMA0' instead for the legacy GPIO 43/44 UART
-    (NOT recommended on Pi 5 — see PL011 DMA bug history).
+    Default port is /dev/robot-esp32 — a stable udev symlink created by
+    services/robot/config/udev/99-robot-ports.rules.  Falls back to
+    /dev/ttyACM0 if the symlink is missing.
+
+    Note: only one of these will exist on a given Pi 5, so you can pass
+    either.  Pass /dev/ttyAMA0 for the legacy GPIO 43/44 UART (NOT
+    recommended on Pi 5 — PL011 DMA bug).
 
     Remember to set up the callbacks BEFORE calling .connect():
 

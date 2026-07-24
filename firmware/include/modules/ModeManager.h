@@ -39,8 +39,9 @@ public:
                        CylinderActuator* cylinder);
 
     /// Trigger unloading sequence (forward to Pi via CMD)
-    void startDock(uint16_t tag_id, uint16_t target_distance_mm) {
-        auto_roam_.startDock(tag_id, target_distance_mm);
+    void startDock(uint16_t tag_id, uint16_t target_distance_mm,
+                   float facing_theta_deg = -999.0f) {
+        auto_roam_.startDock(tag_id, target_distance_mm, facing_theta_deg);
     }
 
     /// Manually trigger the leave-dock reverse phase
@@ -59,6 +60,8 @@ public:
                            Encoder* encoders, PIDController* pids);
 
     [[nodiscard]] SystemMode getMode() const { return watchdog_.getMode(); }
+    [[nodiscard]] uint32_t getLastSerialActivityMs() const { return watchdog_.getLastSerialActivityMs(); }
+    [[nodiscard]] bool hasHeartbeat() const { return watchdog_.hasHeartbeat(); }
     [[nodiscard]] bool isEStopActive() const { return estop_active_; }
     [[nodiscard]] bool isPIDEnabled() const { return pid_enabled_; }
     [[nodiscard]] uint8_t getMaxSpeedPct() const { return max_speed_pct_; }

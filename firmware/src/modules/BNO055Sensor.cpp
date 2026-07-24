@@ -27,7 +27,11 @@ BNO055Sensor::BNO055Sensor()
 }
 
 // ------------------------------------------------------------------
-// Helper: probe a single I2C address — returns true if ACK received
+// Helper: probe a single I2C address — returns true if ACK received.
+// We do a quick "begin then immediate end" trick that doesn't transfer
+// any data bytes — Wire.endTransmission() returns 0 only if a slave
+// ACKed the address.  ESP32-S3 Wire.endTransmission() doesn't expose a
+// timeout, but starting the next probe resets the bus state machine.
 // ------------------------------------------------------------------
 static bool i2c_probe(uint8_t addr)
 {
@@ -91,41 +95,17 @@ bool BNO055Sensor::begin(uint8_t address)
     delay(50);
 
     // ================================================================
-    // 4. Scan I2C bus to find BNO055 (try 0x28 first, then 0x29).
-    //    The address depends on the SDO/ADR pin: LOW = 0x28, HIGH = 0x29.
+    // 4. Verify device at known address (0x28 — SDO/ADR = LOW).
+    //    No scan: address is hardcoded in config.h.  Just probe once;
+    //    if it doesn't ACK, the sensor is absent or unpowered.
     // ================================================================
-    bool found = false;
-    const uint8_t addrs[] = {0x28, 0x29};
+    addr_ = BNO055_I2C_ADDR;  // 0x28 — config.h
 
-    Serial.print("[BNO055] I2C scan: ");
-    for (uint8_t a : addrs) {
-        if (i2c_probe(a)) {
-            Serial.printf("0x%02X FOUND ", a);
-            addr_ = a;
-            found = true;
-            break;
-        } else {
-            Serial.printf("0x%02X -- ", a);
-        }
-    }
-
-    // Also scan all 127 addresses for debugging
-    if (!found) {
-        Serial.println("\n[BNO055] Full I2C scan:");
-        int count = 0;
-        for (uint8_t a = 1; a < 127; a++) {
-            if (i2c_probe(a)) {
-                Serial.printf("  addr 0x%02X ACK\n", a);
-                count++;
-            }
-        }
-        Serial.printf("[BNO055] Found %d device(s) on I2C bus\n", count);
-        if (count == 0) {
-            Serial.println("[BNO055] NO DEVICES — check SDA/SCL wiring + power");
-        }
-        Serial.println("[BNO055] Init FAILED — no BNO055 found");
+    if (!i2c_probe(addr_)) {
+        Serial.printf("[BNO055] No ACK at 0x%02X — sensor absent or unpowered\n", addr_);
         return false;
     }
+    Serial.printf("[BNO055] ACK at 0x%02X\n", addr_);
     Serial.printf("\n[BNO055] Device found at 0x%02X\n", addr_);
 
     // ================================================================
