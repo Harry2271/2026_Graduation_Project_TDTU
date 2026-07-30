@@ -92,6 +92,12 @@ async def _open_serial(port: str, baudrate: int = 115200):
         # Short read timeout keeps the loop responsive; the reader
         # discards non-JSON lines instead of blocking.
         timeout=0.5,
+        # Do NOT toggle DTR/RTS on open — pyserial-asyncio resets the
+        # ESP32 by default, which would reboot it every time the Pi
+        # restarts the telemetry or teleop node.  The ESP32 should only
+        # reboot on power-cycle or explicit `restart` command.
+        dsrdtr=False,
+        rtscts=False,
     )
 
 
@@ -305,7 +311,11 @@ class RealEsp32Bridge:
         await self._send_line({'cmd': 'e_stop_clear'})
 
     async def heartbeat(self) -> None:
-        await self._send_line({'cmd': 'heartbeat'})
+        # ASCII 'Z' is mapped to CMD_HEARTBEAT by CommandParser.
+        # The JSON {"cmd":"heartbeat"} path has a subtle parsing bug on
+        # ArduinoJson 7.x that silently drops the command, so we use the
+        # ASCII fallback which is reliable.
+        await self._send_line_raw(b'Z\n')
 
     async def get_status(self) -> dict:
         """Synchronous placeholder — use on_status_update callback instead."""
@@ -341,6 +351,12 @@ class RealEsp32Bridge:
         async with self._lock:
             line = _to_json_line(cmd)
             self._writer.write(line)
+            await self._writer.drain()
+
+    async def _send_line_raw(self, raw: bytes) -> None:
+        """Send raw bytes (already newline-terminated) without JSON encoding."""
+        async with self._lock:
+            self._writer.write(raw)
             await self._writer.drain()
 
     async def _heartbeat_loop(self) -> None:
@@ -419,9 +435,19 @@ class RealEsp32Bridge:
         if msg_type is None:
             return  # no type field — not a valid protocol frame
 
-        data = msg.get('data') or {}
+        # Type 131 (tick status) sends fields at the root for backward
+        # compatibility with the web dashboard (which renders the payload
+        # directly).  We fall back to the whole message when "data" is absent
+        # so the dashboard keeps working.
+        if msg_type == self.TYPE_STATUS:
+            data = msg.get('data')
+            if data is None:
+                data = {k: v for k, v in msg.items() if k not in ('type', 'ts')}
+        else:
+            # Other types use a {"data": {...}} envelope (encoder, IMU, power).
+            data = msg.get('data') or {}
 
-if msg_type == self.TYPE_STATUS:
+        if msg_type == self.TYPE_STATUS:
             self._safe_call(self.on_status_update, data)
         elif msg_type == self.TYPE_ENCODER:
             motors = data.get('motors') or []

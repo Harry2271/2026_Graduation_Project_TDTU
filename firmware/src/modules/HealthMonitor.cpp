@@ -38,7 +38,7 @@ void HealthMonitor::begin()
 {
     // ModuleId          stale_ms   critical
     const uint32_t stale[MOD_COUNT] = {
-        500,   // MOD_IMU            — 20 Hz nominal, 25 frames
+        2000,  // MOD_IMU            — cached read at 1 Hz via readSensorsSlow()
         200,   // MOD_ENCODERS       — 50 Hz PID, 10 frames
         1000,  // MOD_MOTOR_DRIVER   — detect stall over 1s
         2000,  // MOD_BATTERY        — 1 Hz read, 2 cycles
@@ -109,7 +109,9 @@ void HealthMonitor::reportOk(ModuleId id, uint32_t now_ms)
         m.last_change_ms = now_ms;
         changed_ = true;
     }
-    // If already ONLINE, just update last_ok_ms — no state change.
+    // If already ONLINE, update last_ok_ms and clear any stale error code
+    // so the type-142 report shows err=0.
+    m.err_code = 0;
 }
 
 // =====================================================================

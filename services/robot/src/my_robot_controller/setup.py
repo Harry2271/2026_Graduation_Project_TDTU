@@ -35,6 +35,7 @@ setup(
             'april_tag_node = my_robot_controller.april_tag_node:main',
             'camera_stream = my_robot_controller.camera_stream:main',
             'esp32_telemetry_node = my_robot_controller.esp32_telemetry_node:main',
+            'teleop_node = my_robot_controller.teleop_node:main',
         ],
     },
 )

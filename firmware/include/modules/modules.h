@@ -3,10 +3,10 @@
 // ========================================================================
 #pragma once
 
-// Pi 5 <-> ESP32-S3 link — now USB CDC over Type-C cable (not UART GPIO).
-// PiSerial = Serial = native USB CDC.  On the Pi 5 it appears as
-// /dev/ttyACM0.  Both debug text and JSON protocol go on the same port;
-// the Pi parser filters non-JSON lines.
+// Pi 5 <-> ESP32-S3 link uses hardware UART0 on GPIO43/44 (via CH343 bridge).
+// PiSerial = Serial = UART0 (when USB CDC on boot is disabled).  Both debug
+// text and JSON protocol go on the same port; the Pi parser filters
+// non-JSON lines.
 #ifndef PiSerial
 #define PiSerial Serial
 #endif

@@ -3,17 +3,75 @@
 #include <Arduino.h>
 #include <Wire.h>
 
-extern "C" {
-#include "bno055.h"
+// =====================================================================
+// BNO055Sensor — Direct Wire driver matching BNOExample pattern
+//
+// Uses the same I2C read/write pattern as BNOExample.ino which has been
+// validated to work with this exact CJMCU-055 module.
+//
+// Key differences from generic I2C drivers:
+//   1. Bus speed = 100 kHz (CJMCU-055 clone compatibility)
+//   2. Read pattern: endTransmission() (STOP) then requestFrom()
+//      — NOT endTransmission(false) (repeated START)
+//   3. writeReg: endTransmission() (STOP)
+//   4. readReg: endTransmission() + requestFrom() with retry
+// =====================================================================
 
-// I2C transport — implemented in bno055_wire_support.cpp
-s8 BNO055_I2C_bus_write(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt);
-s8 BNO055_I2C_bus_read(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt);
-void BNO055_delay_msek(u32 msek);
+// BNO055 register addresses (Bosch datasheet page 0)
+#define BNO055_CHIP_ID_ADDR     0x00
+#define BNO055_PAGE_ID_ADDR     0x07
+#define BNO055_EULER_H_LSB      0x1A
+#define BNO055_ACCEL_DATA_X_LSB 0x08
+#define BNO055_GYRO_DATA_X_LSB  0x14
+#define BNO055_TEMP_ADDR        0x34
+#define BNO055_CALIB_STAT_ADDR  0x35
+#define BNO055_OPR_MODE_ADDR    0x3D
+#define BNO055_PWR_MODE_ADDR    0x3E
+#define BNO055_SYS_TRIGGER      0x3F
+
+#define BNO055_CHIP_ID_VALUE    0xA0
+#define BNO055_MODE_CONFIG      0x00
+#define BNO055_MODE_NDOF        0x0C
+#define BNO055_POWER_NORMAL     0x00
+
+// I2C buffer length (matches BNOExample)
+#define I2C_BUFFER_LEN 8
+
+// --- Write one byte (matches BNOExample BNO055_I2C_bus_write) ---
+static bool writeReg(uint8_t addr, uint8_t reg, uint8_t value) {
+    uint8_t array[I2C_BUFFER_LEN];
+    array[0] = reg;
+    array[1] = value;
+    Wire.beginTransmission(addr);
+    Wire.write(array, 2);
+    Wire.endTransmission();           // STOP (not repeated START)
+    return true;
 }
 
-static struct bno055_t gs_bno;
-static bool gs_bno_inited = false;
+// --- Read cnt bytes (matches BNOExample BNO055_I2C_bus_read) ---
+static bool readRegs(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t cnt) {
+    Wire.beginTransmission(addr);
+    Wire.write((uint8_t)reg);
+    Wire.endTransmission();           // STOP (not repeated START)
+    Wire.requestFrom(addr, (byte)cnt);
+
+    for (uint8_t i = 0; i < cnt; i++) {
+        if (Wire.available()) {
+            buf[i] = Wire.read();
+        } else {
+            // Retry: some clones need a second request
+            i--;
+            if (i > cnt + 5) return false;  // max 5 extra retries
+        }
+    }
+    return true;
+}
+
+static uint8_t readReg(uint8_t addr, uint8_t reg) {
+    uint8_t val = 0xFF;
+    readRegs(addr, reg, &val, 1);
+    return val;
+}
 
 BNO055Sensor::BNO055Sensor()
     : heading_deg_(0.0f), heading_error_deg_(0.0f)
@@ -26,191 +84,87 @@ BNO055Sensor::BNO055Sensor()
 {
 }
 
-// ------------------------------------------------------------------
-// Helper: probe a single I2C address — returns true if ACK received.
-// We do a quick "begin then immediate end" trick that doesn't transfer
-// any data bytes — Wire.endTransmission() returns 0 only if a slave
-// ACKed the address.  ESP32-S3 Wire.endTransmission() doesn't expose a
-// timeout, but starting the next probe resets the bus state machine.
-// ------------------------------------------------------------------
-static bool i2c_probe(uint8_t addr)
-{
-    Wire.beginTransmission(addr);
-    return (Wire.endTransmission() == 0);
-}
-
-// ------------------------------------------------------------------
-// Helper: hard-reset the I2C bus (toggles SDA/SCL 9 times)
-// ------------------------------------------------------------------
-static void i2c_bus_reset(uint8_t sda, uint8_t scl)
-{
-    // If any slave holds SDA low, clock it out
-    pinMode(scl, OUTPUT_OPEN_DRAIN);
-    pinMode(sda, OUTPUT_OPEN_DRAIN);
-    for (int i = 0; i < 9; i++) {
-        digitalWrite(scl, HIGH);
-        delayMicroseconds(5);
-        digitalWrite(scl, LOW);
-        delayMicroseconds(5);
-    }
-    // Release SDA high (idle)
-    digitalWrite(sda, HIGH);
-    digitalWrite(scl, HIGH);
-    delay(5);
-}
-
 bool BNO055Sensor::begin(uint8_t address)
 {
     addr_ = address;
-    gs_bno_inited = false;
     operational_ = false;
 
-    // ================================================================
-    // 1. Wait for BNO055 to fully boot after power-on.
-    //    Datasheet: VDD power-up → chip ready takes ~1 s.
-    // ================================================================
-    Serial.println("[BNO055] Waiting for power-up (500 ms)...");
-    delay(500);
+    Serial.println("[BNO055] Init (100 kHz, BNOExample pattern)...");
 
-    // ================================================================
-    // 2. Hard-reset I2C bus in case a previous crashed transfer
-    //    left SDA held low (common after ESP32 reset without BNO055 reset).
-    // ================================================================
-    i2c_bus_reset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    // Bosch datasheet: 650 ms power-on delay before first I2C transaction
+    delay(650);
 
-    // ================================================================
-    // 3. Re-init Wire (ensure SDA/SCL are correctly configured after
-    //    bus reset toggled the pins).
-    // ================================================================
-    // NOTE: Wire.end() doesn't always release a stuck bus on ESP32-S3.
-    // If the bus is held low by a slave, re-begin() may hang.
-    // We restore GPIO to a known idle state first, then re-init.
-    pinMode(BNO055_SDA_PIN, INPUT_PULLUP);
-    pinMode(BNO055_SCL_PIN, INPUT_PULLUP);
-    delay(10);
-    Wire.end();
-    Wire.setPins(BNO055_SDA_PIN, BNO055_SCL_PIN);
-    Wire.begin();
-    Wire.setClock(BNO055_I2C_FREQ_HZ);
-    delay(50);
-
-    // ================================================================
-    // 4. Verify device at known address (0x28 — SDO/ADR = LOW).
-    //    No scan: address is hardcoded in config.h.  Just probe once;
-    //    if it doesn't ACK, the sensor is absent or unpowered.
-    // ================================================================
-    addr_ = BNO055_I2C_ADDR;  // 0x28 — config.h
-
-    if (!i2c_probe(addr_)) {
-        Serial.printf("[BNO055] No ACK at 0x%02X — sensor absent or unpowered\n", addr_);
+    // Probe configured address (must be 0x28 — ADR must be LOW)
+    Wire.beginTransmission(addr_);
+    uint8_t err = Wire.endTransmission();
+    if (err != 0) {
+        Serial.printf("[BNO055] No ACK at 0x%02X (err=%d)\n", addr_, err);
+        // Diagnose: probe the alternate address to detect ADR state
+        uint8_t alt = (addr_ == 0x28) ? 0x29 : 0x28;
+        Wire.beginTransmission(alt);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("[BNO055] Module responds at 0x%02X — ADR pin is HIGH or wiring mismatch!\n", alt);
+            if (alt == 0x29) {
+                Serial.println("[BNO055] ADR must be LOW (0x28) to avoid conflict with VL53L0X");
+                Serial.println("[BNO055] Bridge ADR/COM3 pin to GND on CJMCU-055 module");
+            }
+        }
+        Serial.println("[BNO055] Check: SDA=GPIO10, SCL=GPIO11, GND+GNDIO must both be grounded");
+        Serial.println("[BNO055]        ADR/COM3=GND for 0x28, PS0/PS1=float (I2C mode), RST=3.3V");
+        Serial.println("[BNO055]        External 2.2k-4.7k pull-ups on SDA and SCL to 3.3V recommended");
         return false;
     }
     Serial.printf("[BNO055] ACK at 0x%02X\n", addr_);
-    Serial.printf("\n[BNO055] Device found at 0x%02X\n", addr_);
 
-    // ================================================================
-    // 5. Wait additional time after probe — the BNO055 may still be
-    //    in its internal boot sequence.  Some clones take up to 1.2 s.
-    // ================================================================
-    delay(750);
-
-    // ================================================================
-    // 6. Set up Bosch bno055 driver I2C function pointers
-    // ================================================================
-    gs_bno.bus_write   = BNO055_I2C_bus_write;
-    gs_bno.bus_read    = BNO055_I2C_bus_read;
-    gs_bno.delay_msec  = BNO055_delay_msek;
-    gs_bno.dev_addr    = addr_;
-
-    // ================================================================
-    // 7. Initialise the Bosch driver (reads chip ID, rev IDs, etc.)
-    // ================================================================
-    s8 res = bno055_init(&gs_bno);
-    if (res != BNO055_SUCCESS) {
-        Serial.printf("[BNO055] bno055_init returned %d — retrying...\n", res);
-        delay(500);
-        res = bno055_init(&gs_bno);
-        if (res != BNO055_SUCCESS) {
-            Serial.printf("[BNO055] bno055_init FAILED after retry (%d)\n", res);
+    // Read chip ID
+    uint8_t chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
+    Serial.printf("[BNO055] Chip ID: 0x%02X (expected 0xA0)\n", chipId);
+    if (chipId != BNO055_CHIP_ID_VALUE) {
+        // BNO055 may need extra boot time — wait and retry once
+        delay(1000);
+        chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
+        Serial.printf("[BNO055] Chip ID retry: 0x%02X\n", chipId);
+        if (chipId != BNO055_CHIP_ID_VALUE) {
+            Serial.println("[BNO055] Bad chip ID — not a real BNO055 or still booting?");
             return false;
         }
     }
 
-    // ================================================================
-    // 8. Verify chip ID (must be 0xA0 for BNO055)
-    // ================================================================
-    u8 chip_id = 0;
-    bno055_read_chip_id(&chip_id);
-    Serial.printf("[BNO055] Chip ID: 0x%02X (expected 0xA0)\n", chip_id);
-    if (chip_id != 0xA0) {
-        Serial.printf("[BNO055] Bad chip ID — not a real BNO055?\n");
+    // Enter CONFIG mode (required before changing power/mode)
+    writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_CONFIG);
+    delay(30);
+
+    // Verify we're in CONFIG mode
+    uint8_t mode = readReg(addr_, BNO055_OPR_MODE_ADDR);
+    if (mode != BNO055_MODE_CONFIG) {
+        Serial.printf("[BNO055] CONFIG mode verify failed (mode=0x%02X)\n", mode);
         return false;
     }
+    Serial.println("[BNO055] CONFIG mode OK");
 
-    // ================================================================
-    // 9. Switch to CONFIG mode (required before changing power/clk)
-    //    Must succeed before any further configuration.
-    // ================================================================
-    int config_attempts = 0;
-    while (config_attempts < 5) {
-        bno055_set_operation_mode(BNO055_OPERATION_MODE_CONFIG);
-        delay(30);  // datasheet min 19 ms, we use 30 ms for safety
-
-        // Verify we're in CONFIG mode
-        u8 mode = 0;
-        bno055_get_operation_mode(&mode);
-        if (mode == BNO055_OPERATION_MODE_CONFIG) {
-            Serial.printf("[BNO055] CONFIG mode OK (attempt %d)\n", config_attempts + 1);
-            break;
-        }
-        config_attempts++;
-        Serial.printf("[BNO055] CONFIG mode switch attempt %d failed (mode=0x%02X)\n",
-            config_attempts, mode);
-        delay(100);
-    }
-    if (config_attempts >= 5) {
-        Serial.println("[BNO055] Could not enter CONFIG mode");
-        return false;
-    }
-
-    // ================================================================
-    // 10. Set power mode to NORMAL
-    // ================================================================
-    bno055_set_power_mode(BNO055_POWER_MODE_NORMAL);
+    // Set power mode to NORMAL
+    writeReg(addr_, BNO055_PWR_MODE_ADDR, BNO055_POWER_NORMAL);
     delay(10);
 
-    // ================================================================
-    // 11. Set clock source to external oscillator (bit 7 of SYS_TRIGGER)
-    //     Some boards need this, some don't — try but don't fail.
-    // ================================================================
-    u8 clk = 1;
-    s8 clk_res = bno055_set_clk_src(clk);
-    if (clk_res != BNO055_SUCCESS) {
-        Serial.println("[BNO055] set_clk_src failed — using internal oscillator");
-    }
+    // Page 0
+    writeReg(addr_, BNO055_PAGE_ID_ADDR, 0);
     delay(10);
 
-    // ================================================================
-    // 12. Use degrees, m/s², °/s, Celsius (all zeros in unit sel reg)
-    //     Defaults are already correct — no write needed.
-    // ================================================================
+    // Clear system trigger
+    writeReg(addr_, BNO055_SYS_TRIGGER, 0x00);
+    delay(10);
 
-    // ================================================================
-    // 13. Enter NDOF fusion mode (absolute orientation, all 9 axes)
-    //     This can take up to 600 ms to stabilise.
-    // ================================================================
-    bno055_set_operation_mode(BNO055_OPERATION_MODE_NDOF);
-    delay(700);  // give fusion time to start
+    // Enter NDOF fusion mode (all 9 axes, absolute orientation)
+    writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_NDOF);
+    delay(500);  // fusion needs time to stabilize
 
     // Verify NDOF mode
-    u8 final_mode = 0;
-    bno055_get_operation_mode(&final_mode);
-    if (final_mode != BNO055_OPERATION_MODE_NDOF) {
-        Serial.printf("[BNO055] NDOF mode verify failed (mode=0x%02X)\n", final_mode);
+    mode = readReg(addr_, BNO055_OPR_MODE_ADDR);
+    if (mode != BNO055_MODE_NDOF) {
+        Serial.printf("[BNO055] NDOF verify failed (mode=0x%02X)\n", mode);
         return false;
     }
 
-    gs_bno_inited = true;
     operational_ = true;
     Serial.printf("[BNO055] Ready — NDOF mode, addr 0x%02X\n", addr_);
     return true;
@@ -218,24 +172,27 @@ bool BNO055Sensor::begin(uint8_t address)
 
 bool BNO055Sensor::read()
 {
-    if (!operational_ || !gs_bno_inited) return false;
+    if (!operational_) return false;
+
+    // Mark the read attempt BEFORE I2C transactions.  If the bus is
+    // flaky the I2C may return stale data, but the health monitor
+    // still sees a fresh timestamp so the module stays ONLINE rather
+    // than cycling WARNING→RECOVERING for every slow-timer tick.
     last_read_ms_ = millis();
 
-    // --- Euler angles (degrees) ---
-    double euler_h = 0.0, euler_r = 0.0, euler_p = 0.0;
-    bno055_convert_double_euler_h_deg(&euler_h);
-    bno055_convert_double_euler_r_deg(&euler_r);
-    bno055_convert_double_euler_p_deg(&euler_p);
+    uint8_t buf[6];
 
-    float heading = (float)euler_h;
-    if (heading < 0.0f)  heading += 360.0f;
-    if (heading >= 360.0f) heading -= 360.0f;
-    heading_deg_ = heading;
+    // Euler angles (heading/roll/pitch, 16-bit each in 0.1° units)
+    if (!readRegs(addr_, BNO055_EULER_H_LSB, buf, 6)) return false;
 
-    // --- Heading error: target − current, normalised to ±180° ---
+    int16_t euler_h = (int16_t)((buf[1] << 8) | buf[0]);  // heading
+    heading_deg_ = euler_h / 16.0f;
+    if (heading_deg_ < 0.0f)  heading_deg_ += 360.0f;
+    if (heading_deg_ >= 360.0f) heading_deg_ -= 360.0f;
+
+    // Heading error: target − current, normalised ±180°
     if (has_target_) {
         float err = target_heading_deg_ - heading_deg_;
-        // Normalise to (-180, 180]
         if (err > 180.0f)  err -= 360.0f;
         if (err <= -180.0f) err += 360.0f;
         heading_error_deg_ = err;
@@ -243,33 +200,26 @@ bool BNO055Sensor::read()
         heading_error_deg_ = 0.0f;
     }
 
-    // --- Linear acceleration (m/s²) ---
-    double la_x = 0.0, la_y = 0.0;
-    bno055_convert_double_linear_accel_x_msq(&la_x);
-    bno055_convert_double_linear_accel_y_msq(&la_y);
-    linear_accel_x_ = (float)la_x;
-    linear_accel_y_ = (float)la_y;
+    // Linear acceleration (m/s²)
+    if (readRegs(addr_, BNO055_ACCEL_DATA_X_LSB, buf, 6)) {
+        linear_accel_x_ = (int16_t)((buf[1] << 8) | buf[0]) / 100.0f;
+        linear_accel_y_ = (int16_t)((buf[3] << 8) | buf[2]) / 100.0f;
+    }
 
-    // --- Gyro Z (°/s) ---
-    double gz = 0.0;
-    bno055_convert_double_gyro_z_dps(&gz);
-    gyro_z_dps_ = (float)gz;
+    // Gyro Z (°/s)
+    if (readRegs(addr_, BNO055_GYRO_DATA_X_LSB + 4, buf, 2)) {
+        gyro_z_dps_ = (int16_t)((buf[1] << 8) | buf[0]) / 16.0f;
+    }
 
-    // --- Temperature (°C) ---
-    s8 temp_raw = 0;
-    bno055_read_temp_data(&temp_raw);
-    temperature_ = temp_raw;
+    // Temperature
+    temperature_ = (int8_t)readReg(addr_, BNO055_TEMP_ADDR);
 
-    // --- Calibration ---
-    u8 cs = 0, cg = 0, ca = 0, cm = 0;
-    bno055_get_sys_calib_stat(&cs);
-    bno055_get_gyro_calib_stat(&cg);
-    bno055_get_accel_calib_stat(&ca);
-    bno055_get_mag_calib_stat(&cm);
-    cal_sys_   = cs;
-    cal_gyro_  = cg;
-    cal_accel_ = ca;
-    cal_mag_   = cm;
+    // Calibration status (4 x 2-bit fields)
+    uint8_t cal = readReg(addr_, BNO055_CALIB_STAT_ADDR);
+    cal_sys_   = (cal >> 6) & 0x03;
+    cal_gyro_  = (cal >> 4) & 0x03;
+    cal_accel_ = (cal >> 2) & 0x03;
+    cal_mag_   = cal & 0x03;
 
     return true;
 }

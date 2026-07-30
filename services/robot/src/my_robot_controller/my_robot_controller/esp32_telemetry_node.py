@@ -85,7 +85,7 @@ def _start_executor(node: Node) -> tuple[SingleThreadedExecutor, threading.Threa
 
 async def _run_bridge(node: Esp32TelemetryNode) -> None:
     """Open serial, wire callbacks, hold until ROS is shut down."""
-    port = os.environ.get('ESP32_PORT', '/dev/ttyACM0')
+    port = os.environ.get('ESP32_PORT', '/dev/robot-esp32')
     baud = int(os.environ.get('ESP32_BAUD', '115200'))
     node.get_logger().info(f'opening ESP32 bridge on {port} @ {baud}')
 

@@ -188,7 +188,8 @@ size_t JsonStatus::emitEncoderSnapshot(char* buf, size_t bufsize,
     JsonDocument doc;
     doc["type"] = 130;
     doc["ts"]   = millis();
-    JsonArray arr = doc.createNestedArray("motors");
+    JsonObject data = doc["data"].to<JsonObject>();
+    JsonArray arr = data["motors"].to<JsonArray>();
     for (int i = 0; i < MOTOR_COUNT; i++) {
         JsonObject m = arr.createNestedObject();
         m["id"]   = i;
@@ -232,20 +233,21 @@ size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
     JsonDocument doc;
     doc["type"] = 134;
     doc["ts"]   = millis();
+    JsonObject data = doc["data"].to<JsonObject>();
     if (imu->isOperational()) {
-        doc["heading"] = imu->getHeading();
-        doc["err"]     = imu->getHeadingError();
-        doc["accel_x"] = imu->getLinearAccelX();
-        doc["accel_y"] = imu->getLinearAccelY();
-        doc["gyro_z"]  = imu->getGyroZ();
-        doc["temp_c"]  = imu->getTemperature();
-        JsonObject cal = doc.createNestedObject("cal");
+        data["heading"] = imu->getHeading();
+        data["err"]     = imu->getHeadingError();
+        data["accel_x"] = imu->getLinearAccelX();
+        data["accel_y"] = imu->getLinearAccelY();
+        data["gyro_z"]  = imu->getGyroZ();
+        data["temp_c"]  = imu->getTemperature();
+        JsonObject cal = data["cal"].to<JsonObject>();
         cal["sys"]   = imu->getCalSys();
         cal["gyro"]  = imu->getCalGyro();
         cal["accel"] = imu->getCalAccel();
         cal["mag"]   = imu->getCalMag();
     } else {
-        doc["ok"] = false;
+        data["ok"] = false;
     }
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }
@@ -260,16 +262,17 @@ size_t JsonStatus::emitPower(char* buf, size_t bufsize, INA226Sensor* power)
     JsonDocument doc;
     doc["type"] = 133;
     doc["ts"]   = millis();
+    JsonObject data = doc["data"].to<JsonObject>();
     if (power->isOperational()) {
-        doc["voltage_v"] = power->getBusVoltage();
-        doc["current_a"] = power->getCurrent();
-        doc["power_w"]   = power->getPower();
-        doc["battery_pct"] = power->getBatteryPct();
-        doc["battery_status"]=
+        data["voltage_v"] = power->getBusVoltage();
+        data["current_a"] = power->getCurrent();
+        data["power_w"]   = power->getPower();
+        data["battery_pct"] = power->getBatteryPct();
+        data["battery_status"]=
             power->getBatteryStatus() == 2 ? "critical" :
             power->getBatteryStatus() == 1 ? "low" : "ok";
     } else {
-        doc["ok"] = false;
+        data["ok"] = false;
     }
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }

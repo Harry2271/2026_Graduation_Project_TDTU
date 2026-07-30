@@ -173,7 +173,11 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
         float target_rpm = limited * (MOTOR_NOMINAL_RPM / 255.0f);
 
         if (pid_enabled_) {
-            float actual_rpm = encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir;
+            // Use absolute encoder RPM so PID behaves identically for all
+            // motors regardless of dir.  dir=-1 motors (FR/RR) have reversed
+            // encoder polarity — multiplying by dir creates a large phantom
+            // error that saturates PID.  fabsf normalises both paths.
+            float actual_rpm = fabsf(encoders[i].getFilteredRPM());
             int16_t correction = pids[i].compute(target_rpm, actual_rpm, dt_us);
             int16_t final_pwm = limited + correction;
             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
