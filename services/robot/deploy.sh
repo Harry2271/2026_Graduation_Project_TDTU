@@ -20,6 +20,15 @@ echo "  Monorepo: $MONOREPO_ROOT"
 # --- [BƯỚC 1] Setup Môi trường & Quyền Serial ---
 source "/opt/ros/jazzy/setup.bash"
 
+# RealEsp32Bridge uses pyserial-asyncio for the USB CDC/UART read loop.
+# Install it here as well as in install-pi.sh so existing Pis are repaired
+# by the next deploy without requiring a full one-time setup rerun.
+if ! python3 -c 'import serial_asyncio' 2>/dev/null; then
+    echo "📦 Installing python3-serial-asyncio..."
+    sudo apt-get update
+    sudo apt-get install -y python3-serial-asyncio
+fi
+
 find_lidar_port() {
     for dev in /dev/ttyUSB* /dev/ttyACM*; do
         [ -e "$dev" ] && echo "$dev" && return 0

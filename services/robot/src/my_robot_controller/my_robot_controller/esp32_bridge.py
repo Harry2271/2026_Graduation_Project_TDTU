@@ -468,23 +468,13 @@ class RealEsp32Bridge:
         if msg_type is None:
             return  # no type field — not a valid protocol frame
 
-        # Type 131 (tick status) sends fields at the root for backward
-        # compatibility with the web dashboard (which renders the payload
-        # directly).  We fall back to the whole message when "data" is absent
-        # so the dashboard keeps working.
-        if msg_type == self.TYPE_STATUS:
-            data = msg.get('data')
-            if data is None:
-                data = {k: v for k, v in msg.items() if k not in ('type', 'ts')}
-        else:
-            # Other types use a {"data": {...}} envelope (encoder, IMU, power).
-            data = msg.get('data') or {}
+        data = msg.get('data') or {}
 
         if msg_type == self.TYPE_STATUS:
             self._safe_call(self.on_status_update, data)
         elif msg_type == self.TYPE_ENCODER:
             motors = data.get('motors') or []
-            self._safe_call(self.on_encoder_update, motors)
+            self.on_encoder_update(motors)
         elif msg_type == self.TYPE_ERROR:
             self._safe_call(self.on_error, str(data.get('error', 'unknown')))
         elif msg_type == self.TYPE_MOVE_ACK:

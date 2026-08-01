@@ -78,7 +78,8 @@ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME
         python3-venv \
         ros-jazzy-navigation2 \
         ros-jazzy-nav2-navfn-planner \
-        ros-jazzy-nav2-simple-commander
+        ros-jazzy-nav2-simple-commander \
+        python3-serial-asyncio
 
     if ! grep -q "jazzy/setup.bash" /root/.bashrc; then
         echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc

@@ -114,7 +114,7 @@ mkdir -p /home/pi/.pm2/logs
 
 pm2 stop    "$SERVICE_NAME" 2>/dev/null || true
 pm2 delete  "$SERVICE_NAME" 2>/dev/null || true
-pm2 start   ecosystem.json --env production
+pm2 start   ecosystem.json --env production --cwd "$APP_DIR"
 pm2 save
 
 # Give NestJS a moment to bind the port, then check the process is alive.

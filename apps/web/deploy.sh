@@ -110,7 +110,6 @@ else
     # Fallback: run the standalone server directly.
     PORT="${PORT:-3000}" pm2 start "$APP_DIR/.next/standalone/apps/web/server.js" --name "$SERVICE_NAME"
 fi
-
 pm2 save
 
 # Give Next.js a moment to bind the port, then hit the health endpoint. A

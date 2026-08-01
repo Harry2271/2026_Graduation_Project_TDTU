@@ -403,7 +403,38 @@ function StateChip({
   );
 }
 
-// ── Empty state + tabs ─────────────────────────────────────────────────────
+// ── Section layout ─────────────────────────────────────────────────────────
+
+function SectionHeader({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2 border-b"
+      style={{
+        borderColor: 'var(--border-dim)',
+        background: 'rgba(0,212,255,0.05)',
+      }}
+    >
+      <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>{icon}</span>
+      <span
+        className="text-[10px] font-bold tracking-widest"
+        style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function SectionShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ border: '1px solid var(--border-dim)', background: 'rgba(8,11,16,0.55)' }}
+    >
+      {children}
+    </div>
+  );
+}
 
 function EmptyState({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
@@ -419,16 +450,7 @@ function EmptyState({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-type TabKey = 'status' | 'motors' | 'sensors';
-
-const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: 'status', label: 'STATUS', icon: <Activity size={11} /> },
-  { key: 'motors', label: 'MOTORS', icon: <Power size={11} /> },
-  { key: 'sensors', label: 'SENSORS', icon: <Radar size={11} /> },
-];
-
 export function TelemetryPanel() {
-  const [tab, setTab] = useState<TabKey>('status');
   return (
     <div
       className="flex flex-col h-full w-full"
@@ -439,42 +461,21 @@ export function TelemetryPanel() {
       }}
     >
       <PanelHeader />
-      <div
-        className="flex items-center gap-1 px-2 py-1.5 border-b"
-        style={{ borderColor: 'var(--border-dim)', background: 'rgba(8,11,16,0.6)' }}
-      >
-        {TABS.map((t) => {
-          const active = t.key === tab;
-          return (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md transition-all cursor-pointer flex-1 justify-center"
-              style={
-                active
-                  ? {
-                      background: 'rgba(0,212,255,0.15)',
-                      color: 'var(--accent)',
-                      border: '1px solid rgba(0,212,255,0.3)',
-                      boxShadow: '0 0 10px rgba(0,212,255,0.1)',
-                    }
-                  : {
-                      background: 'transparent',
-                      color: 'var(--text-muted)',
-                      border: '1px solid var(--border-dim)',
-                    }
-              }
-            >
-              {t.icon}
-              <span className="text-[9px] font-bold tracking-widest">{t.label}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
-        {tab === 'status' && <StatusTab />}
-        {tab === 'motors' && <MotorsTab />}
-        {tab === 'sensors' && <SensorsTab />}
+      <div className="flex-1 min-h-0 overflow-y-auto p-2" style={{ scrollbarWidth: 'thin' }}>
+        <div className="flex flex-col gap-3">
+          <SectionShell>
+            <SectionHeader icon={<Activity size={12} />} label="STATUS" />
+            <StatusTab />
+          </SectionShell>
+          <SectionShell>
+            <SectionHeader icon={<Power size={12} />} label="MOTORS" />
+            <MotorsTab />
+          </SectionShell>
+          <SectionShell>
+            <SectionHeader icon={<Radar size={12} />} label="SENSORS" />
+            <SensorsTab />
+          </SectionShell>
+        </div>
       </div>
       <div
         className="px-3 py-1.5 flex items-center gap-1.5 border-t"
