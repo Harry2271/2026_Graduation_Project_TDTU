@@ -37,7 +37,7 @@ enum ModuleState : uint8_t {
     ST_ONLINE,      // Operating normally
     ST_WARNING,     // Not updated within STALE_MS — may be transient
     ST_RECOVERING,  // Reinit attempt in progress
-    ST_FAILED,      // Reinit failed 3x — module disabled
+    ST_FAILED,      // Recovery failed — retry is still scheduled
     ST_OFFLINE      // Not present at boot (sensor absent)
 };
 
@@ -63,6 +63,10 @@ static const uint8_t HEALTH_MAX_RETRIES = 3;
 
 /// Recovery retry interval (ms).
 static const uint32_t HEALTH_RETRY_INTERVAL_MS = 500;
+
+/// Retry a module after it has reached FAILED. This prevents a transient
+/// I2C/power glitch from disabling the IMU until the next reboot.
+static const uint32_t HEALTH_FAILED_RETRY_INTERVAL_MS = 30000;
 
 class HealthMonitor {
 public:

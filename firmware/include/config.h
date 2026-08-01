@@ -119,6 +119,10 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 // Acceleration ramp: max PWM change per 20ms PID tick
 #define ACCEL_RAMP_RATE   50
 
+// Kick-start boost for gearbox static friction
+#define KICK_BOOST_PWM    255
+#define KICK_BOOST_TICKS  15
+
 // ============================================================
 // UART Communication
 // ============================================================

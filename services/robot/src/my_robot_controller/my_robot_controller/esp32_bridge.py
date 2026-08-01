@@ -164,6 +164,15 @@ class FakeEsp32Bridge:
     async def heartbeat(self) -> None:
         await self._send({'cmd': 'heartbeat'})
 
+    async def cylinder_extend(self) -> None:
+        await self._send({'cmd': 'cylinder_extend'})
+
+    async def cylinder_retract(self) -> None:
+        await self._send({'cmd': 'cylinder_retract'})
+
+    async def cylinder_stop(self) -> None:
+        await self._send({'cmd': 'cylinder_stop'})
+
     async def get_status(self) -> dict:
         return {'uptime_ms': 0, 'mode': 'NAV', 'e_stop': False}
 
@@ -316,6 +325,30 @@ class RealEsp32Bridge:
         # ArduinoJson 7.x that silently drops the command, so we use the
         # ASCII fallback which is reliable.
         await self._send_line_raw(b'Z\n')
+
+    async def cylinder_extend(self) -> None:
+        """Send extend command to the L298N-driven cylinder (lift dump body)."""
+        await self._send_line({'cmd': 'cylinder_extend'})
+
+    async def cylinder_retract(self) -> None:
+        """Send retract command to lower the dump body."""
+        await self._send_line({'cmd': 'cylinder_retract'})
+
+    async def cylinder_stop(self) -> None:
+        """Send stop command to the cylinder actuator."""
+        await self._send_line({'cmd': 'cylinder_stop'})
+
+    async def cylinder_extend(self) -> None:
+        """Send extend command to the L298N-driven cylinder (lift dump body)."""
+        await self._send_line({'cmd': 'cylinder_extend'})
+
+    async def cylinder_retract(self) -> None:
+        """Send retract command to lower the dump body."""
+        await self._send_line({'cmd': 'cylinder_retract'})
+
+    async def cylinder_stop(self) -> None:
+        """Send stop command to the cylinder actuator."""
+        await self._send_line({'cmd': 'cylinder_stop'})
 
     async def get_status(self) -> dict:
         """Synchronous placeholder — use on_status_update callback instead."""

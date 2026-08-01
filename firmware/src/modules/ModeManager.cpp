@@ -16,6 +16,7 @@ ModeManager::ModeManager()
     for (int i = 0; i < 4; i++) {
         ramped_speeds_[i] = 0;
         mecanum_targets_[i] = 0;
+        kick_ticks_[i]     = 0;
     }
 }
 
@@ -85,14 +86,14 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
 
         case CMD_STOP:
             nav_vx_ = 0; nav_vy_ = 0; nav_omega_ = 0;
-            for (int i = 0; i < 4; i++) ramped_speeds_[i] = 0;
+            for (int i = 0; i < 4; i++) { ramped_speeds_[i] = 0; kick_ticks_[i] = 0; }
             break;
 
         case CMD_E_STOP:
             estop_active_ = true;
             pid_enabled_ = false;
             nav_vx_ = nav_vy_ = nav_omega_ = 0;
-            for (int i = 0; i < 4; i++) ramped_speeds_[i] = 0;
+            for (int i = 0; i < 4; i++) { ramped_speeds_[i] = 0; kick_ticks_[i] = 0; }
             Serial.println("[ModeManager] E-STOP activated");
             break;
 
@@ -167,10 +168,24 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
         ramped_speeds_[i] = MecanumDrive::ramp(
             target_speeds[i], ramped_speeds_[i], ACCEL_RAMP_RATE);
 
+        // Start from a full stop with a short boost to overcome gearbox
+        // static friction.  This path is used by AUTO_ROAM and NAV; the
+        // manual applySpeeds() path has the same behavior in main.cpp.
+        if (ramped_speeds_[i] == 0 && target_speeds[i] != 0 && kick_ticks_[i] == 0) {
+            kick_ticks_[i] = KICK_BOOST_TICKS;
+        }
+
         float scale = max_speed_pct_ / 100.0f;
         int16_t limited = (int16_t)(ramped_speeds_[i] * scale);
 
-        float target_rpm = limited * (MOTOR_NOMINAL_RPM / 255.0f);
+        if (kick_ticks_[i] > 0) {
+            int16_t boost = (limited > 0) ? KICK_BOOST_PWM : -KICK_BOOST_PWM;
+            limited += boost;
+            limited = constrain(limited, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
+            kick_ticks_[i]--;
+        }
+
+        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_MAX_DUTY);
 
         if (pid_enabled_) {
             // Use absolute encoder RPM so PID behaves identically for all

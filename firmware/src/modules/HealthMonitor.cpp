@@ -268,7 +268,18 @@ void HealthMonitor::tick(uint32_t now_ms)
                 break;
 
             case ST_FAILED:
-                // Check if device came back (reportOk will handle transition)
+                // FAILED is not permanent. A transient I2C/power glitch can
+                // recover later, so periodically return to RECOVERING and let
+                // the main loop perform a real module reinitialization.
+                if ((now_ms - m.last_change_ms) >= HEALTH_FAILED_RETRY_INTERVAL_MS) {
+                    Serial.printf("[HEALTH] %s FAILED -> RECOVERING (scheduled retry)\n",
+                                  m.name);
+                    m.prev_state = m.state;
+                    m.state = ST_RECOVERING;
+                    m.retry_count = 0;
+                    m.last_change_ms = now_ms;
+                    changed_ = true;
+                }
                 break;
 
             case ST_OFFLINE:

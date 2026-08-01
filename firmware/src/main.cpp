@@ -362,7 +362,7 @@ void applySpeeds()
             g_kick_ticks[i]--;
         }
 
-        float target_rpm = limited * (MOTOR_NOMINAL_RPM / 255.0f);
+        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_MAX_DUTY);
 
         if (g_pid_enabled) {
             // Use absolute encoder RPM so PID behaves identically for all
@@ -1185,13 +1185,19 @@ void loop()
     // If any I2C module is RECOVERING and retry interval elapsed,
     // call begin() again.  Failures bump retry_count toward FAILED.
     if (g_health.recoveryDue(MOD_IMU, now)) {
-        Serial.println("[HEALTH] IMU recovery attempt...");
+        Serial.println("[HEALTH] IMU recovery attempt — bus reset then reinit...");
+        I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+        Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
+        Wire.setClock(BNO055_I2C_FREQ_HZ);
         bool ok = g_imu.begin(BNO055_I2C_ADDR);
         if (ok) g_health.reportOk(MOD_IMU, now);
         else    g_health.reportRecoveryFailure(MOD_IMU, 1, now);
     }
     if (g_health.recoveryDue(MOD_TOF, now)) {
-        Serial.println("[HEALTH] TOF recovery attempt...");
+        Serial.println("[HEALTH] TOF recovery attempt — bus reset then reinit...");
+        I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+        Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
+        Wire.setClock(BNO055_I2C_FREQ_HZ);
         bool ok = g_tof.begin();
         if (ok) g_health.reportOk(MOD_TOF, now);
         else    g_health.reportRecoveryFailure(MOD_TOF, 2, now);

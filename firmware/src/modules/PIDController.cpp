@@ -4,15 +4,16 @@
 PIDController::PIDController(const char* name)
     : name_(name)
     , kp_(DEFAULT_KP), ki_(DEFAULT_KI), kd_(DEFAULT_KD)
-    , integral_(0.0f), prev_error_(0.0f), target_rpm_(0.0f), last_update_us_(0)
+    , integral_(0.0f), prev_error_(0.0f), target_rpm_(0.0f)
+    , first_run_(true)
 {
 }
 
 void PIDController::reset()
 {
-    integral_       = 0.0f;
-    prev_error_     = 0.0f;
-    last_update_us_ = 0;
+    integral_   = 0.0f;
+    prev_error_ = 0.0f;
+    first_run_  = true;
 }
 
 void PIDController::setGains(float kp, float ki, float kd)
@@ -40,13 +41,15 @@ int16_t PIDController::compute(float target_rpm, float actual_rpm, uint32_t dt_u
     float i_term = ki_ * integral_;
 
     float d_term = 0.0f;
-    if (last_update_us_ > 0) {
+    if (first_run_) {
+        // Skip D-term on first call (no previous error to diff against).
+        first_run_ = false;
+    } else {
         float de = error - prev_error_;
         d_term = kd_ * (de / dt_s);
     }
 
-    prev_error_      = error;
-    last_update_us_ = dt_us;
+    prev_error_ = error;
 
     float output = p_term + i_term + d_term;
 

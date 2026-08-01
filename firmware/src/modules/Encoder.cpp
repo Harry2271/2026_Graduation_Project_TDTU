@@ -2,6 +2,7 @@
 #include "config.h"
 #include <driver/pcnt.h>
 #include <driver/gpio.h>
+#include <math.h>
 
 Encoder::Encoder(pcnt_unit_t unit, uint8_t cha_pin, uint8_t chb_pin, const char* name)
     : unit_(unit), cha_pin_(cha_pin), chb_pin_(chb_pin), name_(name)
@@ -57,7 +58,11 @@ void Encoder::pause()
 
 void Encoder::resume()
 {
+    pcnt_counter_pause(unit_);
     pcnt_counter_clear(unit_);
+    last_count_ = 0;
+    cumulative_count_ = 0;
+    last_filtered_rpm_ = 0.0f;
     pcnt_counter_resume(unit_);
 }
 
@@ -93,7 +98,10 @@ float Encoder::calculateRPM(uint32_t dt_ms)
 
     cumulative_count_ += delta;
 
-    if (dt_ms == 0) return 0.0f;
+    if (dt_ms == 0) {
+        last_filtered_rpm_ = 0.0f;
+        return 0.0f;
+    }
 
     // counts/rev on OUTPUT SHAFT = encoder CPR × gear ratio
     // JGB37-520: 11 PPR × 2 (x2 decode) × 30 (gearbox) = 660 counts/output rev
@@ -106,6 +114,7 @@ float Encoder::calculateRPM(uint32_t dt_ms)
 
     const float alpha = 0.3f;
     rpm = last_filtered_rpm_ * (1.0f - alpha) + rpm * alpha;
+    if (fabsf(rpm) < 0.1f) rpm = 0.0f;   // floor: kill denormals / noise floor
     last_filtered_rpm_ = rpm;
 
     return rpm;

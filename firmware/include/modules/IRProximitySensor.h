@@ -13,7 +13,8 @@ enum class IRPosition : uint8_t {
 
 struct IRReading {
     bool detected;
-    uint32_t changed_ms;
+    uint32_t changed_ms;   // last state-transition timestamp
+    uint32_t level_ms;     // when the current level (LOW or HIGH) was first seen
 };
 
 class IRProximitySensor {

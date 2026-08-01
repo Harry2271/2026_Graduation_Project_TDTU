@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Package, Map as MapIcon, Camera, Layers, Activity } from 'lucide-react';
+import { Package, Map as MapIcon, Camera, Layers, Activity, Box } from 'lucide-react';
 
 const menuItems = [
   { name: 'Kho hàng',          path: '/inventory', icon: Package  },
   { name: 'Quản lý kiện hàng', path: '/products',  icon: Layers   },
   { name: 'Bản đồ',            path: '/map',       icon: MapIcon  },
+  { name: 'Quỹ đạo 3D',        path: '/trajectory', icon: Box     },
   { name: 'Camera',             path: '/camera',     icon: Camera   },
 ];
 
