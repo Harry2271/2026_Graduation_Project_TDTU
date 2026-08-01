@@ -55,6 +55,9 @@ enum CommandType {
     CMD_BEGIN_LEAVE_DOCK,    // JSON: begin_leave_dock
     CMD_CANCEL_DOCK,         // JSON: cancel_dock
     CMD_GET_UNLOAD_STATE,    // JSON: get_unload_state (response type 140)
+
+    // System commands
+    CMD_RESTART,             // JSON: restart — soft reboot via ESP.restart()
 };
 
 struct Command {
@@ -66,12 +69,15 @@ struct Command {
     int16_t move_vx;
     int16_t move_vy;
     int16_t move_omega;
+    uint16_t move_seq;        // sequence number from Pi
+    bool has_move_seq;        // true only when JSON included seq
 
     int16_t motor_speeds[4];
 
     // Docking command parameters (populated by begin_dock)
     uint16_t tag_id;
     uint16_t target_distance_mm;
+    float facing_theta_deg;   // target heading for heading gate
 };
 
 class CommandParser {

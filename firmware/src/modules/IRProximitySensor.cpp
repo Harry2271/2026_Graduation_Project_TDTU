@@ -9,12 +9,23 @@ const uint8_t IRProximitySensor::PINS_[] = {
     IR_RIGHT_PIN,       // RIGHT
 };
 
+// After this many ms with the same digital reading, trust that the pin is
+// healthy.  Used to recover from a false "sensor absent" verdict on the
+// ESP32-S3 strapping pins (GPIO 45/46) which float LOW briefly during boot.
+static const uint32_t IR_TRUST_SETTLE_MS = 2000;
+
+// How long a pin must stay stuck LOW (or HIGH) with no transitions before we
+// decide the sensor is genuinely absent.  5 s is long enough to rule out a
+// persistent object in front of the sensor.
+static const uint32_t IR_ABSENT_TRIGGER_MS = 5000;
+
 IRProximitySensor::IRProximitySensor() : prev_any_(false)
 {
     for (int i = 0; i < 4; i++) {
         readings_[i].detected   = false;
         readings_[i].changed_ms = 0;
-        sensor_present_[i]      = true;  // optimistic until begin() probes each pin
+        readings_[i].level_ms   = 0;
+        sensor_present_[i]      = true;  // optimistic — runtime decides
     }
 }
 
@@ -24,13 +35,18 @@ void IRProximitySensor::begin()
         pinMode(PINS_[i], INPUT_PULLUP);
         readings_[i].detected   = false;
         readings_[i].changed_ms = 0;
+        readings_[i].level_ms   = millis();
     }
     Serial.printf("  [OK]   IR Proximity: %d sensors (pins %d,%d,%d,%d)\n",
         IR_SENSOR_COUNT,
         IR_REAR_LEFT_PIN, IR_REAR_RIGHT_PIN,
         IR_LEFT_PIN, IR_RIGHT_PIN);
 
-    // Read raw GPIO states at boot for wiring verification
+    // Read raw GPIO states at boot for wiring verification only.
+    // Do NOT mark a sensor as absent here — GPIO 45/46 are ESP32-S3 strapping
+    // pins that float LOW during the brief boot window, even when the E18-D80NK
+    // is correctly wired.  Absent detection happens in update() below after the
+    // strapping pin state has settled.
     Serial.printf("  [INFO] IR GPIO states at boot: ");
     for (int i = 0; i < 4; i++) {
         int raw = digitalRead(PINS_[i]);
@@ -38,19 +54,6 @@ void IRProximitySensor::begin()
         Serial.printf("%s=%d ", names[i], raw);
     }
     Serial.println("(LOW=detected, HIGH=clear)");
-
-    // Mark strapping pins (GPIO 45/46) as unavailable if they're floating LOW
-    // at boot — common when the E18-D80NK is not yet wired. Without this guard
-    // the sensor reads as "detected" forever and latches obstacle_active_.
-    for (int i = 0; i < 4; i++) {
-        if (digitalRead(PINS_[i]) == LOW) {
-            sensor_present_[i] = false;
-            Serial.printf("  [WARN] IR[%d] (GPIO %d) reads LOW at boot — sensor absent?\n",
-                i, PINS_[i]);
-        } else {
-            sensor_present_[i] = true;
-        }
-    }
 }
 
 bool IRProximitySensor::update(uint32_t now_ms)
@@ -58,10 +61,6 @@ bool IRProximitySensor::update(uint32_t now_ms)
     bool changed = false;
 
     for (int i = 0; i < 4; i++) {
-        // Skip pins that were detected absent at boot (floating LOW on
-        // strapping pins or unconnected). Prevents latched false obstacles.
-        if (!sensor_present_[i]) continue;
-
         // E18-D80NK: LOW = obstacle detected, HIGH = clear
         bool raw = (digitalRead(PINS_[i]) == LOW);
 
@@ -69,10 +68,21 @@ bool IRProximitySensor::update(uint32_t now_ms)
             if (now_ms - readings_[i].changed_ms >= IR_DEBOUNCE_MS) {
                 readings_[i].detected   = raw;
                 readings_[i].changed_ms = now_ms;
+                readings_[i].level_ms   = now_ms;
                 changed = true;
             }
         } else {
             readings_[i].changed_ms = now_ms;
+            // Track how long this pin has held its current digital level.
+            // A real sensor on a moving robot sees many transitions per second.
+            // An absent or stuck sensor holds one level indefinitely.
+            if (now_ms - readings_[i].level_ms >= IR_ABSENT_TRIGGER_MS) {
+                if (sensor_present_[i]) {
+                    sensor_present_[i] = false;
+                    Serial.printf("  [WARN] IR[%d] (GPIO %d) stuck for %lu ms — marking absent\n",
+                                  i, PINS_[i], (unsigned long)(now_ms - readings_[i].level_ms));
+                }
+            }
         }
     }
 

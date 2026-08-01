@@ -21,5 +21,5 @@ private:
     float integral_;
     float prev_error_;
     float target_rpm_;
-    uint32_t last_update_us_;
+    bool   first_run_;   // true until first compute() so we can skip the D-term
 };

@@ -258,6 +258,8 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
         out.move_vx     = doc["vx"]     | 0;
         out.move_vy     = doc["vy"]     | 0;
         out.move_omega  = doc["omega"]  | 0;
+        out.has_move_seq = doc.containsKey("seq");
+        out.move_seq    = doc["seq"]    | 0;
         out.move_vx     = clampVal(out.move_vx,   -255, 255);
         out.move_vy     = clampVal(out.move_vy,   -255, 255);
         out.move_omega = clampVal(out.move_omega, -255, 255);
@@ -336,6 +338,7 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
         out.type               = CMD_BEGIN_DOCK;
         out.tag_id             = doc["tag_id"]             | 0;
         out.target_distance_mm = doc["target_distance_mm"] | VL53L0X_UNLOAD_DISTANCE_MM;
+        out.facing_theta_deg   = doc["facing_theta"]       | -999.0f;
     }
     else if (strcmp(cmd, "begin_leave_dock") == 0) {
         out.type = CMD_BEGIN_LEAVE_DOCK;
@@ -345,6 +348,9 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     }
     else if (strcmp(cmd, "get_unload_state") == 0) {
         out.type = CMD_GET_UNLOAD_STATE;
+    }
+    else if (strcmp(cmd, "restart") == 0) {
+        out.type = CMD_RESTART;
     }
 
     return out.type;

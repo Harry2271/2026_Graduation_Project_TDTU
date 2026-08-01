@@ -16,24 +16,26 @@
 
 // 5V-supply transfer function (cm) for 10-bit ADC values 0..1023.
 // Indexing: raw12bit / 16 = index 0..255
-static const uint8_t LUT_5V[256] PROGMEM = {
-    255,127, 93, 77, 67, 60, 54, 50, 47, 44, 42, 40, 38, 36, 35, 34,
-     32, 31, 30, 30, 29, 28, 27, 27, 26, 26, 25, 25, 24, 22, 20, 19,
-     19, 18, 18, 17, 17, 17, 16, 16, 16, 15, 15, 15, 14, 14, 14, 13,
-     13, 13, 13, 13, 12, 12, 12, 12, 12, 11, 11, 11, 11, 11, 11, 10,
-     10, 10, 10, 10, 10, 10, 10,  9,  9,  9,  9,  9,  9,  9,  9,  9,
-      8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  7,  7,  7,
-      7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  6,  6,  6,
-      6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,
-      6,  6,  6,  6,  6,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5,
-      5,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-};
+// ── Sharp GP2Y0A21YK0F transfer function (5V supply, 10-bit ADC) ──
+//
+// Voltage characteristic (from datasheet, Vcc = 5.0V):
+//   V_out = 1/(d - 0.42) * 118.76   (d in cm, V_out in volts)
+//
+// Inverting:  d = 118.76 / V_out + 0.42
+//
+// ESP32-S3 ADC: 12-bit (0..4095), full-scale 3.3V.
+//   voltage = raw * 3.3 / 4095
+//
+// This replaces the old 256-byte LUT which was calibrated for 10-bit ADC
+// and did not work correctly with the ESP32-S3's 12-bit ADC.
+// ─────────────────────────────────────────────────────────────────────────────
+static const float SHARP_VCC        = 5.0f;   // sensor supply voltage
+static const float SHARP_K          = 118.76f; // empirical constant (5V supply)
+static const float SHARP_OFFSET     = 0.42f;  // offset correction
+static const float ADC_VREF         = 3.3f;   // ESP32-S3 ADC reference
+static const float ADC_MAX          = 4095.0f; // 12-bit
+static const float SHARP_CM_MAX     = 80.0f;  // datasheet max reliable range
+static const float SHARP_CM_MIN     = 10.0f;  // datasheet min reliable range
 
 // ---------------------------------------------------------------------------
 SharpFrontSensor::SharpFrontSensor()
@@ -59,17 +61,19 @@ void SharpFrontSensor::begin()
         delayMicroseconds(500);
     }
     int avg_raw = sum / 8;
-    int boot_cm = (avg_raw / 16 < 256) ? pgm_read_byte(&LUT_5V[avg_raw / 16]) : 0;
+    float boot_v = avg_raw * ADC_VREF / ADC_MAX;
+    float boot_cm = (boot_v > 0.05f) ? (SHARP_K / boot_v + SHARP_OFFSET) : 200.0f;
 
-    if (boot_cm == 0 || boot_cm >= 80) {
-        // Could be no sensor (floating = high ADC) or object very far / absent
-        sensor_present_ = true;   // assume present (can't tell from floating pin)
-        Serial.printf("  [Sharp] GPIO %u init (raw=%d, ~%dcm)\n",
-            SHARP_FRONT_PIN, avg_raw, boot_cm);
+    // ADC very low means far or no sensor; very high means saturated (close)
+    if (avg_raw < 50 || boot_cm >= SHARP_CM_MAX) {
+        // Very low voltage = no return / far / no sensor
+        sensor_present_ = true;
+        Serial.printf("  [Sharp] GPIO %u init (raw=%d, %.1fV, ~%dcm)\n",
+            SHARP_FRONT_PIN, avg_raw, boot_v, (int)boot_cm);
     } else {
         sensor_present_ = true;
-        Serial.printf("  [Sharp] GPIO %u init OK (raw=%d, %dcm)\n",
-            SHARP_FRONT_PIN, avg_raw, boot_cm);
+        Serial.printf("  [Sharp] GPIO %u init OK (raw=%d, %.1fV, ~%dcm)\n",
+            SHARP_FRONT_PIN, avg_raw, boot_v, (int)boot_cm);
     }
 }
 
@@ -83,26 +87,34 @@ bool SharpFrontSensor::update(uint32_t now_ms)
 
     prev_distance_cm_ = distance_cm_;
 
-    // Oversample for noise reduction
-    long sum = 0;
+    // Oversample for noise reduction, then convert raw → voltage → cm
+    float sum_v = 0.0f;
+    int valid_samples = 0;
     for (int i = 0; i < num_samples_; i++) {
         int raw = analogRead(SHARP_FRONT_PIN);
-        // ESP32-S3 12-bit (0..4095) → LUT index 0..255
-        int idx = raw / 16;
-        if (idx > 255) idx = 255;
-        sum += pgm_read_byte(&LUT_5V[idx]);
+        // Discard saturated readings (object too close or sensor absent)
+        if (raw < 4090) {
+            sum_v += raw * ADC_VREF / ADC_MAX;
+            valid_samples++;
+        }
         delayMicroseconds(200);
     }
-    int cm = (int)(sum / num_samples_);
 
-    // LUT returns 0 for very low ADC (no return / out of range) and
-    // 255 for saturated (very close).  Map both to safe bounds.
-    if (cm == 0) {
-        distance_cm_ = 80.0f;   // out of range = max distance
-    } else if (cm >= 255) {
-        distance_cm_ = 5.0f;    // saturated = very close
+    if (valid_samples == 0) {
+        // All samples saturated → treat as "very close" (hard-stop)
+        distance_cm_ = SHARP_CM_MIN;
     } else {
-        distance_cm_ = (float)cm;
+        float avg_v = sum_v / valid_samples;
+        if (avg_v < 0.05f) {
+            // Very low voltage = no return, out of range → max distance
+            distance_cm_ = SHARP_CM_MAX;
+        } else {
+            float d = SHARP_K / avg_v + SHARP_OFFSET;
+            // Clamp to sensor's reliable range
+            if (d < SHARP_CM_MIN) d = SHARP_CM_MIN;
+            if (d > SHARP_CM_MAX) d = SHARP_CM_MAX;
+            distance_cm_ = d;
+        }
     }
 
     // Only report change if > 1 cm delta

@@ -80,11 +80,13 @@ void AutoRoam::reset()
 // Docking / unloading API
 // =====================================================================
 
-void AutoRoam::startDock(uint16_t tag_id, uint16_t target_distance_mm)
+void AutoRoam::startDock(uint16_t tag_id, uint16_t target_distance_mm,
+                         float facing_theta_deg)
 {
     if (unload_state_ != UNLOAD_IDLE) return;
 
-    Serial.printf("[UNLOAD] startDock tag_id=%u target_mm=%u\n", tag_id, target_distance_mm);
+    Serial.printf("[UNLOAD] startDock tag_id=%u target_mm=%u facing=%.1f\n",
+                  tag_id, target_distance_mm, facing_theta_deg);
     dock_tag_id_      = tag_id;
     dock_target_mm_   = target_distance_mm;
     heading_err_deg_  = 0.0f;
@@ -92,6 +94,14 @@ void AutoRoam::startDock(uint16_t tag_id, uint16_t target_distance_mm)
     unload_state_     = UNLOAD_ADJUSTING;
     unload_start_ms_  = millis();
     adjust_start_ms_  = millis();
+
+    // If a facing_theta was provided (valid range 0-360), use it as the
+    // heading gate target instead of the captured hold_heading_.
+    if (facing_theta_deg >= 0.0f && facing_theta_deg < 360.0f) {
+        hold_heading_ = facing_theta_deg;
+        has_heading_  = true;
+        Serial.printf("[UNLOAD] heading gate: target=%.1f (from cmd)\n", facing_theta_deg);
+    }
 }
 
 void AutoRoam::startLeaveDock()

@@ -65,7 +65,11 @@ public:
     // ---- Docking / unloading API (Pi brain → ESP32 actuator) ----
 
     /// Start the full docking+unloading sequence (triggered by Pi via CMD_BEGIN_DOCK).
-    void startDock(uint16_t tag_id, uint16_t target_distance_mm);
+    /// @param facing_theta_deg target heading for the heading gate. Pass
+    ///        -999.0f (or any value outside [0,360)) to use captured heading
+    ///        (legacy behavior).
+    void startDock(uint16_t tag_id, uint16_t target_distance_mm,
+                   float facing_theta_deg = -999.0f);
 
     /// Manually trigger the leave-dock reverse phase.
     void startLeaveDock();

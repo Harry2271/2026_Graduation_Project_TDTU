@@ -95,9 +95,9 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define PWM_RESOLUTION   10        // 10-bit: 0-1023
 #define PWM_MAX_DUTY     1023
 
-// 12V motors on 21V supply — limit to ~12V average
-// 21V * (584/1023) ≈ 12V
-#define MOTOR_MAX_DUTY   584
+// 21V supply — limit to ~10.5V average for 12V motor safety
+// 21V * (511/1023) ≈ 10.5V
+#define MOTOR_MAX_DUTY   511
 
 // ============================================================
 // PID Control Parameters
@@ -108,8 +108,8 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define PID_OUTPUT_LIMIT    (float)MOTOR_MAX_DUTY
 
 #define DEFAULT_KP  2.5f
-#define DEFAULT_KI  0.8f
-#define DEFAULT_KD  0.15f
+#define DEFAULT_KI  0.2f
+#define DEFAULT_KD  0.05f
 
 // ============================================================
 // Mecanum Kinematics
@@ -117,7 +117,11 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define MECANUM_MAX_SPEED  255
 
 // Acceleration ramp: max PWM change per 20ms PID tick
-#define ACCEL_RAMP_RATE   30
+#define ACCEL_RAMP_RATE   50
+
+// Kick-start boost for gearbox static friction
+#define KICK_BOOST_PWM    255
+#define KICK_BOOST_TICKS  15
 
 // ============================================================
 // UART Communication
@@ -134,8 +138,10 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 // ignores baud — actual throughput is full-speed USB.
 #define PI_UART_BAUD       115200
 
-// Alias: PiSerial goes to the Pi.  On ESP32-S3, Serial = native USB CDC,
-// which appears as /dev/ttyACM0 on the Raspberry Pi 5.
+// Alias: PiSerial goes to the Pi via hardware UART0 (GPIO 43/44).
+// When CONFIG_ARDUINO_USB_CDC_ON_BOOT=0, Serial = UART0.
+// This lets the CH343 bridge (COM8) carry both flash commands and
+// runtime telemetry.  The Pi5 reads this via /dev/ttyACM0 or /dev/ttyUSB0.
 #ifndef PiSerial
 #define PiSerial Serial
 #endif
@@ -171,7 +177,9 @@ enum MotorState {
 #define BNO055_I2C_ADDR        0x28
 #define BNO055_SDA_PIN         10       // Module pad 17 (left side)
 #define BNO055_SCL_PIN         11       // Module pad 18 (right side)
-#define BNO055_I2C_FREQ_HZ     400000
+// CJMCU-055 clone is validated at the Arduino example's default 100 kHz.
+// Keep the shared bus conservative for BNO055 clock stretching.
+#define BNO055_I2C_FREQ_HZ     100000
 #define IMU_PUBLISH_MS         50       // Publish heading at 20 Hz
 
 // ============================================================

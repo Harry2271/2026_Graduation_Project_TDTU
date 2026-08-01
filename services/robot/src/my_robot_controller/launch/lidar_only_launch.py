@@ -15,8 +15,8 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     serial_port_arg = DeclareLaunchArgument(
-        'serial_port', default_value='/dev/ttyUSB0',
-        description='USB port for Slamtec RPLidar A1M8')
+        'serial_port', default_value='/dev/robot-lidar',
+        description='USB port for Slamtec RPLidar A1M8 (udev symlink: /dev/robot-lidar)')
     serial_baudrate_arg = DeclareLaunchArgument(
         'serial_baudrate', default_value='115200',
         description='Serial baud rate (A1M8 standard: 115200)')

@@ -87,6 +87,20 @@ bool INA226Sensor::read()
     current_       = ma / 1000.0f;   // A
     power_         = mw / 1000.0f;   // W
 
+    // Sanity check: if bus voltage is essentially zero, the INA226 is not
+    // seeing real power (shunt disconnected or VIN+/VIN- reversed).
+    // Without this guard, the calibration zero-offset on the current
+    // channel shows up as a "ghost" 8 A reading and the battery SOC math
+    // divides by 0 → -INF%.  Treat as "sensor present but no load" and
+    // report 0/0 until real power is applied.
+    if (bus_voltage_ < 0.05f) {
+        current_      = 0.0f;
+        power_        = 0.0f;
+        battery_pct_  = 0.0f;
+        battery_status_ = 0;        // unknown / no-load
+        return true;
+    }
+
     // Battery SOC: linear interpolation over 3S Li-ion range
     // Empty = 9.0V (3.0V/cell), Full = 12.6V (4.2V/cell)
     float pct = (bus_voltage_ - BATTERY_VOLTAGE_EMPTY) /

@@ -29,7 +29,7 @@
 |-------|------|------|------|----|-----------|---------|
 | **FL** | Front-Left | GPIO **12** | GPIO **13** | GPIO **3** | +1 (normal) | RPWM=ch0, LPWM=ch4 |
 | **FR** | Front-Right | GPIO **14** | GPIO **15** | GPIO **7** | -1 (reversed) | RPWM=ch1, LPWM=ch5 |
-| **RL** | Rear-Left | GPIO **16** | GPIO **17** | GPIO **48** | +1 (normal) | RPWM=ch2, LPWM=6 |
+| **RL** | Rear-Left | GPIO **16** | GPIO **17** | GPIO **48** | +1 (normal) | RPWM=ch2, LPWM=ch6 |
 | **RR** | Rear-Right | GPIO **38** | GPIO **39** | GPIO **47** | -1 (reversed) | RPWM=ch3, LPWM=7 |
 
 ### BTS7960 Wiring Per Driver
@@ -168,6 +168,9 @@
                              └─ VL53L0X (0x29)
 ```
 
+> The I2C pull-ups noted in the BNO055 section above (2.2k–4.7k to 3.3V)
+> cover this whole shared bus.
+
 > The VL53L0X adds zero new GPIOs — uses the existing shared I2C bus. Pin-shield on module lets you re-address if needed; default 0x29 works here.
 
 ---
@@ -216,8 +219,6 @@
 
 ---
 
-## UART — ESP32-S3 ↔ Raspberry Pi 5 (Protocol Update)
-
 ## BNO055 IMU — 9-DOF (I2C)
 
 | Function | GPIO | Notes |
@@ -228,22 +229,44 @@
 | Parameter | Value |
 |-----------|-------|
 | I2C Address | **0x28** |
-| I2C Frequency | **400 kHz** |
+| I2C Frequency | **100 kHz** |
 | Publish Rate | **20 Hz** (every 50 ms) |
 | Mode | NDOF (sensor fusion) |
 
 ### BNO055 Wiring
 
 ```
-          BNO055 Module
+          CJMCU-055 / MCU-055 Module
             │
-  VIN ◄─────┤ 3.3V or 5V (check module)
+  VCC ◄─────┤ 3.3V (or 5V on 5V-tolerant variants)
   GND ◄─────┤ Common ground
-  SDA ◄────► ESP32 GPIO 10 ──┐ (shared I2C bus)
-  SCL ◄────► ESP32 GPIO 11 ──┤
-            │                 │
-          INA226 ─────────────┘ (same bus, addr 0x40)
+  GNDIO ◄───┤ I2C ground — must be tied to GND too
+  SDA ◄─────► ESP32 GPIO 10 ──┐ (shared I2C bus)
+  SCL ◄─────► ESP32 GPIO 11 ──┤
+  ADR/COM3 ──┤ GND for 0x28, float/3V3 for 0x29
+  PS0  ◄─────┤ float or LOW  (selects I2C mode, not UART)
+  PS1  ◄─────┤ float or LOW  (selects I2C mode, not UART)
+  RST  ◄─────┤ 3.3V or float (has pull-up on module)
+            │
+          INA226 (0x40) ─┐
+          VL53L0X (0x29)─┴── same bus
 ```
+
+> ⚠ **External pull-ups required.** The ESP32-S3 internal pull-ups are
+> ~45 kΩ — too weak for a shared bus with three devices at 100 kHz.
+> Add **2.2 kΩ–4.7 kΩ pull-ups** from SDA → 3.3V and SCL → 3.3V
+> (one pair is sufficient for the whole bus). Without them, the BNO055
+> will not ACK reliably.
+
+> ⚠ **ADR/COM3 must be tied LOW for 0x28.** Bridging the `ADR/COM3`
+> pin to GND selects address 0x28 (default for this project). Leaving
+> it floating or tying it to 3.3V switches to 0x29 — which collides
+> with the VL53L0X on the same bus.
+
+> ⚠ **PS0/PS1 must NOT be tied HIGH.** On BNO055 clones the PS0/PS1
+> pads select between I2C and UART modes. Tie them LOW or leave them
+> floating so the module comes up in I2C mode (the project uses I2C,
+> not UART).
 
 ---
 
