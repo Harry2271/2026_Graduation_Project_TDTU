@@ -42,8 +42,11 @@ RUN corepack enable && corepack prepare yarn@1.22.22 --activate
 WORKDIR /app
 
 # Copy workspace manifests for yarn workspace resolution
+# Yarn 1 needs ALL workspace package.json files even for --production install
 COPY package.json yarn.lock ./
 COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/.gitkeep packages/.gitkeep
 COPY packages/README.md packages/README.md
 
