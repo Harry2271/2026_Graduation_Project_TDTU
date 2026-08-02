@@ -20,7 +20,7 @@ COPY packages/README.md packages/README.md
 COPY scripts/postinstall-hoist-next.js scripts/postinstall-hoist-next.js
 
 # Install all deps (devDeps needed for `nest build` via swc/tsc)
-RUN yarn install --frozen-lockfile
+RUN yarn install --frozen-lockfile --ignore-engines
 
 # Copy API source
 COPY apps/api/ apps/api/
@@ -51,7 +51,7 @@ COPY packages/.gitkeep packages/.gitkeep
 COPY packages/README.md packages/README.md
 
 # Install production deps only (no devDeps)
-RUN yarn install --production --frozen-lockfile
+RUN yarn install --production --frozen-lockfile --ignore-engines
 
 # Copy build output from builder
 COPY --from=builder /app/apps/api/dist apps/api/dist

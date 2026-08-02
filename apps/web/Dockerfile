@@ -21,7 +21,7 @@ COPY packages/README.md packages/README.md
 COPY scripts/postinstall-hoist-next.js scripts/postinstall-hoist-next.js
 
 # Install all deps
-RUN yarn install --frozen-lockfile
+RUN yarn install --frozen-lockfile --ignore-engines
 
 # Copy web app source
 COPY apps/web/ apps/web/
