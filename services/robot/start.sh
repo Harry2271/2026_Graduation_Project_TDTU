@@ -1,0 +1,158 @@
+#!/bin/bash
+# =============================================================================
+# services/robot/start.sh — Manual start script for the ROS 2 robot service
+#
+# Idempotent — safe to run multiple times. Stops existing PM2 processes first,
+# rebuilds the colcon workspace, then starts everything via PM2.
+#
+# Use this when CI/CD is unavailable (e.g. Pi is offline but has fresh code):
+#   services/robot/start.sh
+#
+# Environment variables (all optional, defaults shown):
+#   LIDAR_MODEL=a1                  # a1 | a2m8 | ...
+#   ESP32_PORT=/dev/ttyACM0         # ESP32 serial port
+#   CAMERA_DEVICE=/dev/video0       # USB camera device
+#   API_SOCKET_URL=https://api.nguyen-robot.io.vn
+#   ROBOT_BRAIN_TOKEN=...           # shared secret for brain<->API auth
+# =============================================================================
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$SCRIPT_DIR"
+ROS_WS="$HOME/robot_ws"
+LIDAR_MODEL="${LIDAR_MODEL:-a1}"
+SERVICE_NAME_PREFIX="nexus-robot"
+
+echo "=== 🤖 ROBOT MANUAL START ==="
+echo "  Script dir:    $APP_DIR"
+echo "  ROS workspace: $ROS_WS"
+echo "  Lidar model:   $LIDAR_MODEL"
+
+# --- [1] Source ROS 2 + ensure pyserial-asyncio ---
+source "/opt/ros/jazzy/setup.bash"
+
+if ! python3 -c 'import serial_asyncio' 2>/dev/null; then
+    echo "📦 Installing python3-serial-asyncio..."
+    sudo apt-get update
+    sudo apt-get install -y python3-serial-asyncio
+fi
+
+find_lidar_port() {
+    for dev in /dev/ttyUSB* /dev/ttyACM*; do
+        [ -e "$dev" ] && echo "$dev" && return 0
+    done
+    echo "/dev/ttyUSB0"
+}
+LIDAR_PORT=$(find_lidar_port)
+echo "📍 Lidar Port: $LIDAR_PORT"
+sudo chmod 666 "$LIDAR_PORT" 2>/dev/null || echo "⚠️  Warning: Could not chmod $LIDAR_PORT"
+
+ESP32_PORT="${ESP32_PORT:-/dev/ttyACM0}"
+sudo chmod 666 "$ESP32_PORT" 2>/dev/null || echo "⚠️  Warning: Could not chmod $ESP32_PORT"
+
+# --- [2] Stop existing PM2 processes (idempotent) ---
+echo "🔄 Stopping existing robot nodes..."
+NODES=(
+    "${SERVICE_NAME_PREFIX}-lidar"
+    "${SERVICE_NAME_PREFIX}-slam"
+    "${SERVICE_NAME_PREFIX}-map-manager"
+    "${SERVICE_NAME_PREFIX}-web-bridge"
+    "${SERVICE_NAME_PREFIX}-esp32-telemetry"
+    "${SERVICE_NAME_PREFIX}-brain"
+    "${SERVICE_NAME_PREFIX}-vision"
+    "${SERVICE_NAME_PREFIX}-camera"
+    "${SERVICE_NAME_PREFIX}-nav2"
+)
+for name in "${NODES[@]}"; do
+    pm2 stop "$name" 2>/dev/null || true
+    pm2 delete "$name" 2>/dev/null || true
+done
+
+# Kill any stray ROS processes not under PM2
+pkill -f "map_manager" 2>/dev/null || true
+pkill -f "brain_node" 2>/dev/null || true
+pkill -f "web_bridge" 2>/dev/null || true
+pkill -f "lidar_only" 2>/dev/null || true
+pkill -f "april_tag_node" 2>/dev/null || true
+pkill -f "camera_stream" 2>/dev/null || true
+pkill -f "slam_toolbox" 2>/dev/null || true
+sleep 2
+
+# --- [3] Build colcon workspace ---
+echo "📂 Reorganizing files for colcon build..."
+mkdir -p "$ROS_WS/src"
+rm -rf "$ROS_WS/src/my_robot_controller"
+cp -r "$APP_DIR/src/my_robot_controller" "$ROS_WS/src/"
+
+RPLIDAR_SRC="$ROS_WS/src/rplidar_ros"
+if [ -d "$RPLIDAR_SRC/.git" ]; then
+    echo "🔄 Updating rplidar_ros in $RPLIDAR_SRC ..."
+    git -C "$RPLIDAR_SRC" pull --ff-only || echo "⚠️  rplidar_ros pull failed — using existing source"
+else
+    echo "📥 Cloning rplidar_ros (ros2 branch) from github.com/Slamtec/rplidar_ros ..."
+    git clone --depth 1 --branch ros2 https://github.com/Slamtec/rplidar_ros.git "$RPLIDAR_SRC"
+fi
+
+cd "$ROS_WS"
+echo "🏗️  Building workspace..."
+colcon build --merge-install --executor sequential
+source "$ROS_WS/install/setup.bash"
+
+# --- [3b] Camera deps ---
+echo "📦 Checking camera dependencies..."
+if ! command -v ffmpeg &>/dev/null; then
+    sudo apt-get install -y ffmpeg
+fi
+
+# --- [4] Start PM2 processes ---
+echo "🚀 Starting ROS 2 Nodes via PM2..."
+
+start_ros_node() {
+    local name=$1
+    local command=$2
+    pm2 start "bash" --name "$name" -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $command"
+}
+
+# 1. Lidar & SLAM
+start_ros_node "${SERVICE_NAME_PREFIX}-lidar" "ros2 launch my_robot_controller lidar_only_launch.py serial_port:=$LIDAR_PORT"
+start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller slam_only_launch.py"
+
+# 2. Logic Nodes
+start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
+start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
+start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
+
+# Brain (exp backoff + max restarts)
+BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBOT_BRAIN_TOKEN=${ROBOT_BRAIN_TOKEN:-}"
+pm2 start "bash" \
+    --name "${SERVICE_NAME_PREFIX}-brain" \
+    --exp-backoff-restart-delay=1000 \
+    --max-restarts 50 \
+    -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
+
+# Vision
+start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
+
+# Camera (max 10 restarts)
+CAMERA_ENV="CAMERA_DEVICE=${CAMERA_DEVICE:-/dev/video0} CAMERA_WIDTH=1280 CAMERA_HEIGHT=720 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"
+pm2 start "bash" \
+    --name "${SERVICE_NAME_PREFIX}-camera" \
+    --max-restarts 10 \
+    -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $CAMERA_ENV ros2 run my_robot_controller camera_stream"
+
+# 3. Nav2
+start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py"
+
+pm2 save
+
+echo ""
+echo "✅ ROBOT STARTED!"
+echo "  Lidar: $LIDAR_PORT  ESP32: $ESP32_PORT"
+echo ""
+pm2 list | grep "$SERVICE_NAME_PREFIX" || true
+echo ""
+echo "📋 Quick commands:"
+echo "  pm2 logs nexus-robot-web-bridge --lines 20 --nostream"
+echo "  pm2 logs nexus-robot-brain"
+echo "  ros2 topic list"

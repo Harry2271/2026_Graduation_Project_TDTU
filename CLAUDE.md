@@ -10,12 +10,11 @@ This is a **Turborepo + yarn-workspaces** monorepo containing the full-stack Par
 
 | Directory | Role | Framework | Port | CI/CD |
 |---|---|---|---|---|
-| `apps/api/` | Backend API | NestJS 11 | `5000` | ✅ path-filtered |
-| `apps/web/` | Web Frontend | Next.js 16 | `3000` | ✅ path-filtered |
+| `apps/api/` | Backend API | NestJS 11 | `5000` | ✅ Docker (path-filtered) |
+| `apps/web/` | Web Frontend | Next.js 16 | `3000` | ✅ Docker (path-filtered) |
 | `apps/mobile/` | Mobile App | Expo 55 (Router) | — | ❌ none (per project decision) |
-| `services/robot/` | Robot Bridge (Pi 5) | Python / ROS 2 | `9091` (WS) | ✅ path-filtered |
+| `services/robot/` | Robot Bridge (Pi 5) | Python / ROS 2 | `9091` (WS) | ✅ path-filtered (direct PM2) |
 | `firmware/` | ESP32-S3 real-time motor controller | PlatformIO / Arduino | UART `115200` | ❌ local flash (no CI/CD) |
-| `tools/deploy/` | Manual SSH deploy toolkit | bash | — | — |
 | `packages/` | Shared libraries (future) | — | — | — |
 
 Per-app `CLAUDE.md` files: `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`, `apps/mobile/CLAUDE.md`, `services/robot/CLAUDE.md`, `firmware/CLAUDE.md`.
@@ -203,6 +202,13 @@ yarn dev:mobile    # Expo dev server
 # Turborepo (advanced)
 yarn turbo run build --filter=@robot-for-nguyen/api
 yarn turbo run lint --filter=...[origin/master]   # only affected
+
+# Docker (production containers on the Pi)
+docker compose up -d                  # start API + Web
+docker compose up -d --build api      # rebuild + restart only API
+docker compose up -d --build web      # rebuild + restart only Web
+docker compose logs -f api            # follow API logs
+docker compose ps                     # check status
 ```
 
 The per-app dev workflow hasn't changed — `yarn start:dev` in `apps/api/`, `yarn dev` in `apps/web/`, `yarn start` in `apps/mobile/`. Yarn workspaces resolves dependencies from the hoisted `node_modules/` at the root.
@@ -217,17 +223,54 @@ The per-app dev workflow hasn't changed — `yarn start:dev` in `apps/api/`, `ya
 - Triggers: push to `master`, PR.
 - Runs on `ubuntu-latest`.
 - Uses `yarn turbo run lint build --filter=...` to build only changed apps.
-- Uploads `api-dist` artifact for use by `deploy.yml`.
 
 ### `deploy.yml` — Path-filtered deploy
 - Triggers: push to `master`, manual dispatch.
 - Uses `dorny/paths-filter@v3` to detect which app(s) changed.
 - Three jobs: `deploy-api`, `deploy-web`, `deploy-robot`. Each is gated on its own filter and runs on `self-hosted` (the Pi).
 - Path filters:
-  - `api` → `apps/api/**` (also `tools/deploy/**`)
-  - `web` → `apps/web/**` (also `tools/deploy/**`)
-  - `robot` → `services/robot/**` (also `tools/deploy/**`)
+  - `api` → `apps/api/**` (also `docker-compose.yml`, `scripts/postinstall-hoist-next.js`, `.github/workflows/deploy.yml`)
+  - `web` → `apps/web/**` (also `docker-compose.yml`, `scripts/postinstall-hoist-next.js`, `.github/workflows/deploy.yml`)
+  - `robot` → `services/robot/**` (also `.github/workflows/deploy.yml`)
 - **Mobile is intentionally not in any filter** — there is no CI/CD for it. Build via `eas build` (cloud) or `expo start` (local) using your EAS account.
+
+**What each deploy job does:**
+
+| Job | What it runs |
+|---|---|
+| `deploy-api` | Writes `apps/api/.env` from GitHub secrets/vars → `docker compose up -d --build --force-recreate api` → healthcheck via `docker compose exec` curl |
+| `deploy-web` | `docker compose up -d --build --force-recreate web` (with `NEXT_PUBLIC_*` as build args) → healthcheck via curl |
+| `deploy-robot` | `services/robot/deploy.sh` → colcon build + PM2 → verify `/scan` ROS topic |
+
+**Environment variables per job (sourced from GitHub Actions vars + secrets):**
+
+`deploy-api` writes `apps/api/.env`:
+
+| Variable | Source | Default |
+|---|---|---|
+| `API_PORT` | `vars.API_PORT` | `5000` |
+| `MONGO_URI` | `secrets.MONGO_URI` | — (required) |
+| `JWT_SIGN_SECRET` | `secrets.JWT_SIGN_SECRET` | — (required) |
+| `ROBOT_BRAIN_TOKEN` | `secrets.ROBOT_BRAIN_TOKEN` | — (required) |
+| `MAPS_DIR` | `vars.MAPS_DIR` | `/home/pi/robot_ws/maps` |
+| `API_SOCKET_URL` | `vars.API_SOCKET_URL` | `https://api.nguyen-robot.io.vn` |
+
+`deploy-web` passes build args to `docker compose` (baked into the JS bundle):
+
+| Variable | Source | Default |
+|---|---|---|
+| `WEB_PORT` | `vars.WEB_PORT` | `3000` |
+| `NEXT_PUBLIC_API_BASE_URL` | `vars.NEXT_PUBLIC_API_BASE_URL` | `https://api.nguyen-robot.io.vn` |
+| `NEXT_PUBLIC_WS_URL` | `vars.NEXT_PUBLIC_WS_URL` | `wss://map.nguyen-robot.io.vn` |
+| `NEXT_PUBLIC_CAMERA_STREAM_URL` | `vars.NEXT_PUBLIC_CAMERA_STREAM_URL` | `https://cam.nguyen-robot.io.vn/stream` |
+
+`deploy-robot` exports into `services/robot/deploy.sh`:
+
+| Variable | Source | Default |
+|---|---|---|
+| `ROBOT_BRAIN_TOKEN` | `secrets.ROBOT_BRAIN_TOKEN` | — |
+| `API_SOCKET_URL` | `vars.API_SOCKET_URL` | `https://api.nguyen-robot.io.vn` |
+| `LIDAR_MODEL` | hardcoded in `deploy.sh` | `a1` |
 
 **Path change examples:**
 
@@ -236,7 +279,8 @@ The per-app dev workflow hasn't changed — `yarn start:dev` in `apps/api/`, `ya
 | `apps/api/src/...` | `detect` + `deploy-api` |
 | `apps/web/src/...` | `detect` + `deploy-web` |
 | `services/robot/src/...` | `detect` + `deploy-robot` |
-| `tools/deploy/...` | `detect` + all 3 deploy jobs |
+| `docker-compose.yml` | `detect` + `deploy-api` + `deploy-web` |
+| `scripts/postinstall-hoist-next.js` | `detect` + `deploy-api` + `deploy-web` |
 | `.github/workflows/deploy.yml` | `detect` + all 3 deploy jobs (so workflow edits get tested) |
 | `apps/mobile/...` | `detect` only (no deploy job gated on it) |
 | `apps/web/.env` | `detect` only (env files are gitignored, this is illustrative) |
@@ -245,17 +289,15 @@ The per-app dev workflow hasn't changed — `yarn start:dev` in `apps/api/`, `ya
 
 ## Deploy Scripts
 
-Each app has a `deploy.sh` in its own folder. The Pi's self-hosted runner is checked out at the monorepo root, then `cd`s into the app folder and runs `./deploy.sh`. The script resolves its own path with `BASH_SOURCE[0]` so it works from any invocation context.
-
-| App | Script | What it does |
-|---|---|---|
-| `apps/api` | `apps/api/deploy.sh` | `yarn install --production`, write `.env` from secrets, `pm2 start ecosystem.json` |
-| `apps/web` | `apps/web/deploy.sh` | `yarn install`, `yarn build` (in app), `pm2 start ecosystem.json` |
-| `services/robot` | `services/robot/deploy.sh` | colcon build, PM2-managed ROS 2 nodes |
-
-The legacy `tools/deploy/` folder keeps the manual SSH toolkit (`deploy-all.sh`, `stop-all.sh`, `install-pi.sh`, etc.) for deploys from a dev machine. These still reference the new monorepo paths.
-
-**After a Pi reboot** when services did not auto-restore: run `tools/deploy/scripts/start-all.sh` instead of re-deploying everything. It checks the existing production builds (backend `dist/main.js`, frontend `.next/standalone/...`), restores the saved PM2 list, starts/restart the backend and frontend, then runs the robot `deploy.sh` (rebuilds the colcon workspace) before printing a `pm2 status` summary. It is idempotent — safe to run repeatedly.
+| Script | What it does |
+|---|---|
+| `docker-compose.yml` (root) | Production containers for API + Web. Robot is NOT Dockerized — it needs serial ports, ROS 2, LiDAR, IMU, camera. |
+| `apps/api/Dockerfile` | Multi-stage build for NestJS API. Context = monorepo root. |
+| `apps/web/Dockerfile` | Multi-stage build for Next.js standalone. `NEXT_PUBLIC_*` are build-time ARGs (baked into JS bundles). |
+| `services/robot/deploy.sh` | Used by `deploy-robot` CI/CD job. colcon build + PM2 (idempotent in CI context). |
+| `services/robot/start.sh` | **Manual** start for the robot service. Stops existing PM2 processes, rebuilds colcon workspace, starts 9 ROS 2 nodes. Idempotent — safe to run repeatedly. |
+| `start-all.sh` (root) | **All-in-one recovery command.** Pulls code (best-effort), starts Docker containers for API + Web, then starts the robot. Use after a Pi reboot or when CI/CD is broken. |
+| `start-all.sh --skip-git` | Same as above, but skips `git pull` — use when the Pi is offline but has fresh code already on disk. |
 
 ---
 
@@ -280,12 +322,12 @@ These apply everywhere in the monorepo. Per-app `CLAUDE.md` files add project-sp
 
 | Where | Variable | Notes |
 |---|---|---|
-| `apps/api/.env` | `MONGO_URI`, `PORT` | written by deploy from GitHub secrets |
-| `apps/web/.env.local` | `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_CAMERA_STREAM_URL` | set at build time, baked into the bundle |
+| `apps/api/.env` | `API_PORT`, `MONGO_URI`, `MAPS_DIR`, `JWT_SIGN_SECRET`, `ROBOT_BRAIN_TOKEN`, `API_SOCKET_URL` | runtime vars, written by `deploy.yml` from GitHub secrets + vars |
+| `apps/web/.env.local` | `WEB_PORT`, `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_CAMERA_STREAM_URL` | `NEXT_PUBLIC_*` are build-time (baked into JS bundles) |
 | `apps/mobile/.env` | `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_CAMERA_STREAM_URL` | set at build time, baked into the bundle |
-| `services/robot` env | `LIDAR_MODEL` (e.g. `a1`) | set in `deploy.sh` |
+| `services/robot` env | `LIDAR_MODEL` (e.g. `a1`), `ESP32_PORT`, `CAMERA_DEVICE`, `API_SOCKET_URL`, `ROBOT_BRAIN_TOKEN` | set in `deploy.sh` / `start.sh` |
 
-`.env` files are gitignored. Per-app `.env.example` files are checked in (when present) and copied to `.env` by the deploy script.
+`.env` files are gitignored. The `.env.example` files in `apps/api/` and `apps/web/` are the canonical reference for all available variables and are checked in. The `deploy.yml` job writes `apps/api/.env` from GitHub secrets + vars; the Web container reads `NEXT_PUBLIC_*` from `docker-compose.yml` build args.
 
 ---
 
@@ -304,12 +346,18 @@ If you need to pull new commits from an old repo into the monorepo later, use `g
 | `package.json` | Root — yarn workspaces, turbo scripts |
 | `turbo.json` | Turborepo task graph |
 | `.gitignore` | Monorepo-level ignore patterns (per-app `.gitignore` files remain) |
+| `.dockerignore` | Controls what enters Docker build context |
+| `docker-compose.yml` | Production containers for API + Web (built by CI/CD, also used by `start-all.sh`) |
+| `start-all.sh` | All-in-one recovery command (Docker for API/Web + PM2 for robot) |
 | `CLAUDE.md` | This file |
+| `apps/api/Dockerfile` | Multi-stage Docker build for the NestJS API |
+| `apps/web/Dockerfile` | Multi-stage Docker build for the Next.js standalone app |
+| `services/robot/start.sh` | Manual idempotent start script for the robot (colcon + PM2) |
+| `services/robot/deploy.sh` | Used by CI/CD (`deploy-robot` job) — not intended for manual use |
 | `docs/superpowers/specs/2026-06-02-monorepo-restructure-design.md` | The design doc that drove this restructure |
 | `docs/superpowers/specs/2026-06-07-robot-controller-brain-design.md` | Brain controller design: Pi 5 high-level state machine (autonomous mapping + job dispatch via Nav2 + AprilTag + ESP32 UART) |
 | `docs/superpowers/plans/2026-06-07-robot-controller-brain-plan.md` | Implementation plan for Phases 0-2 of the brain controller (skeleton, Calibrate data model, Esp32Bridge) |
 | `.github/workflows/ci.yml` | Affected build + lint |
-| `.github/workflows/deploy.yml` | Path-filtered deploy |
-| `tools/deploy/` | Manual SSH toolkit (deploy-all.sh, install-pi.sh, etc.) |
+| `.github/workflows/deploy.yml` | Path-filtered Docker deploy (API/Web) + PM2 deploy (robot) |
 | `firmware/` | ESP32-S3 PlatformIO project (see `firmware/CLAUDE.md` + `firmware/MODULES.md`) — flashed via `pio run --target upload`, no CI/CD |
 | `packages/` | Reserved for future shared types / utils (currently empty) |

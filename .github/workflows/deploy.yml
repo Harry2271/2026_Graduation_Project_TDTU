@@ -1,21 +1,17 @@
 # =============================================================================
-# deploy.yml — Path-filtered deploy of the robot-for-nguyen monorepo
+# deploy.yml — Path-filtered Docker deploy of the robot-for-nguyen monorepo
 #
-# Uses dorny/paths-filter to detect which app(s) changed and only runs the
-# matching deploy job. Each app's per-app `deploy.sh` does the actual work on
-# the self-hosted runner (the Raspberry Pi 5).
-#
-# Mobile app is intentionally NOT in the filter — no CI/CD per project decision.
+# API and Web are built as Docker images and run as containers on the Pi
+# (self-hosted runner). Robot service keeps its direct-PM2 deploy path
+# (ROS 2 + serial ports can't live inside a container).
 #
 # Filter map:
-#   api  → apps/api/**
-#   web  → apps/web/**
-#   robot → services/robot/**
+#   api   → apps/api/** (also docker-compose.yml, postinstall, workflow file)
+#   web   → apps/web/** (also docker-compose.yml, postinstall, workflow file)
+#   robot → services/robot/** (also workflow file)
 #
-# A change to `tools/deploy/**` (shared manual SSH toolkit) or to this workflow
-# file itself re-runs all three deploy jobs — the former because all three
-# depend on those scripts being intact, the latter so workflow edits actually
-# get tested. Use `workflow_dispatch` for ad-hoc redeploys.
+# A change to docker-compose.yml, scripts/postinstall-hoist-next.js, or this
+# workflow file itself re-runs the relevant deploy job(s).
 # =============================================================================
 
 
@@ -38,7 +34,6 @@ jobs:
       api: ${{ steps.filter.outputs.api }}
       web: ${{ steps.filter.outputs.web }}
       robot: ${{ steps.filter.outputs.robot }}
-      tools: ${{ steps.filter.outputs.tools }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,76 +47,92 @@ jobs:
           filters: |
             api:
               - 'apps/api/**'
-              - 'tools/deploy/**'
+              - 'docker-compose.yml'
+              - 'scripts/postinstall-hoist-next.js'
               - '.github/workflows/deploy.yml'
             web:
               - 'apps/web/**'
-              - 'tools/deploy/**'
+              - 'docker-compose.yml'
+              - 'scripts/postinstall-hoist-next.js'
               - '.github/workflows/deploy.yml'
             robot:
               - 'services/robot/**'
-              - 'tools/deploy/**'
               - '.github/workflows/deploy.yml'
-            tools:
-              - 'tools/deploy/**'
 
   deploy-api:
-    name: Deploy API (NestJS)
+    name: Deploy API (Docker)
     needs: detect
     if: needs.detect.outputs.api == 'true'
-    runs-on: self-hosted
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # apps/api/deploy.sh handles the full lifecycle on the Pi: git reset/clean,
-      # yarn install (with devDeps for the build), `nest build`, sanity check
-      # dist/main.js, prune to --production, write .env, restart PM2. We
-      # intentionally do NOT pre-build here — doing so split the build from the
-      # PM2 launch across two different `yarn install` invocations and let the
-      # dist/ output go out of sync with the production node_modules.
-      - name: Run API deploy
-        env:
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-          PORT: ${{ vars.API_PORT }}
-          MAPS_DIR: ${{ vars.MAPS_DIR }}
-          JWT_SIGN_SECRET: ${{ secrets.JWT_SIGN_SECRET }}
-          ROBOT_BRAIN_TOKEN: ${{ secrets.ROBOT_BRAIN_TOKEN }}
-        run: |
-          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
-          cd apps/api
-          chmod +x ./deploy.sh
-          sed -i 's/\r$//' ./deploy.sh
-          ./deploy.sh
-
-      - name: Health check
-        run: |
-          sleep 3
-          curl -sf http://localhost:${{ vars.API_PORT }} || (echo "Health check failed"; exit 1)
-
-  deploy-web:
-    name: Deploy Web (Next.js)
-    needs: detect
-    if: needs.detect.outputs.web == 'true'
     runs-on: self-hosted
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run web deploy
+      - name: Write API env file
+        run: |
+          mkdir -p apps/api
+          cat > apps/api/.env << ENVEOF
+          API_PORT=${{ vars.API_PORT || '5000' }}
+          PORT=${{ vars.API_PORT || '5000' }}
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          JWT_SIGN_SECRET=${{ secrets.JWT_SIGN_SECRET }}
+          ROBOT_BRAIN_TOKEN=${{ secrets.ROBOT_BRAIN_TOKEN }}
+          MAPS_DIR=${{ vars.MAPS_DIR || '/home/pi/robot_ws/maps' }}
+          API_SOCKET_URL=${{ vars.API_SOCKET_URL || 'https://api.nguyen-robot.io.vn' }}
+          ENVEOF
+
+      - name: Build and start API container
+        run: docker compose up -d --build --force-recreate api
+
+      - name: Health check
+        run: |
+          echo "⏳ Waiting for API container to become healthy (max 60s)..."
+          for i in $(seq 1 30); do
+            if docker compose exec -T api curl -sf http://localhost:5000 > /dev/null 2>&1; then
+              echo "✅ API is healthy"
+              exit 0
+            fi
+            echo "  attempt $i/30..."
+            sleep 2
+          done
+          echo "❌ API health check failed"
+          docker compose logs api --tail=50
+          exit 1
+
+  deploy-web:
+    name: Deploy Web (Docker)
+    needs: detect
+    if: needs.detect.outputs.web == 'true'
+    runs-on: self-hosted
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and start Web container
         env:
-          PORT: ${{ vars.WEB_PORT }}
+          PORT: ${{ vars.WEB_PORT || '3000' }}
+          WEB_PORT: ${{ vars.WEB_PORT || '3000' }}
           NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
           NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
           NEXT_PUBLIC_CAMERA_STREAM_URL: ${{ vars.NEXT_PUBLIC_CAMERA_STREAM_URL }}
+        run: docker compose up -d --build --force-recreate web
+
+      - name: Health check
         run: |
-          export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
-          cd apps/web
-          sed -i 's/\r$//' ./deploy.sh
-          chmod +x ./deploy.sh
-          ./deploy.sh
+          echo "⏳ Waiting for Web container to become healthy (max 60s)..."
+          for i in $(seq 1 30); do
+            if docker compose exec -T web curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "✅ Web is healthy"
+              exit 0
+            fi
+            echo "  attempt $i/30..."
+            sleep 2
+          done
+          echo "❌ Web health check failed"
+          docker compose logs web --tail=50
+          exit 1
 
   deploy-robot:
     name: Deploy Robot Controller (ROS 2)
