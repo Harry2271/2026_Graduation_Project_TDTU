@@ -50,8 +50,8 @@ COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/.gitkeep packages/.gitkeep
 COPY packages/README.md packages/README.md
 
-# Install production deps only (no devDeps)
-RUN yarn install --production --frozen-lockfile --ignore-engines
+# Install production deps only (no devDeps), skip postinstall scripts
+RUN yarn install --production --frozen-lockfile --ignore-engines --ignore-scripts
 
 # Copy build output from builder
 COPY --from=builder /app/apps/api/dist apps/api/dist
