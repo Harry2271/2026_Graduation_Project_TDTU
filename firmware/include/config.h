@@ -175,20 +175,19 @@ enum MotorState {
 // BNO055 IMU (9-DOF, I2C address 0x28)
 // ============================================================
 #define BNO055_I2C_ADDR        0x28
-#define BNO055_SDA_PIN         10       // Module pad 17 (left side)
-#define BNO055_SCL_PIN         11       // Module pad 18 (right side)
-// CJMCU-055 clone is validated at the Arduino example's default 100 kHz.
-// Keep the shared bus conservative for BNO055 clock stretching.
+#define BNO055_SDA_PIN         10
+#define BNO055_SCL_PIN         11
 #define BNO055_I2C_FREQ_HZ     100000
+#define I2C_TRANSACTION_TIMEOUT_MS  50   // ms — keep a failing optional bus from stalling control
 #define IMU_PUBLISH_MS         50       // Publish heading at 20 Hz
 
 // ============================================================
 // INA226 Power Monitor (CJMCU-226, I2C address 0x40)
 // ============================================================
 #define INA226_I2C_ADDR        0x40
-#define INA226_SDA_PIN         10       // Shared I2C bus with BNO055
-#define INA226_SCL_PIN         11       // Shared I2C bus with BNO055
-#define INA226_I2C_FREQ_HZ     400000
+#define INA226_SDA_PIN         10       // Shared I2C bus with BNO055 (GPIO10)
+#define INA226_SCL_PIN         11       // Shared I2C bus with BNO055 (GPIO11)
+#define INA226_I2C_FREQ_HZ     100000
 #define INA226_SHUNT_OHMS      0.01f    // 10 mΩ on CJMCU-226
 #define POWER_PUBLISH_MS       5000     // Publish power telemetry every 5 s
 
@@ -240,6 +239,8 @@ enum MotorState {
 // Shares I2C bus with BNO055 (0x28) and INA226 (0x40).
 // ============================================================
 #define VL53L0X_I2C_ADDR         0x29
+#define VL53L0X_SDA_PIN          10       // Shared I2C bus with BNO055 (GPIO10)
+#define VL53L0X_SCL_PIN          11       // Shared I2C bus with BNO055 (GPIO11)
 #define VL53L0X_UNLOAD_DISTANCE_MM  40    // 4 cm — flowchart target distance
 #define VL53L0X_TOLERANCE_MM       10    // ±1 cm tolerance band
 #define VL53L0X_POLL_MS            50    // 20 Hz (33 ms budget + slack)

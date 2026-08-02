@@ -35,9 +35,6 @@ bool VL53L0XSensor::begin()
     sensor_ = new VL53L0X();
     sensor_->setBus(&Wire);
 
-    // This module already uses the factory address 0x29.  Do not call
-    // setAddress() before init(): Pololu's init sequence expects the sensor
-    // at its boot address and some boards fail when it is rewritten first.
     if (!sensor_->init()) {
         Serial.println("  [WARN] VL53L0X init failed — sensor disabled");
         delete sensor_;

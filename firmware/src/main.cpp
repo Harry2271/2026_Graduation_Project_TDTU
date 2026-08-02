@@ -68,8 +68,13 @@ int16_t g_nav_omega  = 0;
 // Per-wheel override (CMD_INDIVIDUAL) — bypasses mecanum when active
 bool g_individual_mode = false;
 
-// Obstacle avoidance state (from IR + Sharp sensors)
+// Obstacle avoidance state (from IR + Sharp + Pi LiDAR events)
 ObstacleAvoidance g_obstacle;
+
+// Local hard-stop latch.  Kept separate from the LiDAR dodge state so a
+// Pi move command or CMD_INDIVIDUAL cannot override a physical IR/Sharp
+// obstacle while the obstacle is present.
+static bool g_local_obstacle_stop = false;
 
 // Kick-start boost: applies extra PWM for first few ticks when motor starts
 #define KICK_BOOST_PWM     255     // Extra PWM to overcome static friction
@@ -157,14 +162,59 @@ void setupHardware()
     // for reliable operation with multiple devices or long wires.
     pinMode(BNO055_SDA_PIN, INPUT_PULLUP);
     pinMode(BNO055_SCL_PIN, INPUT_PULLUP);
-    Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
-    Wire.setClock(BNO055_I2C_FREQ_HZ);
-    Serial.println("  [OK]   I2C bus started");
 
-    // ---- I2C scanner — verify which devices actually ACK ----
-    auto scanI2c = []() -> int {
-        int device_count = 0;
-        uint8_t first_error = 0;
+    // 9-clock bus recovery BEFORE first Wire.begin — releases any slave
+    // that may be holding SDA low from a previous boot.
+    for (int i = 0; i < 9; i++) {
+        digitalWrite(BNO055_SCL_PIN, HIGH);
+        delayMicroseconds(5);
+        digitalWrite(BNO055_SCL_PIN, LOW);
+        delayMicroseconds(5);
+    }
+    digitalWrite(BNO055_SDA_PIN, HIGH);
+    digitalWrite(BNO055_SCL_PIN, HIGH);
+    delay(10);
+
+    Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    // Start at 100 kHz for stable ACK regardless of wire length.
+    Wire.setClock(100000);
+    // CRITICAL: cap each I2C transaction.  Without this, a held-low SDA
+    // (e.g. missing pull-ups, faulty breakout) makes Wire.endTransmission()
+    // block forever, which freezes the motor control loop.  50 ms is short
+    // enough that all sensor init + recovery finishes within a few seconds
+    // yet long enough for the slowest legitimate I2C transaction.
+    Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+    Serial.println("  [OK]   I2C bus started (100 kHz, after 9-clock recovery)");
+
+    // ---- I2C bus health check — pin-level, never blocks ----
+    // The ESP32 Arduino core's Wire.endTransmission() does NOT honor
+    // Wire.setTimeout() — it blocks forever if a slave holds SDA low.
+    // We must never call Wire.endTransmission() unless we know SDA/SCL
+    // are both HIGH first.  This pin read is non-blocking and tells
+    // us whether the bus is physically healthy enough to attempt any I2C.
+    bool i2c_bus_ok = true;
+    {
+        I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+        Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
+        Wire.setClock(BNO055_I2C_FREQ_HZ);
+        Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+        int sda = digitalRead(BNO055_SDA_PIN);
+        int scl = digitalRead(BNO055_SCL_PIN);
+        if (sda == LOW || scl == LOW) {
+            i2c_bus_ok = false;
+            Serial.printf("  [I2C BUS] SDA=%s SCL=%s — bus unhealthy, skipping scan\n",
+                          sda == LOW ? "LOW" : "HIGH",
+                          scl == LOW ? "LOW" : "HIGH");
+            Serial.println("  [I2C BUS] Check pull-ups, shorts, powered modules");
+        }
+    }
+
+    // I2C scan: only runs if bus is physically healthy.  If the bus is
+    // stuck (SDA/SCL held LOW), we skip entirely — the per-sensor init
+    // will also be skipped because Wire.endTransmission() would hang.
+    int found = 0;
+    if (i2c_bus_ok) {
+        Serial.println("  [SCAN] I2C bus scan...");
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);
             uint8_t err = Wire.endTransmission();
@@ -174,42 +224,16 @@ void setupHardware()
                 else if (addr == 0x40) Serial.print(" (INA226)");
                 else if (addr == 0x29) Serial.print(" (VL53L0X)");
                 Serial.println();
-                device_count++;
-            } else if (first_error == 0 && err != 2) {
-                // Preserve the first bus-level error without flooding the log.
-                first_error = err;
+                found++;
             }
         }
-        if (device_count == 0 && first_error != 0) {
-            Serial.printf("         No ACKs; first I2C error code=%u\n", first_error);
+        if (found == 0) {
+            Serial.println("         No devices found");
+        } else {
+            Serial.printf("         Total: %d device(s)\n", found);
         }
-        return device_count;
-    };
-
-    Serial.println("  [SCAN] I2C bus scan:");
-    int found = scanI2c();
-    int sda_level = digitalRead(BNO055_SDA_PIN);
-    int scl_level = digitalRead(BNO055_SCL_PIN);
-    if (sda_level == LOW || scl_level == LOW) {
-        Serial.printf("  [I2C BUS] SDA=%s SCL=%s after scan\n",
-                      sda_level == LOW ? "STUCK LOW" : "HIGH",
-                      scl_level == LOW ? "STUCK LOW" : "HIGH");
-        Serial.println("  [I2C BUS] Check for shorts, powered modules, and 2.2k-4.7k pull-ups to 3.3V");
-    }
-
-    // A slave can remain in the middle of a transaction after reset. Recover
-    // once before giving up, then restore the Wire peripheral and rescan.
-    if (found == 0) {
-        Serial.println("  [I2C] No devices on first scan; attempting 9-clock bus recovery...");
-        I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
-        Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
-        Wire.setClock(BNO055_I2C_FREQ_HZ);
-        found = scanI2c();
-    }
-    if (found == 0) {
-        Serial.println("         NO devices found — verify VCC, GND+GNDIO, SDA/SCL, ADR/COM3 and external pull-ups");
     } else {
-        Serial.printf("         Total: %d device(s)\n", found);
+        Serial.println("  [SCAN] I2C bus scan SKIPPED (bus unhealthy)");
     }
 
     setupLEDC();
@@ -235,15 +259,24 @@ void setupHardware()
     // Init order: BNO055 first (has 650 ms power-up delay), then
     // VL53L0X (Pololu library does NOT call Wire.begin()), then INA226.
     // Addresses must not overlap: BNO055=0x28, VL53L0X=0x29, INA226=0x40.
+    // Before each sensor, do a 9-clock bus recovery + re-init to ensure
+    // the bus is clean (previous sensor init may have left it in a bad state).
+
     Serial.println("  [INIT] BNO055 IMU...");
+    I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    I2CBus::reinitialize(BNO055_SDA_PIN, BNO055_SCL_PIN, BNO055_I2C_FREQ_HZ);
     bool imu_ok = g_imu.begin(BNO055_I2C_ADDR);
     Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
 
     Serial.println("  [INIT] VL53L0X TOF sensor (Pololu)...");
+    I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    I2CBus::reinitialize(BNO055_SDA_PIN, BNO055_SCL_PIN, BNO055_I2C_FREQ_HZ);
     bool tof_ok = g_tof.begin();
     Serial.printf("  [%s] VL53L0X\n", tof_ok ? "OK  " : "WARN");
 
     Serial.println("  [INIT] INA226 power monitor...");
+    I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    I2CBus::reinitialize(BNO055_SDA_PIN, BNO055_SCL_PIN, BNO055_I2C_FREQ_HZ);
     bool pwr_ok = g_power.begin(INA226_I2C_ADDR);
     Serial.printf("  [%s] INA226\n", pwr_ok ? "OK  " : "WARN");
 
@@ -285,11 +318,18 @@ void setupHardware()
 // ========================================================================
 void computeNavTargets()
 {
-    // Apply obstacle avoidance to nav velocity
+    // Apply obstacle avoidance to nav velocity.  Physical local sensors
+    // have priority over every Pi command: a direct move/individual command
+    // must not be able to drive through an object while IR/Sharp is active.
     int16_t adj_vx    = g_nav_vx;
     int16_t adj_vy    = g_nav_vy;
     int16_t adj_omega = g_nav_omega;
     g_obstacle.applyToCommand(adj_vx, adj_vy, adj_omega, millis());
+    if (g_local_obstacle_stop) {
+        adj_vx = 0;
+        adj_vy = 0;
+        adj_omega = 0;
+    }
 
     // Mecanum kinematics → 4 wheel targets
     g_mecanum.compute(adj_vx, adj_vy, adj_omega, g_target_speeds);
@@ -303,6 +343,20 @@ void applySpeeds()
     if (g_e_stop_active) {
         for (int i = 0; i < MOTOR_COUNT; i++) {
             g_motors[i].emergencyStop();
+        }
+        return;
+    }
+
+    // Local hard-stop latch overrides every Pi-supplied command.  Clear it
+    // here once the sensors have been quiet for the safety window.
+    if (g_local_obstacle_stop) {
+        for (int i = 0; i < MOTOR_COUNT; i++) {
+            g_target_speeds[i] = 0;
+            g_ramped_speeds[i] = 0;
+            g_motors[i].coast();
+        }
+        if (!g_ir.anyDetected() && !g_sharp.isTooClose() && !g_sharp.isSlowing()) {
+            g_local_obstacle_stop = false;
         }
         return;
     }
@@ -799,6 +853,7 @@ void readSerial()
                     Serial.println("[SCAN] Alternate I2C scan on GPIO21/22:");
                     Wire.begin(21, 22);
                     Wire.setClock(100000);
+                    Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
                     int alt_found = 0;
                     for (uint8_t addr = 1; addr < 127; addr++) {
                         Wire.beginTransmission(addr);
@@ -811,6 +866,7 @@ void readSerial()
                     // Restore the project bus for all other modules.
                     Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
                     Wire.setClock(BNO055_I2C_FREQ_HZ);
+                    Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
                     pos = 0;
                     continue;
                 }
@@ -1037,11 +1093,9 @@ void publishSensors(uint32_t now_ms)
 // ========================================================================
 void setup()
 {
-    // Arm hardware watchdog immediately so the loop is protected.
-    // Sensor init (BNO055, VL53L0X) can take several seconds total;
-    // use a generous 15 s timeout to survive the full bring-up.
-    esp_task_wdt_init(15, true);
-    esp_task_wdt_add(NULL);
+    // Do NOT arm watchdog yet — sensor init (I2C scan, BNO055, VL53L0X)
+    // can take 10+ seconds and would trigger a false watchdog reset.
+    // Arm AFTER hardware init completes.
 
     setupHardware();
     g_health.begin();
@@ -1062,6 +1116,12 @@ void setup()
     // doesn't flag the bus as FAILED just because one peripheral is unplugged.
     g_health.reportOk(MOD_I2C_BUS, millis());
 
+    // Arm hardware watchdog AFTER all sensor init is complete.
+    // 10s timeout is enough for loop() to run; boot was unprotected
+    // by design to avoid false resets during I2C scan / sensor init.
+    esp_task_wdt_init(10, true);
+    esp_task_wdt_add(NULL);
+
     Serial.println();
     Serial.println("Ready. F/B/L/R/Q/E <0-255> | S stop | D e-stop | K clear | M <fl> <fr> <rl> <rr> | V status | I IMU | W power | N IR | J Sharp | T test | A auto-roam | ? help");
     Serial.println();
@@ -1081,9 +1141,7 @@ void pollLocalSensors(uint32_t now)
         uint8_t mask = g_ir.detectedMask();
         // mask bits: 0=REAR_LEFT, 1=REAR_RIGHT, 2=LEFT, 3=RIGHT
 
-        if (mask == 0) {
-            g_obstacle.clearObstacles(now);
-        } else {
+        if (mask != 0) {
             bool rl  = mask & 0x01;
             bool rr  = mask & 0x02;
             bool l   = mask & 0x04;
@@ -1098,6 +1156,12 @@ void pollLocalSensors(uint32_t now)
             else if (rr && !rl)   dir = ObstacleDirection::REAR_RIGHT;
 
             g_obstacle.onObstacleEvent(dir, now);
+            g_local_obstacle_stop = true;
+        } else {
+            // Sensor reads clear — leave the obstacle state untouched.
+            // applyToCommand() clears it after CLEAR_THRESHOLD_MS.  Calling
+            // clearObstacles() here would erase the stop on the very next
+            // poll and let a fresh Pi move command drive into the object.
         }
     }
 
@@ -1106,6 +1170,7 @@ void pollLocalSensors(uint32_t now)
     g_health.reportOk(MOD_SHARP, now);
     if (g_sharp.isTooClose() || g_sharp.isSlowing()) {
         g_obstacle.onObstacleEvent(ObstacleDirection::FRONT, now);
+        g_local_obstacle_stop = true;
     }
 
     // ---- Battery safety monitoring ----
@@ -1189,6 +1254,7 @@ void loop()
         I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
         Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
         Wire.setClock(BNO055_I2C_FREQ_HZ);
+        Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
         bool ok = g_imu.begin(BNO055_I2C_ADDR);
         if (ok) g_health.reportOk(MOD_IMU, now);
         else    g_health.reportRecoveryFailure(MOD_IMU, 1, now);
@@ -1198,6 +1264,7 @@ void loop()
         I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
         Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
         Wire.setClock(BNO055_I2C_FREQ_HZ);
+        Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
         bool ok = g_tof.begin();
         if (ok) g_health.reportOk(MOD_TOF, now);
         else    g_health.reportRecoveryFailure(MOD_TOF, 2, now);
