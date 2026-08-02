@@ -121,13 +121,13 @@ jobs:
 
       - name: Health check
         run: |
-          echo "⏳ Waiting for Web container to become healthy (max 60s)..."
-          for i in $(seq 1 30); do
-            if docker compose exec -T web curl -sf http://localhost:3000 > /dev/null 2>&1; then
+          echo "⏳ Waiting for Web container to become healthy (max 90s)..."
+          for i in $(seq 1 45); do
+            if docker compose exec -T web node -e "fetch('http://localhost:3000').then(r=>{if(r.ok)process.exit(0);else process.exit(1)}).catch(()=>process.exit(1))" 2>/dev/null; then
               echo "✅ Web is healthy"
               exit 0
             fi
-            echo "  attempt $i/30..."
+            echo "  attempt $i/45..."
             sleep 2
           done
           echo "❌ Web health check failed"
