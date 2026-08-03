@@ -478,7 +478,7 @@ class RealEsp32Bridge:
         if msg_type is None:
             return  # no type field — not a valid protocol frame
 
-        data = msg.get('data') or {}
+        data = msg.get('data') or msg
 
         if msg_type == self.TYPE_STATUS:
             self._safe_call(self.on_status_update, data)

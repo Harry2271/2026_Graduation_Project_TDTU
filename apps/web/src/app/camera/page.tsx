@@ -259,7 +259,6 @@ export default function CameraPage() {
 
           {/* Snapshot polling — each frame is a separate request, never stales */}
           <img
-            key={snapshotUrl}
             src={snapshotUrl}
             alt="Camera stream"
             className="absolute inset-0 w-full h-full object-cover"
