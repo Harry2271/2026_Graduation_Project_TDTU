@@ -24,7 +24,7 @@ export default function CameraPage() {
     const fetchFrame = async () => {
       if (!alive) return;
       try {
-        const res = await fetch(`${CAMERA_SNAPSHOT_URL}?t=${Date.now()}`, { cache: 'no-store' });
+        const res = await fetch(`${CAMERA_SNAPSHOT_URL}`, { cache: 'no-store' });
         if (res.ok && alive) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
@@ -41,7 +41,7 @@ export default function CameraPage() {
     // Initial health check to get resolution
     const init = async () => {
       try {
-        const res = await fetch(`${CAMERA_HEALTH_URL}?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        const res = await fetch(`${CAMERA_HEALTH_URL}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
         if (res.ok) {
           const data = await res.json();
           setIsOnline(data.camera === true);
@@ -74,7 +74,7 @@ export default function CameraPage() {
 
   const handleReconnect = useCallback(() => {
     setIsConnecting(true);
-    setSnapshotUrl(`${CAMERA_SNAPSHOT_URL}?t=${Date.now()}`);
+    setSnapshotUrl(`${CAMERA_SNAPSHOT_URL}`);
     setTimeout(() => setIsConnecting(false), 2000);
   }, []);
 
