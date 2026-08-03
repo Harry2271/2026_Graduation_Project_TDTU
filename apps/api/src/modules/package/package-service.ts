@@ -191,7 +191,7 @@ export class PackageService implements IPackageService {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < PackageService.ALLOCATE_RETRIES; attempt++) {
       try {
-        const updated = await this.packageRepository.update(id, { status, tagId, zoneCode });
+        const updated = await this.packageRepository.update(id, { status, tagId });
         if (!updated) {
           throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
         }
