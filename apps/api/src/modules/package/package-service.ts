@@ -195,7 +195,8 @@ export class PackageService implements IPackageService {
         if (!updated) {
           throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
         }
-        return updated;
+        const withZone = await this.packageRepository.assignZone(updated._id, zoneCode);
+        return withZone ?? updated;
       } catch (err: unknown) {
         lastError = err;
         if (!this.isDuplicateKeyError(err) || tagId === null || tagId === previousTagId) {
