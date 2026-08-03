@@ -14,7 +14,7 @@ export default function CameraPage() {
   const [isOnline, setIsOnline] = useState(false);
   const [timestamp, setTimestamp] = useState(new Date());
   const [resolution, setResolution] = useState('—');
-  const [snapshotUrl, setSnapshotUrl] = useState(`${CAMERA_SNAPSHOT_URL}?t=0`);
+  const [snapshotUrl, setSnapshotUrl] = useState(`${CAMERA_SNAPSHOT_URL}`);
 
   // Snapshot polling — refresh frame every 200ms (~5 fps visual).
   // Uses ObjectURL for zero-copy, revokes the previous blob to avoid memory leaks.

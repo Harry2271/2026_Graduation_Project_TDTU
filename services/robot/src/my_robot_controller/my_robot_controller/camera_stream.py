@@ -28,7 +28,7 @@ import subprocess
 import struct
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 
 logging.basicConfig(
@@ -266,7 +266,7 @@ def main() -> None:
     t = threading.Thread(target=_capture_loop, daemon=True, name='capture')
     t.start()
 
-    server = HTTPServer(('0.0.0.0', PORT), CameraHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), CameraHandler)
     logger.info('Camera stream server listening on http://0.0.0.0:%d', PORT)
 
     def _shutdown(signum: int, _frame: object) -> None:
