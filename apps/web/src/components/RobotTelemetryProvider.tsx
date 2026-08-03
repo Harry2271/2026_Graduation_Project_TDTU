@@ -35,10 +35,10 @@ export interface Esp32Status {
   mode: string;
   estop: boolean;
   max_pct: number;
-  nav: [number, number, number];
-  motors: Esp32MotorStatus[];
-  ir: boolean[];
-  st: Esp32SystemState;
+  nav?: [number, number, number];
+  motors?: Esp32MotorStatus[];
+  ir?: boolean[];
+  st?: Esp32SystemState;
 }
 
 export interface Esp32EncoderMotor {

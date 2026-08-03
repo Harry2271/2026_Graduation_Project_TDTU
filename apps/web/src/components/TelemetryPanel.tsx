@@ -162,7 +162,7 @@ function StatusTab() {
       {/* Nav */}
       <Row
         label="NAV"
-        value={`x=${status.nav[0]?.toFixed(2)} y=${status.nav[1]?.toFixed(2)} θ=${status.nav[2]?.toFixed(2)}`}
+        value={`x=${status?.nav?.[0]?.toFixed(2) ?? '0.00'} y=${status?.nav?.[1]?.toFixed(2) ?? '0.00'} θ=${status?.nav?.[2]?.toFixed(2) ?? '0.00'}`}
         mono
         small
       />
@@ -212,7 +212,7 @@ function MotorsTab() {
 
   return (
     <div className="grid grid-cols-2 gap-2 p-3">
-      {status.motors.map((m, i) => (
+      {(status.motors ?? []).map((m, i) => (
         <MotorCard key={i} name={MOTOR_NAMES[i] ?? `M${i + 1}`} target={m.t} rpm={m.r} />
       ))}
     </div>
@@ -278,7 +278,7 @@ function SensorsTab() {
   if (!status) {
     return <EmptyState icon={<WifiOff size={28} />} label="Chưa có dữ liệu ESP32" />;
   }
-  const st = status.st;
+  const st = status.st ?? { imu: false, pwr: false, sharp: 0, obs: false, tof_mm: 0, cyl: '—' };
   const irLabels = ['L', 'F', 'R', 'B'];
 
   return (
@@ -297,7 +297,7 @@ function SensorsTab() {
           </span>
         </div>
         <div className="flex items-center justify-around gap-2 py-1">
-          {status.ir.map((on, i) => (
+          {(status.ir ?? []).map((on, i) => (
             <div key={i} className="flex flex-col items-center gap-1">
               <span
                 className="w-4 h-4 rounded-full"
