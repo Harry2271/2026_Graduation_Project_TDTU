@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
-import { PackageStatus } from '../schemas/package.schema';
+import { PackageStatus, PackageZone } from '../schemas/package.schema';
 
 export class UpdatePackageDto {
   @ApiPropertyOptional({ description: 'Updated name of the package', example: 'Premium Parking Package' })
@@ -30,4 +30,13 @@ export class UpdatePackageDto {
   @Min(0)
   @Max(586)
   tagId?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Zone code the package belongs to. Cleared on FINISHED.',
+    enum: PackageZone,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsEnum(PackageZone)
+  zoneCode?: PackageZone | null;
 }
