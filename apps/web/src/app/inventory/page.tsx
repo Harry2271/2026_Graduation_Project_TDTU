@@ -57,8 +57,7 @@ function Cube3D({ size, colorBase, colorLight, colorDark }: {
   colorDark: string;
 }) {
   const half = size / 2;
-  // Front-right-down view: shows top + left + right faces
-  // rotateX(25deg) tilts camera down; rotateY(-30deg) rotates right
+  // Front-right-down view: parent rotateX(30deg) rotateY(45deg) shows top + right + front
   // Individual face transforms: top face → translateZ; left face → rotateX(-90deg); right face → rotateY(90deg)
   return (
     <div style={{ flexShrink: 0, position: 'relative', width: size, height: size }}>
@@ -203,7 +202,7 @@ function ZoneCard({
           className="flex flex-wrap gap-1 items-end content-start"
           style={{
             transformStyle: 'preserve-3d',
-            transform: 'rotateX(30deg) rotateY(-35deg)',
+            transform: 'rotateX(30deg) rotateY(45deg)',
             maxWidth: '90%',
           }}
         >
