@@ -3,14 +3,8 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder,SwaggerModule } from '@nestjs/swagger';
 
 import { AppModule } from './app.module';
-import { migratePackageZones } from './scripts/migrate-package-zone';
-
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
-  // One-time backfill: convert legacy targetSlotCode/sourceSlotCode → zoneCode.
-  // Idempotent — safe to call on every restart; subsequent runs are no-ops.
-  await migratePackageZones();
 
   app.enableCors({
     origin: ['https://web.nguyen-robot.io.vn', 'http://localhost:3000', 'http://localhost:8081'],

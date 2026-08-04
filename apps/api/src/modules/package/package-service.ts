@@ -6,9 +6,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 
 import { EventsGateway } from '../../gateway/events-gateway';
+import { runZoneMigration } from '../../scripts/migrate-package-zone';
 import { ShelfService } from '../shelf/shelf-service';
 import { CreatePackageDto } from './dto/create-package.dto';
 import { PaginatedResponseDto, PaginationMeta, PaginationQueryDto } from './dto/pagination.dto';
@@ -20,7 +22,7 @@ import { IPackageService } from './interfaces/package-service.interface';
 import { Package, PackageStatus, PackageZone } from './schemas/package.schema';
 
 @Injectable()
-export class PackageService implements IPackageService {
+export class PackageService implements IPackageService, OnModuleInit {
   private static readonly TAG_ID_MIN = 0;
   private static readonly TAG_ID_MAX = 586;
   private static readonly ALLOCATE_RETRIES = 5;
@@ -34,6 +36,20 @@ export class PackageService implements IPackageService {
     @Inject(forwardRef(() => ShelfService))
     private readonly shelfService: ShelfService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    // One-time idempotent backfill. Nest calls this hook AFTER Mongoose has
+    // finished initializing the connection, so connection.db is guaranteed
+    // to be populated — no race with the driver like there was in main.ts.
+    try {
+      await runZoneMigration();
+    } catch (error) {
+      this.logger.error(
+        `Zone migration failed: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
+    }
+  }
 
   async create(dto: CreatePackageDto): Promise<Package> {
     let lastError: unknown = null;
