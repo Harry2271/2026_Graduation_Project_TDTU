@@ -4,19 +4,17 @@ import mongoose from 'mongoose';
  * One-time idempotent migration: backfill `zoneCode` on legacy packages
  * that still carry `targetSlotCode` / `sourceSlotCode` (pre-zone schema).
  *
- * Safe to call on every startup — the filter `{ zoneCode: { $exists: false } }`
- * ensures only unmigrated documents are touched; subsequent runs are no-ops.
+ * Called from PackageService.onModuleInit() — NestJS guarantees that by
+ * that time the Mongoose connection is fully established and `connection.db`
+ * is populated.
+ *
+ * The filter `{ zoneCode: { $exists: false } }` ensures only unmigrated
+ * documents are touched; subsequent runs are no-ops.
  */
-export async function migratePackageZones(): Promise<void> {
-  // Wait until Mongoose reaches `connected` state. `connection.asPromise()`
-  // resolves once the underlying driver has finished connecting, so callers
-  // can safely access `connection.db` afterward.
-  if (mongoose.connection.readyState !== 1) {
-    await mongoose.connection.asPromise();
-  }
-
+export async function runZoneMigration(): Promise<void> {
   if (!mongoose.connection.db) {
-    throw new Error('Mongoose connection is not ready');
+    console.warn('[migrate-package-zone] skipped — connection.db not available');
+    return;
   }
   const collection = mongoose.connection.db.collection('packages');
 
