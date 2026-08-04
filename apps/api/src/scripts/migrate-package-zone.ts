@@ -1,4 +1,4 @@
-import { getConnection } from 'mongoose';
+import mongoose from 'mongoose';
 
 /**
  * One-time idempotent migration: backfill `zoneCode` on legacy packages
@@ -8,7 +8,10 @@ import { getConnection } from 'mongoose';
  * ensures only unmigrated documents are touched; subsequent runs are no-ops.
  */
 export async function migratePackageZones(): Promise<void> {
-  const collection = getConnection().collection('packages');
+  if (!mongoose.connection.db) {
+    throw new Error('Mongoose connection is not ready');
+  }
+  const collection = mongoose.connection.db.collection('packages');
 
   // ── Pass 1: documents with a valid targetSlotCode → derive zone from first 2 chars ──
   const pass1 = await collection.updateMany(
