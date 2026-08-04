@@ -8,6 +8,13 @@ import mongoose from 'mongoose';
  * ensures only unmigrated documents are touched; subsequent runs are no-ops.
  */
 export async function migratePackageZones(): Promise<void> {
+  // Wait until Mongoose reaches `connected` state. `connection.asPromise()`
+  // resolves once the underlying driver has finished connecting, so callers
+  // can safely access `connection.db` afterward.
+  if (mongoose.connection.readyState !== 1) {
+    await mongoose.connection.asPromise();
+  }
+
   if (!mongoose.connection.db) {
     throw new Error('Mongoose connection is not ready');
   }
