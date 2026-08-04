@@ -35,11 +35,11 @@ import type { Package, ZoneCode } from '@/types/inventory';
 
 const ZONE_CODES: ZoneCode[] = ['S1', 'S2', 'S3', 'S4'];
 
-const ZONE_META: Record<ZoneCode, { label: string; pos: string; accent: string; cubeBase: string; cubeLight: string; cubeDark: string }> = {
-  S1: { label: 'Khu S1', pos: 'Tây Bắc',  accent: '#00d4ff', cubeBase: '#00b8e6', cubeLight: '#33e0ff', cubeDark: '#0090b3' },
-  S2: { label: 'Khu S2', pos: 'Đông Bắc', accent: '#00ff88', cubeBase: '#00cc6a', cubeLight: '#33ff99', cubeDark: '#009950' },
-  S3: { label: 'Khu S3', pos: 'Tây Nam',  accent: '#ffb800', cubeBase: '#e6a500', cubeLight: '#ffd24d', cubeDark: '#b38200' },
-  S4: { label: 'Khu S4', pos: 'Đông Nam', accent: '#a855f7', cubeBase: '#9333ea', cubeLight: '#c084fc', cubeDark: '#7e22ce' },
+const ZONE_META: Record<ZoneCode, { label: string; accent: string; cubeBase: string; cubeLight: string; cubeDark: string }> = {
+  S1: { label: 'Khu S1', accent: '#00d4ff', cubeBase: '#00b8e6', cubeLight: '#33e0ff', cubeDark: '#0090b3' },
+  S2: { label: 'Khu S2', accent: '#00ff88', cubeBase: '#00cc6a', cubeLight: '#33ff99', cubeDark: '#009950' },
+  S3: { label: 'Khu S3', accent: '#ffb800', cubeBase: '#e6a500', cubeLight: '#ffd24d', cubeDark: '#b38200' },
+  S4: { label: 'Khu S4', accent: '#a855f7', cubeBase: '#9333ea', cubeLight: '#c084fc', cubeDark: '#7e22ce' },
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -57,18 +57,11 @@ function Cube3D({ size, colorBase, colorLight, colorDark }: {
   colorDark: string;
 }) {
   const half = size / 2;
-  const h = Math.round(size * 0.866); // height of equilateral triangle ≈ sin(60°)
+  // Front-right-down view: shows top + left + right faces
+  // rotateX(25deg) tilts camera down; rotateY(-30deg) rotates right
+  // Individual face transforms: top face → translateZ; left face → rotateX(-90deg); right face → rotateY(90deg)
   return (
-    <div
-      style={{
-        width: size,
-        height: h,
-        transformStyle: 'preserve-3d',
-        transform: 'rotateX(-30deg) rotateY(45deg)',
-        flexShrink: 0,
-        position: 'relative',
-      }}
-    >
+    <div style={{ flexShrink: 0, position: 'relative', width: size, height: size }}>
       {/* top face */}
       <div style={{
         position: 'absolute', width: size, height: size,
@@ -138,7 +131,9 @@ function ZoneCard({
             ? `0 0 30px ${m.accent}20, 0 4px 24px rgba(0,0,0,0.4)`
             : '0 4px 24px rgba(0,0,0,0.3)',
         textAlign: 'left',
-        minHeight: 220,
+        width: '100%',
+        height: '100%',
+        aspectRatio: '1 / 1',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -150,9 +145,6 @@ function ZoneCard({
           <div className="flex items-center gap-2 mb-1">
             <span style={{ fontSize: 13, fontWeight: 900, color: m.accent, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
               {m.label}
-            </span>
-            <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-              {m.pos}
             </span>
           </div>
           <span style={{ fontSize: 28, fontWeight: 900, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.03em' }}>
@@ -200,17 +192,20 @@ function ZoneCard({
 
       {/* 3D block field */}
       <div
-        className="flex-1 relative px-4 pt-3 pb-2"
+        className="flex-1 relative px-4 pt-6 pb-4 flex items-center justify-center"
         style={{
-          perspective: 600,
-          perspectiveOrigin: '50% 40%',
+          perspective: 700,
+          perspectiveOrigin: '55% 30%',
           overflow: 'hidden',
-          minHeight: 140,
         }}
       >
         <div
-          className="flex flex-wrap gap-0.75 items-end content-start"
-          style={{ transformStyle: 'preserve-3d', transform: 'rotateX(25deg) rotateY(-30deg)' }}
+          className="flex flex-wrap gap-1 items-end content-start"
+          style={{
+            transformStyle: 'preserve-3d',
+            transform: 'rotateX(30deg) rotateY(-35deg)',
+            maxWidth: '90%',
+          }}
         >
           {Array.from({ length: blockCount }).map((_, i) => (
             <Cube3D
