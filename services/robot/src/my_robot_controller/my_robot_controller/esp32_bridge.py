@@ -453,8 +453,11 @@ class RealEsp32Bridge:
           USB CDC) are silently dropped.
         - Malformed JSON is logged and dropped.
         - Recognised JSON types are dispatched to the matching callback.
+        - Repeated transient errors trigger exponential backoff to avoid
+          spinning when the device reports ready but returns nothing.
         """
         buf = bytearray()
+        backoff = 0.05
         while self._connected:
             try:
                 chunk = await self._reader.read(256)
@@ -463,8 +466,12 @@ class RealEsp32Bridge:
             except Exception as exc:  # noqa: BLE001
                 LOG.warning('read failed: %s', exc)
                 self.on_error(f'read failed: {exc}')
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 2.0)
                 continue
+
+            # Successful read — reset backoff.
+            backoff = 0.05
 
             if not chunk:
                 # EOF or no-data — back off to avoid a tight CPU loop.
@@ -479,7 +486,10 @@ class RealEsp32Bridge:
             while b'\n' in buf:
                 raw, buf = buf.split(b'\n', 1)
                 if len(raw) > self._MAX_LINE_BYTES:
-                    LOG.warning('dropping oversized line (%d bytes)', len(raw))
+                    LOG.warning(
+                        'dropping oversized line (%d bytes): %r',
+                        len(raw), raw[:200],
+                    )
                     continue
                 # Wrap each callback invocation — a buggy user handler
                 # must NOT kill the reader task.
@@ -506,14 +516,14 @@ class RealEsp32Bridge:
         try:
             msg = json.loads(text)
         except json.JSONDecodeError as exc:
-            LOG.warning('bad JSON: %s', exc)
+            LOG.warning('bad JSON (%d bytes): %s | raw: %r', len(text), exc, text[:200])
             return
 
         msg_type = msg.get('type')
         if msg_type is None:
             return  # no type field — not a valid protocol frame
 
-        data = msg.get('data') or {}
+        data = msg.get('data') or msg
 
         if msg_type == self.TYPE_STATUS:
             self._safe_call(self.on_status_update, data)

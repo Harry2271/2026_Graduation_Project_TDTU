@@ -14,7 +14,7 @@ export default function CameraPage() {
   const [isOnline, setIsOnline] = useState(false);
   const [timestamp, setTimestamp] = useState(new Date());
   const [resolution, setResolution] = useState('—');
-  const [snapshotUrl, setSnapshotUrl] = useState(`${CAMERA_SNAPSHOT_URL}?t=0`);
+  const [snapshotUrl, setSnapshotUrl] = useState(`${CAMERA_SNAPSHOT_URL}`);
 
   // Snapshot polling — refresh frame every 200ms (~5 fps visual).
   // Uses ObjectURL for zero-copy, revokes the previous blob to avoid memory leaks.
@@ -24,7 +24,7 @@ export default function CameraPage() {
     const fetchFrame = async () => {
       if (!alive) return;
       try {
-        const res = await fetch(`${CAMERA_SNAPSHOT_URL}?t=${Date.now()}`, { cache: 'no-store' });
+        const res = await fetch(`${CAMERA_SNAPSHOT_URL}`, { cache: 'no-store' });
         if (res.ok && alive) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
@@ -41,7 +41,7 @@ export default function CameraPage() {
     // Initial health check to get resolution
     const init = async () => {
       try {
-        const res = await fetch(`${CAMERA_HEALTH_URL}?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        const res = await fetch(`${CAMERA_HEALTH_URL}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
         if (res.ok) {
           const data = await res.json();
           setIsOnline(data.camera === true);
@@ -74,7 +74,7 @@ export default function CameraPage() {
 
   const handleReconnect = useCallback(() => {
     setIsConnecting(true);
-    setSnapshotUrl(`${CAMERA_SNAPSHOT_URL}?t=${Date.now()}`);
+    setSnapshotUrl(`${CAMERA_SNAPSHOT_URL}`);
     setTimeout(() => setIsConnecting(false), 2000);
   }, []);
 
@@ -259,7 +259,6 @@ export default function CameraPage() {
 
           {/* Snapshot polling — each frame is a separate request, never stales */}
           <img
-            key={snapshotUrl}
             src={snapshotUrl}
             alt="Camera stream"
             className="absolute inset-0 w-full h-full object-cover"

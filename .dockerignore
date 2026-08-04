@@ -1,0 +1,43 @@
+# Dependencies
+node_modules
+apps/*/node_modules
+services/*/node_modules
+packages/*/node_modules
+
+# Build outputs
+dist
+.next
+out
+build
+.turbo
+
+# Git
+.git
+.gitignore
+
+# Environment files (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# IDE / editor
+.idea
+.vscode
+
+# CI/CD
+.github
+
+# Firmware, docs, misc
+firmware
+docs
+tools/deploy
+
+# Claude / Playwright / Memory
+.claude
+.remember
+.playwright-mcp

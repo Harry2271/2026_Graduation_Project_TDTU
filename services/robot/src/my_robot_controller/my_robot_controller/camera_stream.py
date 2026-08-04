@@ -28,7 +28,7 @@ import subprocess
 import struct
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 
 logging.basicConfig(
@@ -165,6 +165,15 @@ def _get_frame() -> Optional[bytes]:
 # ── HTTP Handlers ──────────────────────────────────────────────────────────────
 
 class CameraHandler(BaseHTTPRequestHandler):
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.send_header('Access-Control-Max-Age', '86400')
+        self.end_headers()
+
     def do_GET(self) -> None:
         if self.path == '/':
             self._handle_health()
@@ -192,6 +201,8 @@ class CameraHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
         self.end_headers()
         self.wfile.write(body)
 
@@ -205,6 +216,9 @@ class CameraHandler(BaseHTTPRequestHandler):
             'Content-Type',
             'multipart/x-mixed-replace; boundary=frame',
         )
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
         self.end_headers()
 
         try:
@@ -237,6 +251,8 @@ class CameraHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(frame)))
         self.send_header('Cache-Control', 'no-cache')
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
         self.end_headers()
         self.wfile.write(frame)
 
@@ -250,7 +266,7 @@ def main() -> None:
     t = threading.Thread(target=_capture_loop, daemon=True, name='capture')
     t.start()
 
-    server = HTTPServer(('0.0.0.0', PORT), CameraHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), CameraHandler)
     logger.info('Camera stream server listening on http://0.0.0.0:%d', PORT)
 
     def _shutdown(signum: int, _frame: object) -> None:

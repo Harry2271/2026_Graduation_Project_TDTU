@@ -2,13 +2,22 @@
 
 export type PackageStatus = 'CREATED' | 'IN_PROGRESS' | 'FINISHED';
 
+export type ZoneCode = 'S1' | 'S2' | 'S3' | 'S4';
+
 export interface Package {
   _id: string;
   packageName: string;
   status: PackageStatus;
   tagId: number | null;
+  zoneCode: ZoneCode | null;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface PackageStats {
+  total: number;
+  unplaced: number;
+  zones: Record<ZoneCode, number>;
 }
 
 export interface PaginationMeta {
@@ -61,14 +70,9 @@ export interface PackageItem {
   importedAt: string;
 }
 
-export interface SelectedCell {
-  shelfId: number;
-  cell: string;
-}
-
 export interface MoveCommandPayload {
-  from: SelectedCell;
-  to: SelectedCell;
+  from: { shelfId: number; cell: string };
+  to: { shelfId: number; cell: string };
 }
 
 export interface MoveCommandResponse {
@@ -92,25 +96,4 @@ export interface Job {
 
 export interface DispatchMoveResponse {
   jobId: string;
-}
-
-// ─── Slot code helpers ──────────────────────────────────────────────
-
-/**
- * Converts a backend slot code like "S1A1" to frontend { shelfId, cell }.
- */
-export function parseSlotCode(code: string): { shelfId: number; cell: string } {
-  const match = code.match(/^S(\d)([A-Z])(\d)$/);
-  if (!match) return { shelfId: 0, cell: '' };
-  return {
-    shelfId: parseInt(match[1], 10),
-    cell: `${match[2]}${match[3]}`,
-  };
-}
-
-/**
- * Converts frontend { shelfId, cell } to a backend slot code like "S1A1".
- */
-export function toSlotCode(shelfId: number, cell: string): string {
-  return `S${shelfId}${cell}`;
 }
