@@ -101,15 +101,17 @@ function ZoneCard({
   count,
   isActive,
   isHighlight,
+  isTarget,
+  isSource,
   onSelect,
-  onAssign,
 }: {
   zone: ZoneCode;
   count: number;
   isActive: boolean;
   isHighlight: boolean;
+  isTarget: boolean;
+  isSource: boolean;
   onSelect: () => void;
-  onAssign: () => void;
 }) {
   const m = ZONE_META[zone];
   const cubeSize = 22;
@@ -121,16 +123,20 @@ function ZoneCard({
       onClick={onSelect}
       className="relative overflow-hidden group"
       style={{
-        background: isActive
-          ? `linear-gradient(135deg, ${m.accent}15, var(--bg-raised))`
-          : 'linear-gradient(135deg, var(--bg-raised), var(--bg-surface))',
-        border: `1px solid ${isActive ? m.accent + '55' : isHighlight ? m.accent + '88' : 'var(--border-dim)'}`,
+        background: isTarget
+          ? `linear-gradient(135deg, ${m.accent}20, var(--bg-raised))`
+          : isActive
+            ? `linear-gradient(135deg, ${m.accent}15, var(--bg-raised))`
+            : 'linear-gradient(135deg, var(--bg-raised), var(--bg-surface))',
+        border: `1px solid ${isTarget ? m.accent + 'cc' : isActive ? m.accent + '55' : isHighlight ? m.accent + '40' : 'var(--border-dim)'}`,
         borderRadius: 16,
-        cursor: 'pointer',
+        cursor: isHighlight ? 'pointer' : 'default',
         transition: 'all 0.2s ease',
-        boxShadow: isActive
-          ? `0 0 30px ${m.accent}20, 0 4px 24px rgba(0,0,0,0.4)`
-          : '0 4px 24px rgba(0,0,0,0.3)',
+        boxShadow: isTarget
+          ? `0 0 40px ${m.accent}30, 0 4px 24px rgba(0,0,0,0.4)`
+          : isActive
+            ? `0 0 30px ${m.accent}20, 0 4px 24px rgba(0,0,0,0.4)`
+            : '0 4px 24px rgba(0,0,0,0.3)',
         textAlign: 'left',
         minHeight: 220,
         display: 'flex',
@@ -157,20 +163,37 @@ function ZoneCard({
           </span>
         </div>
 
-        {/* Assign button (only shown when package is selected) */}
-        {isHighlight && (
-          <div
-            className="px-3 py-2 rounded-xl font-bold text-[11px] transition-all"
+        {/* Source zone badge — current location of the selected package */}
+        {isSource && (
+          <div className="px-3 py-1.5 rounded-xl text-[10px] font-bold"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-mid)', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+            Hiện đang ở đây
+          </div>
+        )}
+        {/* Target zone badge — staging before Xác nhận */}
+        {isTarget && (
+          <div className="px-3 py-1.5 rounded-xl text-[10px] font-bold"
             style={{
-              background: `${m.accent}20`,
+              background: `${m.accent}25`,
+              border: `1px solid ${m.accent}`,
+              color: m.accent,
+              fontFamily: "'JetBrains Mono', monospace",
+              boxShadow: `0 0 12px ${m.accent}35`,
+              animation: 'pulse-assign 1.5s ease-in-out infinite',
+            }}>
+            Khu đích ← bấm (Xác nhận ở trên)
+          </div>
+        )}
+        {/* Other zone — selectable target */}
+        {isHighlight && !isTarget && !isSource && (
+          <div className="px-3 py-1.5 rounded-xl text-[10px] font-bold"
+            style={{
+              background: `${m.accent}10`,
               border: `1px solid ${m.accent}40`,
               color: m.accent,
               fontFamily: "'JetBrains Mono', monospace",
-              boxShadow: `0 0 12px ${m.accent}25`,
-              animation: 'pulse-assign 2s ease-in-out infinite',
-            }}
-          >
-            ← Chuyển vào đây
+            }}>
+            Chọn làm khu đích
           </div>
         )}
       </div>
@@ -186,7 +209,7 @@ function ZoneCard({
         }}
       >
         <div
-          className="flex flex-wrap gap-[3px] items-end content-start"
+          className="flex flex-wrap gap-0.75 items-end content-start"
           style={{ transformStyle: 'preserve-3d', transform: 'rotateX(25deg) rotateY(-30deg)' }}
         >
           {Array.from({ length: blockCount }).map((_, i) => (
@@ -222,6 +245,7 @@ export default function InventoryPage() {
   // UI state
   const [zoneFilter, setZoneFilter] = useState<ZoneCode | null>(null);
   const [selectedPkgId, setSelectedPkgId] = useState<string | null>(null);
+  const [targetZone, setTargetZone] = useState<ZoneCode | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [listOpen, setListOpen] = useState(true);
   const [isFinishOpen, setIsFinishOpen] = useState(false);
@@ -261,13 +285,30 @@ export default function InventoryPage() {
   /* ── Handlers ──────────────────────────────────────────────────── */
 
   const handleZoneSelect = (zone: ZoneCode) => {
-    // If we have a package selected and we're clicking a DIFFERENT zone → trigger assign
-    if (selectedPkg && selectedPkg.zoneCode !== zone) {
-      handleAssignZone(selectedPkg._id, zone);
+    // With a pending package, clicking any zone stages it as target (not immediate)
+    if (selectedPkg) {
+      if (selectedPkg.zoneCode === zone) {
+        // same zone as current → deselect target
+        setTargetZone((prev) => (prev === zone ? null : zone));
+      } else {
+        setTargetZone(zone);
+      }
       return;
     }
-    // Otherwise just filter
+    // No package selected → toggle filter
     setZoneFilter((prev) => (prev === zone ? null : zone));
+  };
+
+  const handleConfirmMove = async () => {
+    if (!selectedPkg || !targetZone) return;
+    await handleAssignZone(selectedPkg._id, targetZone);
+    setSelectedPkgId(null);
+    setTargetZone(null);
+  };
+
+  const handleCancelMove = () => {
+    setSelectedPkgId(null);
+    setTargetZone(null);
   };
 
   const handleAssignZone = async (pkgId: string, zoneCode: ZoneCode) => {
@@ -434,15 +475,46 @@ export default function InventoryPage() {
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px]"
                 style={{ background: 'var(--accent-dim)', border: '1px solid rgba(0,212,255,0.25)', color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
                 <span className="w-2 h-2 rounded-full" style={{ background: 'var(--accent)' }} />
-                Đã chọn: {selectedPkg.packageName}
-                <button type="button" onClick={() => setSelectedPkgId(null)} className="ml-1 opacity-60 hover:opacity-100" style={{ cursor: 'pointer' }}>✕</button>
+                {selectedPkg.packageName}
+                <button type="button" onClick={() => { setSelectedPkgId(null); setTargetZone(null); }} className="ml-1 opacity-60 hover:opacity-100" style={{ cursor: 'pointer' }}>✕</button>
               </div>
             )}
           </div>
-          {selectedPkg && (
+          {selectedPkg && !targetZone && (
             <p className="text-[10px] mt-2" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-              Bấm vào khu ở bên dưới để chuyển kiện hàng này
+              Bấm vào khu đích bên dưới
             </p>
+          )}
+          {selectedPkg && targetZone && (
+            <div className="mt-2 flex items-center gap-3 text-[11px] px-3 py-2 rounded-xl"
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', fontFamily: "'JetBrains Mono', monospace" }}>
+              <span style={{ color: 'var(--text-muted)' }}>Chuyển</span>
+              <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{selectedPkg.packageName}</span>
+              <span style={{ color: 'var(--text-muted)' }}>→</span>
+              <span style={{ color: ZONE_META[targetZone].accent, fontWeight: 700 }}>{targetZone}</span>
+              <button type="button" disabled={isAssigning}
+                onClick={() => void handleConfirmMove()}
+                className="ml-auto px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all"
+                style={{
+                  background: isAssigning ? 'rgba(0,212,255,0.2)' : 'var(--accent)',
+                  border: 'none', color: '#080b10',
+                  cursor: isAssigning ? 'not-allowed' : 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}>
+                {isAssigning ? '...' : 'Xác nhận'}
+              </button>
+              <button type="button" onClick={handleCancelMove}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--border-mid)',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}>
+                Huỷ
+              </button>
+            </div>
           )}
         </div>
 
@@ -454,9 +526,10 @@ export default function InventoryPage() {
               zone={z}
               count={zoneCounts[z]}
               isActive={zoneFilter === z}
-              isHighlight={!!selectedPkg && selectedPkg.zoneCode !== z}
+              isHighlight={!!selectedPkg}
+              isTarget={!!selectedPkg && targetZone === z}
+              isSource={!!selectedPkg && selectedPkg.zoneCode === z}
               onSelect={() => handleZoneSelect(z)}
-              onAssign={() => { if (selectedPkg) handleAssignZone(selectedPkg._id, z); }}
             />
           ))}
         </div>
