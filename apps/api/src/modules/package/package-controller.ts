@@ -17,8 +17,10 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
+import { AssignZoneDto } from './dto/assign-zone.dto';
 import { CreatePackageDto } from './dto/create-package.dto';
 import { PackagePaginatedResponseDto } from './dto/package-paginated-response.dto';
+import { PackageStatsResponseDto } from './dto/package-stats-response.dto';
 import { PaginatedResponseDto, PaginationQueryDto } from './dto/pagination.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
 import { UpdatePackageStatusDto } from './dto/update-package-status.dto';
@@ -44,6 +46,13 @@ export class PackageController {
   @ApiResponse({ status: 200, description: 'Paginated list of packages', type: PackagePaginatedResponseDto })
   findAll(@Query() pagination: PaginationQueryDto): Promise<PaginatedResponseDto<Package>> {
     return this.packageService.findAllPaginated(pagination);
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get active package counts grouped by zone' })
+  @ApiResponse({ status: 200, description: 'Active package stats', type: PackageStatsResponseDto })
+  getStats(): Promise<PackageStatsResponseDto> {
+    return this.packageService.getStats();
   }
 
   @Get(':id')
@@ -85,5 +94,18 @@ export class PackageController {
     @Body() dto: UpdatePackageStatusDto,
   ): Promise<Package> {
     return this.packageService.changeStatus(id, dto.status);
+  }
+
+  @Patch(':id/zone')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Assign or clear the zone for a package' })
+  @ApiResponse({ status: 200, description: 'Package zone updated', type: Package })
+  @ApiResponse({ status: 400, description: 'Package is FINISHED' })
+  @ApiResponse({ status: 404, description: 'Package not found' })
+  updateZone(
+    @Param('id') id: string,
+    @Body() dto: AssignZoneDto,
+  ): Promise<Package> {
+    return this.packageService.assignZone(id, dto.zoneCode ?? null);
   }
 }

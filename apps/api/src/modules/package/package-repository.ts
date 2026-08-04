@@ -7,11 +7,12 @@ import { PaginationQueryDto } from './dto/pagination.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
 import { IPACKAGE_REPOSITORY } from './interfaces/package-repository.interface';
 import { IPackageRepository } from './interfaces/package-repository.interface';
-import { Package, PackageDocument, PackageStatus } from './schemas/package.schema';
+import { Package, PackageDocument, PackageStatus, PackageZone } from './schemas/package.schema';
 
 export interface CreatePackageInput extends CreatePackageDto {
   status: PackageStatus;
   tagId: number | null;
+  zoneCode: PackageZone | null;
 }
 
 @Injectable()
@@ -62,6 +63,41 @@ export class PackageRepository implements IPackageRepository {
       .exec();
 
     return docs.flatMap((doc) => (typeof doc.tagId === 'number' ? [doc.tagId] : []));
+  }
+
+  async assignZone(id: string, zoneCode: PackageZone | null): Promise<Package | null> {
+    return this.packageModel
+      .findByIdAndUpdate(id, { zoneCode }, { new: true })
+      .lean()
+      .exec();
+  }
+
+  async getActiveStats(): Promise<{ total: number; unplaced: number; zones: Record<PackageZone, number> }> {
+    const grouped = await this.packageModel
+      .aggregate<{ _id: PackageZone | null; count: number }>([
+        { $match: { status: { $ne: PackageStatus.FINISHED } } },
+        { $group: { _id: '$zoneCode', count: { $sum: 1 } } },
+      ])
+      .exec();
+
+    const zones: Record<PackageZone, number> = {
+      [PackageZone.S1]: 0,
+      [PackageZone.S2]: 0,
+      [PackageZone.S3]: 0,
+      [PackageZone.S4]: 0,
+    };
+    let unplaced = 0;
+    let total = 0;
+    for (const group of grouped) {
+      total += group.count;
+      if (group._id === null) {
+        unplaced = group.count;
+      } else if (group._id in zones) {
+        zones[group._id] = group.count;
+      }
+    }
+
+    return { total, unplaced, zones };
   }
 }
 

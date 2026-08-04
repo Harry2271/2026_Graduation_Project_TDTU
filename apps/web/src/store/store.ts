@@ -1,11 +1,9 @@
 import { configureStore } from '@reduxjs/toolkit';
-import inventoryReducer from './inventorySlice';
 import calibrateReducer from './calibrateSlice';
 import { inventoryApi } from './services/inventoryApi';
 
 export const store = configureStore({
   reducer: {
-    inventory: inventoryReducer,
     calibrate: calibrateReducer,
     [inventoryApi.reducerPath]: inventoryApi.reducer,
   },

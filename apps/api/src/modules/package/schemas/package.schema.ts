@@ -10,6 +10,13 @@ export enum PackageStatus {
   FINISHED = 'FINISHED',
 }
 
+export enum PackageZone {
+  S1 = 'S1',
+  S2 = 'S2',
+  S3 = 'S3',
+  S4 = 'S4',
+}
+
 @Schema({ timestamps: true, versionKey: false })
 export class Package {
   @ApiProperty({ description: 'Auto-generated MongoDB ID', example: '6771a2b3c4d5e6f7a8b9c0d1' })
@@ -42,13 +49,14 @@ export class Package {
   @Prop({ type: Number, min: 0, max: 586, default: null })
   tagId!: number | null;
 
-  @ApiPropertyOptional({ description: 'Source slot code, set when the user picks the source slot in the web UI', example: 'S1A1', nullable: true })
-  @Prop({ type: String, default: null })
-  sourceSlotCode!: string | null;
-
-  @ApiPropertyOptional({ description: 'Target slot code, set when the user picks the destination slot in the web UI', example: 'S2C3', nullable: true })
-  @Prop({ type: String, default: null })
-  targetSlotCode!: string | null;
+  @ApiPropertyOptional({
+    description: 'Zone code the package belongs to (S1–S4). Multiple packages may share the same zone.',
+    enum: PackageZone,
+    example: 'S1',
+    nullable: true,
+  })
+  @Prop({ type: String, enum: PackageZone, default: null })
+  zoneCode!: PackageZone | null;
 }
 
 export const PackageSchema = SchemaFactory.createForClass(Package);

@@ -4,6 +4,8 @@ import type {
   Package,
   PackagePaginatedResponseDto,
   PackageStatus,
+  PackageStats,
+  ZoneCode,
   Shelf,
   ShelfSlot,
   MovePackageDto,
@@ -12,7 +14,7 @@ import type {
 } from "@/types/inventory";
 
 // Tag type helpers matching RTK Query's FullTagDescription
-type TagType = "Packages" | "Shelves" | "Slots" | "Jobs";
+type TagType = "Packages" | "Shelves" | "Slots" | "Jobs" | "Stats";
 type TagDescription =
   | { type: TagType }
   | { type: TagType; id: string | number };
@@ -24,7 +26,7 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: () => "/packages",
       transformResponse: (response: PackagePaginatedResponseDto) => response.items,
       providesTags: (): TagDescription[] => [{ type: "Packages" }],
-      async onCacheEntryAdded(_arg, { updateCachedData, cacheEntryRemoved }) {
+      async onCacheEntryAdded(_arg, { updateCachedData, cacheEntryRemoved, dispatch }) {
         const socket = getSocket();
 
         socket.on("package:created", (newPkg: Package) => {
@@ -33,6 +35,7 @@ export const inventoryApi = baseApi.injectEndpoints({
             const exists = draft.some((p) => p._id === newPkg._id);
             if (!exists) draft.push(newPkg);
           });
+          dispatch(inventoryApi.util.invalidateTags(["Stats"]));
         });
 
         socket.on("package:updated", (updatedPkg: Package) => {
@@ -41,6 +44,7 @@ export const inventoryApi = baseApi.injectEndpoints({
             const idx = draft.findIndex((p) => p._id === updatedPkg._id);
             if (idx >= 0) draft[idx] = updatedPkg;
           });
+          dispatch(inventoryApi.util.invalidateTags(["Stats"]));
         });
 
         socket.on("package:deleted", (id: string) => {
@@ -49,6 +53,7 @@ export const inventoryApi = baseApi.injectEndpoints({
             const idx = draft.findIndex((p) => p._id === id);
             if (idx >= 0) draft.splice(idx, 1);
           });
+          dispatch(inventoryApi.util.invalidateTags(["Stats"]));
         });
 
         await cacheEntryRemoved;
@@ -119,6 +124,27 @@ export const inventoryApi = baseApi.injectEndpoints({
       invalidatesTags: (_r, _e, { id }): TagDescription[] => [
         { type: "Packages" },
         { type: "Packages", id },
+      ],
+    }),
+
+    // ─── Stats (zone UX) ──────────────────────────────────────────
+    getPackageStats: builder.query<PackageStats, void>({
+      query: () => "/packages/stats",
+      providesTags: (): TagDescription[] => [{ type: "Stats" }],
+    }),
+
+    assignToZone: builder.mutation<
+      Package,
+      { id: string; zoneCode: ZoneCode | null }
+    >({
+      query: ({ id, zoneCode }) => ({
+        url: `/packages/${id}/zone`,
+        method: "PATCH",
+        body: { zoneCode },
+      }),
+      invalidatesTags: (): TagDescription[] => [
+        { type: "Packages" },
+        { type: "Stats" },
       ],
     }),
 
@@ -300,6 +326,8 @@ export const {
   useUpdatePackageMutation,
   useDeletePackageMutation,
   usePatchPackageStatusMutation,
+  useGetPackageStatsQuery,
+  useAssignToZoneMutation,
   useGetShelvesQuery,
   useGetAllSlotsQuery,
   useGetSlotsByShelfQuery,
