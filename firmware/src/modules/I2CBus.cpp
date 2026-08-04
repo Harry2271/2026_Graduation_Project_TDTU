@@ -1,6 +1,7 @@
 #include "I2CBus.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include "config.h"
 
 // =====================================================================
 // I2CBus — central I2C bus recovery
@@ -59,4 +60,38 @@ bool I2CBus::isHung(uint8_t sda_pin)
     delay(100);
     bool still_low = (digitalRead(sda_pin) == LOW);
     return (low && still_low);
+}
+
+bool I2CBus::linesIdle(uint8_t sda_pin, uint8_t scl_pin)
+{
+    pinMode(sda_pin, INPUT_PULLUP);
+    pinMode(scl_pin, INPUT_PULLUP);
+    delayMicroseconds(5);
+    return (digitalRead(sda_pin) == HIGH && digitalRead(scl_pin) == HIGH);
+}
+
+bool I2CBus::probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr)
+{
+    if (!linesIdle(sda_pin, scl_pin)) {
+        Serial.printf("[I2C] Bus busy (SDA=%d SCL=%d) — skipping probe 0x%02X\n",
+                      digitalRead(sda_pin), digitalRead(scl_pin), addr);
+        return false;
+    }
+    Wire.beginTransmission(addr);
+    uint8_t err = Wire.endTransmission();
+    return (err == 0);
+}
+
+bool I2CBus::probeWithRecovery(uint8_t sda_pin, uint8_t scl_pin,
+                                uint8_t addr, uint32_t freq_hz)
+{
+    for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; attempt++) {
+        if (attempt > 0) {
+            Serial.printf("[I2C] Recovery attempt %d for 0x%02X...\n", attempt, addr);
+            busReset(sda_pin, scl_pin);
+            delay(I2C_DEVICE_RETRY_DELAY_MS);
+        }
+        if (probe(sda_pin, scl_pin, addr)) return true;
+    }
+    return false;
 }

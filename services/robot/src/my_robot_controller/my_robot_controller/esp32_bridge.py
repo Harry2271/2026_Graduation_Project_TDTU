@@ -46,12 +46,17 @@ class Esp32Bridge(Protocol):
     async def heartbeat(self) -> None: ...
     async def get_status(self) -> dict: ...
     async def get_encoder(self) -> list[dict]: ...
+    async def begin_dock(self, tag_id: int, target_distance_mm: int,
+                         facing_theta_deg: float = -999.0) -> None: ...
+    async def cancel_dock(self) -> None: ...
+    async def get_unload_state(self) -> dict: ...
 
     on_status_update: Callable[[dict], None]
     on_encoder_update: Callable[[list[dict]], None]
     on_e_stop: Callable[[], None]
     on_error: Callable[[str], None]
     on_alive: Callable[[dict], None]
+    on_unload_state: Callable[[dict], None]
 
 
 # ---------- Helpers ------------------------------------------------------
@@ -123,6 +128,13 @@ class FakeEsp32Bridge:
         self.on_e_stop: Callable[[], None] = lambda: None
         self.on_error: Callable[[str], None] = lambda _msg: None
         self.on_alive: Callable[[dict], None] = lambda _data: None
+        self.on_unload_state: Callable[[dict], None] = lambda _data: None
+
+        # Cached unload state (type 140) so async callers can poll it
+        # without going through the callback.  Updated from _handle_line().
+        self._last_unload_state: dict = {}
+        self._last_unload_state_ms: float = 0.0
+        self.on_unload_state: Callable[[dict], None] = lambda _data: None
 
         self._alive_streak = 0
         self._last_alive_counter = -1
@@ -178,6 +190,23 @@ class FakeEsp32Bridge:
 
     async def get_encoder(self) -> list[dict]:
         return []
+
+    async def begin_dock(self, tag_id: int, target_distance_mm: int,
+                         facing_theta_deg: float = -999.0) -> None:
+        cmd: dict[str, Any] = {'cmd': 'begin_dock', 'tag_id': tag_id,
+                               'target_distance_mm': target_distance_mm}
+        if facing_theta_deg >= 0:
+            cmd['facing_theta'] = facing_theta_deg
+        await self._send(cmd)
+
+    async def cancel_dock(self) -> None:
+        await self._send({'cmd': 'cancel_dock'})
+
+    async def get_unload_state(self) -> dict:
+        return {}
+
+    def inject_unload_state(self, state: dict) -> None:
+        self.on_unload_state(state)
 
     def sent_commands(self) -> list[dict]:
         return list(self._commands)
@@ -281,6 +310,12 @@ class RealEsp32Bridge:
         self.on_e_stop: Callable[[], None] = lambda: None
         self.on_error: Callable[[str], None] = lambda _msg: None
         self.on_alive: Callable[[dict], None] = lambda _data: None
+        self.on_unload_state: Callable[[dict], None] = lambda _data: None
+
+        # Cached unload state (type 140) so async callers can poll it
+        # without going through the callback.  Updated from _handle_line().
+        self._last_unload_state: dict = {}
+        self._last_unload_state_ms: float = 0.0
 
     # ----- lifecycle -----
 
@@ -338,18 +373,6 @@ class RealEsp32Bridge:
         """Send stop command to the cylinder actuator."""
         await self._send_line({'cmd': 'cylinder_stop'})
 
-    async def cylinder_extend(self) -> None:
-        """Send extend command to the L298N-driven cylinder (lift dump body)."""
-        await self._send_line({'cmd': 'cylinder_extend'})
-
-    async def cylinder_retract(self) -> None:
-        """Send retract command to lower the dump body."""
-        await self._send_line({'cmd': 'cylinder_retract'})
-
-    async def cylinder_stop(self) -> None:
-        """Send stop command to the cylinder actuator."""
-        await self._send_line({'cmd': 'cylinder_stop'})
-
     async def get_status(self) -> dict:
         """Synchronous placeholder — use on_status_update callback instead."""
         return {'uptime_ms': 0, 'mode': 'NAV', 'e_stop': False}
@@ -357,6 +380,28 @@ class RealEsp32Bridge:
     async def get_encoder(self) -> list[dict]:
         """Synchronous placeholder — use on_encoder_update callback instead."""
         return []
+
+    async def begin_dock(self, tag_id: int, target_distance_mm: int,
+                         facing_theta_deg: float = -999.0) -> None:
+        """Start firmware dock+unload sequence (heading → VL53L0X → cylinder)."""
+        cmd: dict[str, Any] = {'cmd': 'begin_dock', 'tag_id': tag_id,
+                               'target_distance_mm': target_distance_mm}
+        if facing_theta_deg >= 0:
+            cmd['facing_theta'] = facing_theta_deg
+        await self._send_line(cmd)
+
+    async def cancel_dock(self) -> None:
+        """Cancel ongoing firmware unload sequence."""
+        await self._send_line({'cmd': 'cancel_dock'})
+
+    async def get_unload_state(self) -> dict:
+        """Return the most recent type-140 unload state frame."""
+        return dict(self._last_unload_state)
+
+    @property
+    def last_unload_state(self) -> dict:
+        """Latest unload state dict from type-140 telemetry."""
+        return dict(self._last_unload_state)
 
     # ----- liveness -----
 
@@ -490,6 +535,13 @@ class RealEsp32Bridge:
             self._last_alive_counter = counter
             self._alive_streak += 1
             self._safe_call(self.on_alive, data)
+        elif msg_type == self.TYPE_UNLOAD_STATE:
+            # Firmware unload sequence state change (type 140).
+            # Cache for async polling + notify brain via callback.
+            import time as _t
+            self._last_unload_state = data
+            self._last_unload_state_ms = _t.monotonic()
+            self._safe_call(self.on_unload_state, data)
         else:
             # IMU, POWER, IR, SHARP, TOF, UNLOAD_STATE, ACK, … — ignore
             # by default.  Hosts that want them can subclass or wrap.

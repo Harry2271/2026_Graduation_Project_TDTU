@@ -43,13 +43,13 @@ struct MotorPins {
 
 static const MotorPins MOTOR_PINS[] = {
     // FL: Front-Left
-    { .rpwm = 12, .lpwm = 13, .en = 3,  .dir =  1 },
-    // FR: Front-Right  — reversed so it spins forward with same PWM
-    { .rpwm = 14, .lpwm = 15, .en = 7,  .dir = -1 },
+    { .rpwm = 12, .lpwm = 13, .en = 3,  .dir = -1 },
+    // FR: Front-Right
+    { .rpwm = 14, .lpwm = 15, .en = 7,  .dir =  1 },
     // RL: Rear-Left
-    { .rpwm = 16, .lpwm = 17, .en = 48, .dir =  1 },
-    // RR: Rear-Right  — reversed so it spins forward with same PWM
-    { .rpwm = 38, .lpwm = 39, .en = 47, .dir = -1 },
+    { .rpwm = 16, .lpwm = 17, .en = 48, .dir = -1 },
+    // RR: Rear-Right
+    { .rpwm = 38, .lpwm = 39, .en = 47, .dir =  1 },
 };
 
 // LEDC channels (8 total, 2 per motor)
@@ -175,10 +175,21 @@ enum MotorState {
 // BNO055 IMU (9-DOF, I2C address 0x28)
 // ============================================================
 #define BNO055_I2C_ADDR        0x28
-#define BNO055_SDA_PIN         10
-#define BNO055_SCL_PIN         11
-#define BNO055_I2C_FREQ_HZ     100000
+#define BNO055_SDA_PIN         10       // I2C SDA (shared with VL53L0X, INA226)
+#define BNO055_SCL_PIN         11       // I2C SCL (shared with VL53L0X, INA226)
+#define BNO055_I2C_FREQ_HZ     100000   // I2C fallback mode (100 kHz for CJMCU-055 clones)
+
+// BNO055 SPI mode (Software SPI on non-conflicting GPIOs)
+// Hardware: PS0=HIGH, PS1=LOW on CJMCU-055 module (solder bridge PS0 to 3.3V)
+#define BNO055_SPI_SCK_PIN     15       // GPIO 15 — Software SPI clock (shared w/ FR LPWM, but SPI uses it only during transactions)
+#define BNO055_SPI_MISO_PIN    36       // GPIO 36 — Software SPI data out (BNO055 → ESP32)
+#define BNO055_SPI_MOSI_PIN    4        // GPIO 4  — Software SPI data in (ESP32 → BNO055)
+#define BNO055_SPI_CS_PIN      21       // GPIO 21 — Chip select (active LOW)
+#define BNO055_SPI_SPEED_HZ    1000000  // 1 MHz max for BNO055 SPI mode
 #define I2C_TRANSACTION_TIMEOUT_MS  50   // ms — keep a failing optional bus from stalling control
+#define I2C_DEVICE_RETRY_COUNT      3
+#define I2C_DEVICE_RETRY_DELAY_MS  100
+#define I2C_EXTERNAL_PULLUP_OHMS  4700  // Required on SDA/SCL for stable shared bus
 #define IMU_PUBLISH_MS         50       // Publish heading at 20 Hz
 
 // ============================================================
@@ -187,17 +198,18 @@ enum MotorState {
 #define INA226_I2C_ADDR        0x40
 #define INA226_SDA_PIN         10       // Shared I2C bus with BNO055 (GPIO10)
 #define INA226_SCL_PIN         11       // Shared I2C bus with BNO055 (GPIO11)
-#define INA226_I2C_FREQ_HZ     100000
+#define INA226_I2C_FREQ_HZ     100000   // Shared bus clock; BNO055 clone requires 100 kHz
 #define INA226_SHUNT_OHMS      0.01f    // 10 mΩ on CJMCU-226
 #define POWER_PUBLISH_MS       5000     // Publish power telemetry every 5 s
 
 // ============================================================
-// Battery — 3S Li-ion (18650) SOC Curve
-// Full = 12.6V (4.2V/cell), Empty = 9.0V (3.0V/cell)
+// Battery — Molicel M21-B4055A pack (84 Wh)
+// Pack voltage: 20.6V fully charged → 14-15V minimum (under load limit).
+// INA226 VIN+ wired directly to pack red (+), VIN- to pack black (GND).
+// SOC linear interpolation: 20.6V = 100%, 15.0V = 0%.
 // ============================================================
-#define BATTERY_VOLTAGE_FULL   12.6f    // 4.2V × 3 cells — 100%
-#define BATTERY_VOLTAGE_NOM    11.1f    // 3.7V × 3 cells — ~50%
-#define BATTERY_VOLTAGE_EMPTY  9.0f     // 3.0V × 3 cells —   0%
+#define BATTERY_VOLTAGE_FULL   20.6f    // 100% — fully charged pack
+#define BATTERY_VOLTAGE_EMPTY  15.0f    // 0% — minimum operational voltage
 #define BATTERY_LOW_WARN_PCT   20       // Warning threshold (%)
 #define BATTERY_CRITICAL_PCT   10       // Critical — notify Pi for safe stop
 
@@ -241,6 +253,7 @@ enum MotorState {
 #define VL53L0X_I2C_ADDR         0x29
 #define VL53L0X_SDA_PIN          10       // Shared I2C bus with BNO055 (GPIO10)
 #define VL53L0X_SCL_PIN          11       // Shared I2C bus with BNO055 (GPIO11)
+#define VL53L0X_I2C_FREQ_HZ      100000   // Shared bus clock; BNO055 clone requires 100 kHz
 #define VL53L0X_UNLOAD_DISTANCE_MM  40    // 4 cm — flowchart target distance
 #define VL53L0X_TOLERANCE_MM       10    // ±1 cm tolerance band
 #define VL53L0X_POLL_MS            50    // 20 Hz (33 ms budget + slack)
@@ -253,7 +266,8 @@ enum MotorState {
 // ============================================================
 #define CYLINDER_IN1_PIN         2        // L298N IN1 → extend (HIGH)
 #define CYLINDER_IN2_PIN         35       // L298N IN2 → retract (HIGH)
-#define CYLINDER_MAX_RUN_MS      8000     // Safety auto-stop (8 s full extension)
+#define CYLINDER_RETRACT_SWITCH_PIN 37    // Limit switch: LOW when xy lanh đã rút hết hành trình (INPUT_PULLUP, GPIO 37 on WeAct N16R8)
+#define CYLINDER_MAX_RUN_MS      8000     // Safety auto-stop (8 s full extension/retraction)
 #define CYLINDER_HOLD_AT_TOP_MS  3000     // Hold extended while dumping (3 s)
 #define CYLINDER_ADJUST_PWM      40       // Forward nudge speed during position adjust
 #define CYLINDER_ADJUST_TIMEOUT_MS 5000   // Max time spent on alignment loop

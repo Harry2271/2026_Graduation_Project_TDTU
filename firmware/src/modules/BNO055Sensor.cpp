@@ -1,20 +1,25 @@
 #include "BNO055Sensor.h"
+#include "BNO055_SPI.h"
 #include "config.h"
+#include "I2CBus.h"
 #include <Arduino.h>
 #include <Wire.h>
 
 // =====================================================================
-// BNO055Sensor — Direct Wire driver matching BNOExample pattern
+// BNO055Sensor — Bosch 9-DOF IMU (SPI primary, I2C fallback)
 //
-// Uses the same I2C read/write pattern as BNOExample.ino which has been
-// validated to work with this exact CJMCU-055 module.
+// Initialization strategy:
+//   1. Attempt SPI mode first (requires PS1=HIGH on CJMCU-055 module).
+//   2. If SPI fails, fallback to I2C mode (requires pull-ups on SDA/SCL).
 //
-// Key differences from generic I2C drivers:
-//   1. Bus speed = 100 kHz (CJMCU-055 clone compatibility)
-//   2. Read pattern: endTransmission() (STOP) then requestFrom()
-//      — NOT endTransmission(false) (repeated START)
-//   3. writeReg: endTransmission() (STOP)
-//   4. readReg: endTransmission() + requestFrom() with retry
+// SPI vs I2C: SPI frees the I2C bus for VL53L0X and INA226, which
+// eliminates the bus contention issues caused by BNO055's long I2C
+// transactions (>100 ms for Bosch fusion mode reads).
+//
+// PS0/PS1 pin configuration (per Bosch BNO055 datasheet):
+//   I2C mode: PS0=LOW, PS1=LOW
+//   SPI mode: PS0=LOW, PS1=HIGH
+//   UART mode: PS0=HIGH, PS1=LOW (not used here)
 // =====================================================================
 
 // BNO055 register addresses (Bosch datasheet page 0)
@@ -34,37 +39,37 @@
 #define BNO055_MODE_NDOF        0x0C
 #define BNO055_POWER_NORMAL     0x00
 
-// I2C buffer length (matches BNOExample)
-#define I2C_BUFFER_LEN 8
+// --- I2C primitives (fallback, used when SPI not available) ---
 
-// --- Write one byte (matches BNOExample BNO055_I2C_bus_write) ---
 static bool writeReg(uint8_t addr, uint8_t reg, uint8_t value) {
-    uint8_t array[I2C_BUFFER_LEN];
-    array[0] = reg;
-    array[1] = value;
     Wire.beginTransmission(addr);
-    Wire.write(array, 2);
+    Wire.write((uint8_t)reg);
+    Wire.write(value);
     Wire.endTransmission();           // STOP (not repeated START)
     return true;
 }
 
-// --- Read cnt bytes (matches BNOExample BNO055_I2C_bus_read) ---
+// BUG FIX: replaced uint8_t wrap bug with explicit timeout + retry counter.
 static bool readRegs(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t cnt) {
-    Wire.beginTransmission(addr);
-    Wire.write((uint8_t)reg);
-    Wire.endTransmission();           // STOP (not repeated START)
-    Wire.requestFrom(addr, (byte)cnt);
+    uint32_t start = millis();
+    const uint8_t MAX_I2C_RETRY = 3;
 
-    for (uint8_t i = 0; i < cnt; i++) {
-        if (Wire.available()) {
-            buf[i] = Wire.read();
-        } else {
-            // Retry: some clones need a second request
-            i--;
-            if (i > cnt + 5) return false;  // max 5 extra retries
+    for (uint8_t retry = 0; retry < MAX_I2C_RETRY; retry++) {
+        Wire.beginTransmission(addr);
+        Wire.write((uint8_t)reg);
+        Wire.endTransmission();           // STOP (not repeated START)
+        Wire.requestFrom(addr, (byte)cnt);
+
+        uint8_t got = 0;
+        while (got < cnt && (millis() - start) < 50) {
+            if (Wire.available()) {
+                buf[got++] = Wire.read();
+            }
         }
+        if (got == cnt) return true;
+        delay(5);
     }
-    return true;
+    return false;
 }
 
 static uint8_t readReg(uint8_t addr, uint8_t reg) {
@@ -72,6 +77,8 @@ static uint8_t readReg(uint8_t addr, uint8_t reg) {
     readRegs(addr, reg, &val, 1);
     return val;
 }
+
+// --- Constructor ---
 
 BNO055Sensor::BNO055Sensor()
     : heading_deg_(0.0f), heading_error_deg_(0.0f)
@@ -84,100 +91,109 @@ BNO055Sensor::BNO055Sensor()
 {
 }
 
+// =====================================================================
+// begin() — Detect SPI vs I2C and initialize accordingly
+//
+// SPI mode is attempted first.  SPI eliminates bus contention on the
+// shared I2C bus, freeing it for VL53L0X and INA226.  If SPI fails
+// (PS0 not tied HIGH, missing MOSI/MISO/SCK/CS wiring), fallback
+// to I2C mode.
+// =====================================================================
+
 bool BNO055Sensor::begin(uint8_t address)
 {
     addr_ = address;
     operational_ = false;
 
-    Serial.println("[BNO055] Init (100 kHz, BNOExample pattern)...");
+    Serial.println("[BNO055] Init — trying SPI first, then I2C fallback...");
 
-    // Bosch datasheet: 650 ms power-on delay before first I2C transaction
+    // Wait for power-on (Bosch datasheet: 650 ms before first I2C/SPI transaction)
     delay(650);
 
-    // Probe configured address (must be 0x28 — ADR must be LOW)
-    Wire.beginTransmission(addr_);
-    uint8_t err = Wire.endTransmission();
-    if (err != 0) {
-        Serial.printf("[BNO055] No ACK at 0x%02X (err=%d)\n", addr_, err);
-        // Diagnose: probe the alternate address to detect ADR state
-        uint8_t alt = (addr_ == 0x28) ? 0x29 : 0x28;
-        Wire.beginTransmission(alt);
-        if (Wire.endTransmission() == 0) {
-            Serial.printf("[BNO055] Module responds at 0x%02X — ADR pin is HIGH or wiring mismatch!\n", alt);
-            if (alt == 0x29) {
-                Serial.println("[BNO055] ADR must be LOW (0x28) to avoid conflict with VL53L0X");
-                Serial.println("[BNO055] Bridge ADR/COM3 pin to GND on CJMCU-055 module");
-            }
-        }
-        Serial.println("[BNO055] Check: SDA=GPIO10, SCL=GPIO11, GND+GNDIO must both be grounded");
-        Serial.println("[BNO055]        ADR/COM3=GND for 0x28, PS0/PS1=float (I2C mode), RST=3.3V");
-        Serial.println("[BNO055]        External 2.2k-4.7k pull-ups on SDA and SCL to 3.3V recommended");
-        return false;
+    // ── 1. Attempt SPI mode (via BNO055_SPI.cpp) ──
+    bool spi_ok = BNO055_SPI_init(addr_);
+    if (spi_ok) {
+        operational_ = true;
+        Serial.printf("[BNO055] Ready via SPI — NDOF mode, CS=GPIO%d\n",
+            BNO055_SPI_CS_PIN);
+        return true;
     }
-    Serial.printf("[BNO055] ACK at 0x%02X\n", addr_);
 
-    // Read chip ID
-    uint8_t chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
-    Serial.printf("[BNO055] Chip ID: 0x%02X (expected 0xA0)\n", chipId);
-    if (chipId != BNO055_CHIP_ID_VALUE) {
-        // BNO055 may need extra boot time — wait and retry once
-        delay(1000);
-        chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
-        Serial.printf("[BNO055] Chip ID retry: 0x%02X\n", chipId);
+    // ── 2. SPI failed → fallback to I2C ──
+    Serial.println("[BNO055] SPI init failed — falling back to I2C...");
+
+    if (I2CBus::probeWithRecovery(BNO055_SDA_PIN, BNO055_SCL_PIN,
+                                    addr_, BNO055_I2C_FREQ_HZ)) {
+        Serial.printf("[BNO055] ACK at 0x%02X via I2C\n", addr_);
+
+        uint8_t chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
+        if (chipId != BNO055_CHIP_ID_VALUE) {
+            delay(1000);
+            chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
+        }
         if (chipId != BNO055_CHIP_ID_VALUE) {
             Serial.println("[BNO055] Bad chip ID — not a real BNO055 or still booting?");
+            Serial.println("[BNO055] For SPI mode: solder PS0 pin HIGH on CJMCU-055 module");
             return false;
         }
+
+        writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_CONFIG);
+        delay(30);
+        uint8_t mode = readReg(addr_, BNO055_OPR_MODE_ADDR);
+        if (mode != BNO055_MODE_CONFIG) {
+            Serial.printf("[BNO055] CONFIG mode verify failed (mode=0x%02X)\n", mode);
+            return false;
+        }
+        Serial.println("[BNO055] CONFIG mode OK");
+
+        writeReg(addr_, BNO055_PWR_MODE_ADDR, BNO055_POWER_NORMAL);
+        delay(10);
+        writeReg(addr_, BNO055_PAGE_ID_ADDR, 0);
+        delay(10);
+        writeReg(addr_, BNO055_SYS_TRIGGER, 0x00);
+        delay(10);
+
+        writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_NDOF);
+        delay(500);
+
+        mode = readReg(addr_, BNO055_OPR_MODE_ADDR);
+        if (mode != BNO055_MODE_NDOF) {
+            Serial.printf("[BNO055] NDOF verify failed (mode=0x%02X)\n", mode);
+            return false;
+        }
+
+        operational_ = true;
+        Serial.printf("[BNO055] Ready via I2C — NDOF mode, addr 0x%02X\n", addr_);
+        return true;
     }
 
-    // Enter CONFIG mode (required before changing power/mode)
-    writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_CONFIG);
-    delay(30);
-
-    // Verify we're in CONFIG mode
-    uint8_t mode = readReg(addr_, BNO055_OPR_MODE_ADDR);
-    if (mode != BNO055_MODE_CONFIG) {
-        Serial.printf("[BNO055] CONFIG mode verify failed (mode=0x%02X)\n", mode);
-        return false;
-    }
-    Serial.println("[BNO055] CONFIG mode OK");
-
-    // Set power mode to NORMAL
-    writeReg(addr_, BNO055_PWR_MODE_ADDR, BNO055_POWER_NORMAL);
-    delay(10);
-
-    // Page 0
-    writeReg(addr_, BNO055_PAGE_ID_ADDR, 0);
-    delay(10);
-
-    // Clear system trigger
-    writeReg(addr_, BNO055_SYS_TRIGGER, 0x00);
-    delay(10);
-
-    // Enter NDOF fusion mode (all 9 axes, absolute orientation)
-    writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_NDOF);
-    delay(500);  // fusion needs time to stabilize
-
-    // Verify NDOF mode
-    mode = readReg(addr_, BNO055_OPR_MODE_ADDR);
-    if (mode != BNO055_MODE_NDOF) {
-        Serial.printf("[BNO055] NDOF verify failed (mode=0x%02X)\n", mode);
-        return false;
-    }
-
-    operational_ = true;
-    Serial.printf("[BNO055] Ready — NDOF mode, addr 0x%02X\n", addr_);
-    return true;
+    // Both SPI and I2C failed
+    Serial.println("[BNO055] FAILED: neither SPI nor I2C available");
+    Serial.println("[BNO055] SPI checklist:");
+    Serial.println("[BNO055]   PS1 = HIGH (3.3V), PS0 = LOW or floating");
+    Serial.println("[BNO055]   SDO/SDA → GPIO36 (MISO), SDA/SDI → GPIO4 (MOSI)");
+    Serial.println("[BNO055]   SCL/SCK → GPIO15 (SCK), CS → GPIO21");
+    Serial.println("[BNO055] I2C checklist:");
+    Serial.println("[BNO055]   SDA = GPIO10, SCL = GPIO11");
+    Serial.println("[BNO055]   ADR = GND (0x28), PS1 = LOW (I2C mode)");
+    Serial.println("[BNO055]   Pull-ups 2.2k-4.7k on SDA/SCL to 3.3V");
+    return false;
 }
+
+// =====================================================================
+// BNO055_SPI_init — full SPI initialization sequence
+// =====================================================================
+
+// (Implementation moved to BNO055_SPI.cpp)
+
+// =====================================================================
+// read() — Read all BNO055 sensor data
+// =====================================================================
 
 bool BNO055Sensor::read()
 {
     if (!operational_) return false;
 
-    // Mark the read attempt BEFORE I2C transactions.  If the bus is
-    // flaky the I2C may return stale data, but the health monitor
-    // still sees a fresh timestamp so the module stays ONLINE rather
-    // than cycling WARNING→RECOVERING for every slow-timer tick.
     last_read_ms_ = millis();
 
     uint8_t buf[6];
@@ -214,7 +230,7 @@ bool BNO055Sensor::read()
     // Temperature
     temperature_ = (int8_t)readReg(addr_, BNO055_TEMP_ADDR);
 
-    // Calibration status (4 x 2-bit fields)
+    // Calibration status (4 × 2-bit fields)
     uint8_t cal = readReg(addr_, BNO055_CALIB_STAT_ADDR);
     cal_sys_   = (cal >> 6) & 0x03;
     cal_gyro_  = (cal >> 4) & 0x03;
@@ -262,5 +278,5 @@ void BNO055Sensor::printReadable() const
     Serial.printf("Gyro Z: (%.2f deg/s)\n", gyro_z_dps_);
     Serial.printf("Temp: %d C\n", temperature_);
     Serial.printf("Cal: sys=%u gyro=%u accel=%u mag=%u\n",
-                  cal_sys_, cal_gyro_, cal_accel_, cal_mag_);
+        cal_sys_, cal_gyro_, cal_accel_, cal_mag_);
 }

@@ -1,4 +1,5 @@
 #include "VL53L0XSensor.h"
+#include "I2CBus.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <VL53L0X.h>   // Pololu library
@@ -21,13 +22,11 @@ VL53L0XSensor::VL53L0XSensor()
 
 bool VL53L0XSensor::begin()
 {
-    // Probe known address first — VL53L0X default = 0x29 (config.h).
-    // If nothing ACKs, skip Pololu init entirely (it scans all 127
-    // addresses internally, which can hang on ESP32-S3).
-    Wire.beginTransmission(VL53L0X_I2C_ADDR);
-    if (Wire.endTransmission() != 0) {
-        Serial.printf("  [WARN] VL53L0X no ACK at 0x%02X — sensor absent\n",
-                      VL53L0X_I2C_ADDR);
+    // Probe with bus-idle guard + retry + auto bus-reset on NACK.
+    if (!I2CBus::probeWithRecovery(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN,
+                                    VL53L0X_I2C_ADDR, VL53L0X_I2C_FREQ_HZ)) {
+        Serial.printf("  [WARN] VL53L0X no ACK at 0x%02X after %d retries — sensor absent\n",
+                      VL53L0X_I2C_ADDR, I2C_DEVICE_RETRY_COUNT);
         return false;
     }
     Serial.printf("  [OK]   VL53L0X ACK at 0x%02X\n", VL53L0X_I2C_ADDR);
@@ -35,7 +34,21 @@ bool VL53L0XSensor::begin()
     sensor_ = new VL53L0X();
     sensor_->setBus(&Wire);
 
-    if (!sensor_->init()) {
+    // Pololu init can also hang on ESP32 if the bus is flaky — retry
+    // up to I2C_DEVICE_RETRY_COUNT times with a fresh bus reset between.
+    bool init_ok = false;
+    for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; attempt++) {
+        if (sensor_->init()) { init_ok = true; break; }
+        Serial.printf("  [WARN] VL53L0X init attempt %d failed\n", attempt + 1);
+        I2CBus::busReset(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN);
+        delay(I2C_DEVICE_RETRY_DELAY_MS);
+        // Re-init the device after bus reset (VL53L0X loses its config)
+        Wire.begin(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN);
+        Wire.setClock(VL53L0X_I2C_FREQ_HZ);
+        Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+        sensor_->setBus(&Wire);
+    }
+    if (!init_ok) {
         Serial.println("  [WARN] VL53L0X init failed — sensor disabled");
         delete sensor_;
         sensor_ = nullptr;

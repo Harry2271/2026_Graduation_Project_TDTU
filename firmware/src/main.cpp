@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "modules.h"
+#include "BNO055_SPI.h"
 #include "I2CBus.h"
 
 // ========================================================================
@@ -158,72 +159,49 @@ void setupHardware()
                   BNO055_SDA_PIN, BNO055_SCL_PIN,
                   BNO055_I2C_FREQ_HZ / 1000);
     // Enable the ESP32's internal weak pull-ups as a diagnostic fallback
-    // for a bare CJMCU-055 bus. External 2.2k-4.7k pull-ups are required
+    // for a bare CJMCU-055 bus.  External 2.2k-4.7k pull-ups are required
     // for reliable operation with multiple devices or long wires.
     pinMode(BNO055_SDA_PIN, INPUT_PULLUP);
     pinMode(BNO055_SCL_PIN, INPUT_PULLUP);
 
     // 9-clock bus recovery BEFORE first Wire.begin — releases any slave
     // that may be holding SDA low from a previous boot.
-    for (int i = 0; i < 9; i++) {
-        digitalWrite(BNO055_SCL_PIN, HIGH);
-        delayMicroseconds(5);
-        digitalWrite(BNO055_SCL_PIN, LOW);
-        delayMicroseconds(5);
-    }
-    digitalWrite(BNO055_SDA_PIN, HIGH);
-    digitalWrite(BNO055_SCL_PIN, HIGH);
-    delay(10);
+    I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
 
     Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
-    // Start at 100 kHz for stable ACK regardless of wire length.
-    Wire.setClock(100000);
+    Wire.setClock(BNO055_I2C_FREQ_HZ);
     // CRITICAL: cap each I2C transaction.  Without this, a held-low SDA
     // (e.g. missing pull-ups, faulty breakout) makes Wire.endTransmission()
-    // block forever, which freezes the motor control loop.  50 ms is short
-    // enough that all sensor init + recovery finishes within a few seconds
-    // yet long enough for the slowest legitimate I2C transaction.
+    // block forever, which freezes the motor control loop.
     Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
     Serial.println("  [OK]   I2C bus started (100 kHz, after 9-clock recovery)");
 
-    // ---- I2C bus health check — pin-level, never blocks ----
-    // The ESP32 Arduino core's Wire.endTransmission() does NOT honor
-    // Wire.setTimeout() — it blocks forever if a slave holds SDA low.
-    // We must never call Wire.endTransmission() unless we know SDA/SCL
-    // are both HIGH first.  This pin read is non-blocking and tells
-    // us whether the bus is physically healthy enough to attempt any I2C.
-    bool i2c_bus_ok = true;
-    {
+    // ---- I2C bus health check — pin-level guard, never blocks ----
+    // Wire.endTransmission() does NOT honor Wire.setTimeout() — it blocks
+    // forever if a slave holds SDA low.  Check linesIdle() first.
+    bool i2c_bus_ok = I2CBus::linesIdle(BNO055_SDA_PIN, BNO055_SCL_PIN);
+    if (!i2c_bus_ok) {
+        Serial.printf("  [I2C BUS] SDA=%d SCL=%d — bus unhealthy, attempting recovery...\n",
+                      digitalRead(BNO055_SDA_PIN), digitalRead(BNO055_SCL_PIN));
         I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
-        Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
-        Wire.setClock(BNO055_I2C_FREQ_HZ);
-        Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
-        int sda = digitalRead(BNO055_SDA_PIN);
-        int scl = digitalRead(BNO055_SCL_PIN);
-        if (sda == LOW || scl == LOW) {
-            i2c_bus_ok = false;
-            Serial.printf("  [I2C BUS] SDA=%s SCL=%s — bus unhealthy, skipping scan\n",
-                          sda == LOW ? "LOW" : "HIGH",
-                          scl == LOW ? "LOW" : "HIGH");
-            Serial.println("  [I2C BUS] Check pull-ups, shorts, powered modules");
+        i2c_bus_ok = I2CBus::linesIdle(BNO055_SDA_PIN, BNO055_SCL_PIN);
+        if (!i2c_bus_ok) {
+            Serial.println("  [I2C BUS] Still unhealthy — check pull-ups, shorts, powered modules");
         }
     }
 
-    // I2C scan: only runs if bus is physically healthy.  If the bus is
-    // stuck (SDA/SCL held LOW), we skip entirely — the per-sensor init
-    // will also be skipped because Wire.endTransmission() would hang.
+    // I2C scan: probe ONLY the 3 known device addresses.  A full
+    // 126-address scan with Wire.endTransmission() is unsafe on ESP32
+    // (no software watchdog for endTransmission).  The per-sensor begin()
+    // calls below already do their own probing and degrade gracefully.
     int found = 0;
     if (i2c_bus_ok) {
-        Serial.println("  [SCAN] I2C bus scan...");
-        for (uint8_t addr = 1; addr < 127; addr++) {
-            Wire.beginTransmission(addr);
-            uint8_t err = Wire.endTransmission();
-            if (err == 0) {
-                Serial.printf("         Device found at 0x%02X", addr);
-                if (addr == 0x28) Serial.print(" (BNO055)");
-                else if (addr == 0x40) Serial.print(" (INA226)");
-                else if (addr == 0x29) Serial.print(" (VL53L0X)");
-                Serial.println();
+        Serial.println("  [SCAN] I2C device probe...");
+        static const uint8_t known_addrs[] = {0x28, 0x29, 0x40};
+        static const char*  known_names[]  = {"BNO055", "VL53L0X", "INA226"};
+        for (size_t k = 0; k < sizeof(known_addrs); k++) {
+            if (I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, known_addrs[k])) {
+                Serial.printf("         Found 0x%02X (%s)\n", known_addrs[k], known_names[k]);
                 found++;
             }
         }
@@ -233,7 +211,7 @@ void setupHardware()
             Serial.printf("         Total: %d device(s)\n", found);
         }
     } else {
-        Serial.println("  [SCAN] I2C bus scan SKIPPED (bus unhealthy)");
+        Serial.println("  [SCAN] I2C scan SKIPPED (bus unhealthy)");
     }
 
     setupLEDC();
@@ -355,8 +333,12 @@ void applySpeeds()
             g_ramped_speeds[i] = 0;
             g_motors[i].coast();
         }
+        // Use a simple debounce: once the latch fires, wait at least
+        // SHARP_HOLD_MS before allowing it to clear.  This prevents
+        // rapid toggling when the Sharp reading fluctuates around 60 cm.
         if (!g_ir.anyDetected() && !g_sharp.isTooClose() && !g_sharp.isSlowing()) {
             g_local_obstacle_stop = false;
+            Serial.println("[SAFETY] obstacle latch cleared — resuming");
         }
         return;
     }
@@ -1250,11 +1232,12 @@ void loop()
     // If any I2C module is RECOVERING and retry interval elapsed,
     // call begin() again.  Failures bump retry_count toward FAILED.
     if (g_health.recoveryDue(MOD_IMU, now)) {
-        Serial.println("[HEALTH] IMU recovery attempt — bus reset then reinit...");
-        I2CBus::busReset(BNO055_SDA_PIN, BNO055_SCL_PIN);
-        Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
-        Wire.setClock(BNO055_I2C_FREQ_HZ);
-        Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+        // BNO055 runs in SPI mode (frees I2C for VL53L0X + INA226).
+        // Reinit SPI pins (safe, no bus crash) then re-attempt begin().
+        // If SPI was used at boot, SPI_init will re-detect; if I2C was used,
+        // I2CBus::probeWithRecovery handles the I2C path.
+        Serial.println("[HEALTH] IMU recovery attempt — reinit SPI then begin...");
+        BNO055_SPI_init_pins();
         bool ok = g_imu.begin(BNO055_I2C_ADDR);
         if (ok) g_health.reportOk(MOD_IMU, now);
         else    g_health.reportRecoveryFailure(MOD_IMU, 1, now);

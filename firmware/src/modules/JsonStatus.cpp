@@ -154,6 +154,10 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
         m["t"] = tgt[i];
         float rpm = encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir;
         m["r"] = rpm;
+        // Encoder count — useful for diagnosing dead motors
+        m["c"] = encoders[i].getCumulativeCount();
+        // Direction flag from config: +1 = forward-positive, -1 = reversed
+        m["d"] = MOTOR_PINS[i].dir;
     }
 
     JsonArray ir_arr = doc.createNestedArray("ir");

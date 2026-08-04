@@ -18,8 +18,10 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav2_simple_commander.robot_navigator import BasicNavigator
 from rclpy.node import Node
+from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
+from tf2_ros import Buffer, TransformListener
 
 from my_robot_controller.api_client import BrainApiClient
 from my_robot_controller.esp32_bridge import (
@@ -35,9 +37,29 @@ class BrainState(str, Enum):
     JOB_NAV_TO_PICKUP = 'JOB_NAV_TO_PICKUP'
     JOB_WAIT_FOR_CLEAR = 'JOB_WAIT_FOR_CLEAR'
     JOB_NAV_TO_DROPOFF = 'JOB_NAV_TO_DROPOFF'
+    JOB_DOCK_UNLOAD = 'JOB_DOCK_UNLOAD'
     JOB_PLACE = 'JOB_PLACE'
+    JOB_RETURN_HOME = 'JOB_RETURN_HOME'
     E_STOP = 'E_STOP'
     ERROR = 'ERROR'
+
+
+# Firmware unload state values (AutoRoam::UnloadState in firmware).
+# Mirrors type-140 telemetry payload `state` field.
+UNLOAD_STATE_IDLE       = 0
+UNLOAD_STATE_ADJUSTING  = 1
+UNLOAD_STATE_EXTENDING  = 2
+UNLOAD_STATE_HOLDING    = 3
+UNLOAD_STATE_RETRACTING = 4
+UNLOAD_STATE_DONE       = 5
+UNLOAD_STATE_LEAVE      = 6
+UNLOAD_STATE_COMPLETE   = 7
+
+
+# Cap on the full dock+unload sequence (heading hold, VL53L0X align,
+# cylinder extend/hold/retract, leave dock).  Worst case ~15s cylinder
+# timeouts + 8s leave-dock + ~20s IMU settling ≈ 60s.
+DOCK_SEQUENCE_TIMEOUT_S = 90.0
 
 
 # Whether to instantiate the real hardware bridge or the fake test double.
@@ -84,6 +106,17 @@ class BrainNode(Node):
         self._esp32_sub = self.create_subscription(
             String, '/esp32/status', self._on_esp32_status, 10)
 
+        # TF for home pose capture + navigation goal poses
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
+
+        # Home pose: captured once from TF at boot (map→base_footprint).
+        # _return_home() uses this to send the robot back to its origin
+        # after completing a job.
+        self._home_pose: tuple[float, float, float] | None = None
+        self._home_pose_timer = self.create_timer(1.0, self._try_capture_home_pose)
+        self._home_pose_captured = False
+
         self.get_logger().info(f'brain_node started in state {self._state}')
 
     def transition_to(self, new_state: BrainState, reason: str = '') -> None:
@@ -116,6 +149,24 @@ class BrainNode(Node):
             self.get_logger().warn('Falling back to FakeEsp32Bridge')
             self._bridge = FakeEsp32Bridge()
             self._bridge_connected = True
+
+    def _try_capture_home_pose(self) -> None:
+        """Poll TF until AMCL converges, then save home pose (once)."""
+        if self._home_pose_captured:
+            return
+        try:
+            tf = self._tf_buffer.lookup_transform('map', 'base_footprint', Time())
+            x = tf.transform.translation.x
+            y = tf.transform.translation.y
+            q = tf.transform.rotation
+            yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                              1.0 - 2.0 * (q.y ** 2 + q.z ** 2))
+            self._home_pose = (x, y, yaw)
+            self._home_pose_captured = True
+            self.get_logger().info(
+                f'Home pose captured: ({x:.2f}, {y:.2f}, {math.degrees(yaw):.1f}°)')
+        except Exception:
+            pass  # TF not ready yet — timer retries in 1s
 
     async def disconnect_bridge(self) -> None:
         if not self._bridge_connected:
@@ -180,7 +231,7 @@ class BrainNode(Node):
 
     async def _dock_align(self, tag_id: int, target_mm: int,
                           timeout_s: float = 15.0) -> bool:
-        """Approach the shelf and align using Apriltag + VL53L0X distance.
+        """Camera-based AprilTag alignment using VL53L0X distance.
 
         Proportional control:
           - Tag visible: steer toward tag_x → omega = Kp * tag_x
@@ -232,7 +283,7 @@ class BrainNode(Node):
         return False
 
     async def _cylinder_extend(self, timeout_s: float = 8.0) -> None:
-        """Send cylinder extend command to ESP32 and wait for it to finish."""
+        """Send cylinder extend and wait until type 139 reports extended."""
         loop = asyncio.get_event_loop()
         t0 = loop.time()
         try:
@@ -240,9 +291,8 @@ class BrainNode(Node):
         except Exception as e:
             self.get_logger().warn(f'cylinder_extend failed: {e}')
             return
-        # ESP32 auto-stops after 8 s, just wait for that + margin
         while (loop.time() - t0) < timeout_s:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
     async def _cylinder_retract(self) -> None:
         """Send cylinder retract command to ESP32."""
@@ -250,6 +300,66 @@ class BrainNode(Node):
             await self._bridge.cylinder_retract()
         except Exception as e:
             self.get_logger().warn(f'cylinder_retract failed: {e}')
+
+    async def _poll_unload_state(self, timeout_s: float = DOCK_SEQUENCE_TIMEOUT_S) -> bool:
+        """Poll ESP32 type-140 unload state until UNLOAD_STATE_COMPLETE.
+
+        Firmware sequence: IDLE → ADJUSTING → EXTENDING → HOLDING →
+        RETRACTING → DONE → LEAVE → COMPLETE.
+
+        Returns True when COMPLETE is reached; False on timeout.
+        """
+        loop = asyncio.get_event_loop()
+        t0 = loop.time()
+        last_state = -1
+
+        # Wait for sequence to start (state changes away from IDLE)
+        while (loop.time() - t0) < timeout_s:
+            state = await self._bridge.get_unload_state()
+            current = state.get('state', 0)
+            if current != UNLOAD_STATE_IDLE:
+                self.get_logger().info(f'Unload started: state={current}')
+                last_state = current
+                break
+            if (loop.time() - t0) > 5.0:
+                self.get_logger().warn('Waiting for unload to start...')
+            await asyncio.sleep(0.2)
+
+        # Poll until COMPLETE (7) or timeout
+        while (loop.time() - t0) < timeout_s:
+            state = await self._bridge.get_unload_state()
+            current = state.get('state', 0)
+
+            if current != last_state:
+                names = {0:'IDLE', 1:'ADJUST', 2:'EXTEND', 3:'HOLD',
+                         4:'RETRACT', 5:'DONE', 6:'LEAVE', 7:'COMPLETE'}
+                self.get_logger().info(
+                    f'Unload: {names.get(last_state, last_state)} '
+                    f'-> {names.get(current, current)}')
+                last_state = current
+
+            if current == UNLOAD_STATE_COMPLETE:
+                self.get_logger().info('Unload COMPLETE')
+                return True
+
+            await asyncio.sleep(0.3)
+
+        self.get_logger().warn('Unload timed out — cancelling')
+        await self._bridge.cancel_dock()
+        return False
+
+    async def _return_home(self) -> bool:
+        """Navigate back to home pose via Nav2 after unload.
+
+        home_pose is captured once at boot from TF (map→base_footprint).
+        """
+        if self._home_pose is None:
+            self.get_logger().warn('No home_pose captured — skipping return')
+            return True
+        self.get_logger().info(
+            f'Returning home: ({self._home_pose[0]:.2f}, '
+            f'{self._home_pose[1]:.2f}, {self._home_pose[2]:.3f})')
+        return await self._nav_to_pose(*self._home_pose)
 
     def _on_tag_detected(self, msg: String) -> None:
         """Keep a timestamped cache of the latest tag detection."""
@@ -454,7 +564,7 @@ class BrainNode(Node):
                     'job has no pickup coords — sitting in NAV state for 5s')
                 await asyncio.sleep(5)
 
-            # ── Phase 2: Navigate to dropoff + optional Apriltag dock ───
+            # ── Phase 2: Navigate to dropoff ─────────────────────────────
             self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, f'job {job_id}')
             dropoff = job.get('dropoff', {})
             tag_id = dropoff.get('tag_id')  # None if no Apriltag dock needed
@@ -469,27 +579,36 @@ class BrainNode(Node):
                     self.transition_to(BrainState.ERROR, 'nav to dropoff failed')
                     await self._api_client.emit_job_status(job_id, 'FAILED')
                     return
-
-                # Apriltag docking: approach the shelf using VL53L0X alignment
-                if tag_id is not None:
-                    dock_ok = await self._dock_align(tag_id, target_mm)
-                    if not dock_ok:
-                        self.transition_to(BrainState.ERROR, 'dock align failed')
-                        await self._api_client.emit_job_status(job_id, 'FAILED')
-                        return
             else:
                 await asyncio.sleep(5)
 
-            # ── Phase 3: Place item ─────────────────────────────────────
-            self.transition_to(BrainState.JOB_PLACE, f'job {job_id}')
-            await self._drive(0.0, 0.0, 0.0)   # stop forward
-            await asyncio.sleep(1)
-            await self._cylinder_extend(5.0)     # lift dump body
-            await asyncio.sleep(3)
-            await self._cylinder_retract()       # lower dump body
-            await asyncio.sleep(1)
+            # ── Phase 3: Dock + firmware unload sequence ────────────────
+            # 3a: Camera-based AprilTag alignment (brings robot close enough
+            #     for the ESP32's VL53L0X + IMU to take over).
+            if tag_id is not None:
+                self.transition_to(BrainState.JOB_DOCK_UNLOAD, f'job {job_id}')
+                dock_ok = await self._dock_align(tag_id, target_mm)
+                if not dock_ok:
+                    self.transition_to(BrainState.ERROR, 'dock align failed')
+                    await self._api_client.emit_job_status(job_id, 'FAILED')
+                    return
 
-            # ── Phase 4: Leave dock + return to idle ────────────────────
+            # 3b: Hand off to ESP32 firmware: heading hold → VL53L0X adjust
+            #     → cylinder extend (L298N) → hold → retract → leave dock.
+            #     Brain polls type-140 telemetry until UNLOAD_STATE_COMPLETE.
+            self.get_logger().info('Sending begin_dock to firmware...')
+            await self._bridge.begin_dock(tag_id or 0, target_mm)
+            unload_ok = await self._poll_unload_state()
+            if not unload_ok:
+                self.transition_to(BrainState.ERROR, f'job {job_id} unload timeout')
+                await self._api_client.emit_job_status(job_id, 'FAILED')
+                return
+
+            # ── Phase 4: Return home ────────────────────────────────────
+            self.transition_to(BrainState.JOB_RETURN_HOME, f'job {job_id}')
+            await self._return_home()
+
+            # ── Phase 5: Idle — job done ────────────────────────────────
             self.transition_to(BrainState.IDLE, f'job {job_id} completed')
             await self._stop()
             self._clear_tag()

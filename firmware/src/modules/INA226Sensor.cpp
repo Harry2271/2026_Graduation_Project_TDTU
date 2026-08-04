@@ -1,5 +1,6 @@
 #include "INA226Sensor.h"
 #include "config.h"
+#include "I2CBus.h"
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -24,12 +25,13 @@ bool INA226Sensor::begin(uint8_t address)
     //    plus a generous margin for shared I2C bus to stabilise.
     delay(50);
 
-    // 2. Probe I2C first — gives a clear "device missing" message
-    //    instead of a cryptic LibDriver init error code.
-    Wire.beginTransmission(addr_);
-    if (Wire.endTransmission() != 0) {
-        Serial.printf("[INA226] No device at 0x%02X\n", address);
+    // 2. Probe I2C with bus-idle guard + retry + auto bus-reset.
+    if (!I2CBus::probeWithRecovery(INA226_SDA_PIN, INA226_SCL_PIN,
+                                    address, INA226_I2C_FREQ_HZ)) {
+        Serial.printf("[INA226] No device at 0x%02X after %d retries\n",
+                      address, I2C_DEVICE_RETRY_COUNT);
         Serial.println("[INA226] Check: SDA/SCL wiring, 3.3V power, address jumper (A0/A1)");
+        Serial.println("[INA226] Add 4.7kΩ pull-ups on SDA and SCL to 3.3V");
         return false;
     }
     Serial.printf("[INA226] Device ACK at 0x%02X\n", address);
@@ -101,10 +103,14 @@ bool INA226Sensor::read()
         return true;
     }
 
-    // Battery SOC: linear interpolation over 3S Li-ion range
-    // Empty = 9.0V (3.0V/cell), Full = 12.6V (4.2V/cell)
-    float pct = (bus_voltage_ - BATTERY_VOLTAGE_EMPTY) /
-                (BATTERY_VOLTAGE_FULL - BATTERY_VOLTAGE_EMPTY) * 100.0f;
+    // Battery SOC: 12.6V = 100%, 15V = 0% (user's 3S Li-ion operational range)
+    // Formula: pct = (Vfull - V) / (Vfull - Vempty) × 100
+    //   At V = 12.6V → (12.6 - 12.6) / (12.6 - 15.0) × 100 = 0 / (-2.4) × 100 = 0% ← WRONG
+    // Correct: when V is between VFULL and VEMPTY, the SOC should be:
+    //   pct = (1.0 - (V - VFULL) / (VEMPTY - VFULL)) × 100
+    //   At 12.6V → 100%, at 15V → 0%
+    float range = BATTERY_VOLTAGE_EMPTY - BATTERY_VOLTAGE_FULL;  // 15.0 - 12.6 = 2.4V
+    float pct = (1.0f - (bus_voltage_ - BATTERY_VOLTAGE_FULL) / range) * 100.0f;
     if (pct < 0.0f)   pct = 0.0f;
     if (pct > 100.0f) pct = 100.0f;
     battery_pct_ = pct;
@@ -119,15 +125,19 @@ bool INA226Sensor::read()
 void INA226Sensor::printTelemetry() const
 {
     PiSerial.printf("{\"type\":133,\"data\":{"
-                  "\"bus_v\":%.3f,"
+                  "\"voltage_v\":%.2f,"
                   "\"current_a\":%.3f,"
                   "\"power_w\":%.3f,"
-                  "\"battery_pct\":%.1f,"
-                  "\"battery_status\":\"%s\""
+                  "\"battery_pct\":%.0f,"
+                  "\"battery_status\":\"%s\","
+                  "\"battery_full_v\":%.1f,"
+                  "\"battery_empty_v\":%.1f"
                   "}}\n",
                   bus_voltage_,
                   current_, power_,
                   battery_pct_,
                   battery_status_ == 2 ? "critical" :
-                  battery_status_ == 1 ? "low" : "ok");
+                  battery_status_ == 1 ? "low" : "ok",
+                  (double)BATTERY_VOLTAGE_FULL,
+                  (double)BATTERY_VOLTAGE_EMPTY);
 }

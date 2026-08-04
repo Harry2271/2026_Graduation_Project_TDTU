@@ -41,4 +41,18 @@ public:
     /// This is a heuristic — the ground-truth "Wire blocked indefinitely"
     /// cannot be detected in software.
     static bool isHung(uint8_t sda_pin);
+
+    /// Verify both SDA and SCL are HIGH before calling Wire.beginTransmission().
+    /// Arduino core's Wire.endTransmission() blocks forever if SDA is held
+    /// low by a slave, so this guard prevents that stall.
+    static bool linesIdle(uint8_t sda_pin, uint8_t scl_pin);
+
+    /// Probe a 7-bit address with SDA/SCL guard + retry.  Returns true on ACK.
+    /// Does NOT reset the bus — caller decides recovery action.
+    static bool probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr);
+
+    /// Probe + on NACK, full bus reset + reinit + retry.  Slowest path.
+    /// Returns true on ACK or false after exhausting retries.
+    static bool probeWithRecovery(uint8_t sda_pin, uint8_t scl_pin,
+                                   uint8_t addr, uint32_t freq_hz);
 };

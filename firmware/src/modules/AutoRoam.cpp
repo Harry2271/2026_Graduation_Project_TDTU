@@ -260,8 +260,17 @@ bool AutoRoam::compute(uint32_t now_ms,
             // --- RETRACT CYLINDER (flowchart: RetractActuator) ---
             case UNLOAD_RETRACTING: {
                 out_vx = out_vy = out_omega = 0;
+                // Ưu tiên limit switch: xy lanh chạm công tắc đáy → rút xong ngay.
+                // Nếu switch lỗi/không gắn thì timeout 8s vẫn bảo vệ.
+                if (cylinder_ && cylinder_->isRetracted()) {
+                    Serial.println("[UNLOAD] Cylinder retracted (limit switch) → unloading complete");
+                    unload_state_ = UNLOAD_DONE;
+                    unload_start_ms_ = now_ms;
+                    cylinder_->stop();
+                    return true;
+                }
                 if ((now_ms - unload_start_ms_) >= CYLINDER_MAX_RUN_MS) {
-                    Serial.println("[UNLOAD] Cylinder retracted → unloading complete");
+                    Serial.println("[UNLOAD] Cylinder retracted (timeout) → unloading complete");
                     unload_state_ = UNLOAD_DONE;
                     unload_start_ms_ = now_ms;
                     if (cylinder_) cylinder_->stop();

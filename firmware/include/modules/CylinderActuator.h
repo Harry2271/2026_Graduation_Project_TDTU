@@ -42,8 +42,14 @@ public:
     /// Emergency stop — immediately halt cylinder
     void stop();
 
-    /// Call periodically to enforce timeout safety
+    /// Periodically: enforces timeout safety and reads the retract limit switch.
+    /// When the switch indicates the cylinder is fully retracted during a
+    /// CYL_RETRACTING phase, stop() is called immediately (sub-ms response).
     void update(uint32_t now_ms);
+
+    /// True if the cylinder retract limit switch is currently hit
+    /// (active-LOW: HIGH = open, LOW = press).
+    [[nodiscard]] bool isRetracted() const;
 
     [[nodiscard]] CylinderState getState() const { return state_; }
     [[nodiscard]] bool isExtended() const { return state_ == CYL_EXTENDED || state_ == CYL_EXTENDING; }
