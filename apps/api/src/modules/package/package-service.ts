@@ -12,11 +12,12 @@ import { EventsGateway } from '../../gateway/events-gateway';
 import { ShelfService } from '../shelf/shelf-service';
 import { CreatePackageDto } from './dto/create-package.dto';
 import { PaginatedResponseDto, PaginationMeta, PaginationQueryDto } from './dto/pagination.dto';
+import { PackageStatsResponseDto } from './dto/package-stats-response.dto';
 import { UpdatePackageDto } from './dto/update-package.dto';
 import { IPACKAGE_REPOSITORY } from './interfaces/package-repository.interface';
 import { IPackageRepository } from './interfaces/package-repository.interface';
 import { IPackageService } from './interfaces/package-service.interface';
-import { Package, PackageStatus } from './schemas/package.schema';
+import { Package, PackageStatus, PackageZone } from './schemas/package.schema';
 
 @Injectable()
 export class PackageService implements IPackageService {
@@ -43,6 +44,7 @@ export class PackageService implements IPackageService {
           ...dto,
           status: PackageStatus.CREATED,
           tagId,
+          zoneCode: null,
         });
         this.eventsGateway.emitPackageCreated(created);
         return created;
@@ -98,7 +100,6 @@ export class PackageService implements IPackageService {
 
   async remove(id: string): Promise<void> {
     const found = await this.findById(id);
-    await this.shelfService.clearSlotByPackageId(found._id);
     await this.packageRepository.remove(found._id);
     this.eventsGateway.emitPackageDeleted(found._id);
   }
@@ -110,13 +111,15 @@ export class PackageService implements IPackageService {
     }
 
     let nextTagId: number | null = pkg.tagId;
+    let nextZoneCode: PackageZone | null = pkg.zoneCode;
     if (nextStatus === PackageStatus.FINISHED) {
       nextTagId = null;
+      nextZoneCode = null;
     } else if (pkg.status === PackageStatus.FINISHED) {
       nextTagId = await this.pickLowestFreeTagId();
     }
 
-    const updated = await this.applyStatusUpdate(pkg._id, nextStatus, nextTagId, pkg.tagId);
+    const updated = await this.applyStatusUpdate(pkg._id, nextStatus, nextTagId, pkg.tagId, nextZoneCode);
     this.eventsGateway.emitPackageUpdated(updated);
     return updated;
   }
@@ -130,9 +133,35 @@ export class PackageService implements IPackageService {
       return found;
     }
 
-    const updated = await this.applyStatusUpdate(found._id, PackageStatus.FINISHED, null, found.tagId);
+    const updated = await this.applyStatusUpdate(
+      found._id,
+      PackageStatus.FINISHED,
+      null,
+      found.tagId,
+      null,
+    );
     this.eventsGateway.emitPackageUpdated(updated);
     return updated;
+  }
+
+  async assignZone(id: string, zoneCode: PackageZone | null): Promise<Package> {
+    const pkg = await this.findById(id);
+    if (pkg.status === PackageStatus.FINISHED) {
+      throw new BadRequestException(
+        'Không thể gán zone cho package đã hoàn thành. Vui lòng đặt lại trạng thái trước.',
+      );
+    }
+
+    const updated = await this.packageRepository.assignZone(id, zoneCode);
+    if (!updated) {
+      throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
+    }
+    this.eventsGateway.emitPackageUpdated(updated);
+    return updated;
+  }
+
+  async getStats(): Promise<PackageStatsResponseDto> {
+    return this.packageRepository.getActiveStats();
   }
 
   private async pickLowestFreeTagId(): Promise<number> {
@@ -157,6 +186,7 @@ export class PackageService implements IPackageService {
     status: PackageStatus,
     tagId: number | null,
     previousTagId: number | null,
+    zoneCode: PackageZone | null,
   ): Promise<Package> {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < PackageService.ALLOCATE_RETRIES; attempt++) {
@@ -165,7 +195,8 @@ export class PackageService implements IPackageService {
         if (!updated) {
           throw new NotFoundException(`Không tìm thấy package với id "${id}"`);
         }
-        return updated;
+        const withZone = await this.packageRepository.assignZone(updated._id, zoneCode);
+        return withZone ?? updated;
       } catch (err: unknown) {
         lastError = err;
         if (!this.isDuplicateKeyError(err) || tagId === null || tagId === previousTagId) {

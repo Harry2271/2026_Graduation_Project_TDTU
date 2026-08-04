@@ -27,12 +27,13 @@ import {
   useGetPackageByIdQuery,
   usePatchPackageStatusMutation,
   useUpdatePackageMutation,
+  useAssignToZoneMutation,
 } from "@/store/services/inventoryApi";
 import { QRCodeSVG } from "qrcode.react";
 
 import AprilTag from "@/components/AprilTag";
 import { aprilTagToSvgString } from "@/lib/aprilTag";
-import type { PackageStatus } from "@/types/inventory";
+import type { PackageStatus, ZoneCode } from "@/types/inventory";
 
 const { Content } = Layout;
 
@@ -44,6 +45,15 @@ const STATUS_PALETTE: Record<PackageStatus, { bg: string; border: string; text: 
   CREATED: { bg: "rgba(0,212,255,0.10)", border: "rgba(0,212,255,0.30)", text: "var(--accent)", label: "Đã tạo" },
   IN_PROGRESS: { bg: "rgba(255,184,0,0.10)", border: "rgba(255,184,0,0.30)", text: "var(--warning)", label: "Đang xử lý" },
   FINISHED: { bg: "rgba(0,255,170,0.08)", border: "rgba(0,255,170,0.25)", text: "var(--success)", label: "Hoàn thành" },
+};
+
+const ZONE_CODES: ZoneCode[] = ["S1", "S2", "S3", "S4"];
+
+const ZONE_STYLES: Record<ZoneCode, { bg: string; border: string; text: string }> = {
+  S1: { bg: "rgba(0,212,255,0.10)", border: "rgba(0,212,255,0.30)", text: "var(--accent)" },
+  S2: { bg: "rgba(0,255,136,0.10)", border: "rgba(0,255,136,0.30)", text: "var(--success)" },
+  S3: { bg: "rgba(255,184,0,0.10)", border: "rgba(255,184,0,0.30)", text: "var(--warning)" },
+  S4: { bg: "rgba(168,85,247,0.10)", border: "rgba(168,85,247,0.30)", text: "#a855f7" },
 };
 
 function StatusTag({ status }: { status: PackageStatus }) {
@@ -109,6 +119,7 @@ export default function ProductDetailPage({
   const { data: pkg, isLoading, error } = useGetPackageByIdQuery(id);
   const [updatePackage, { isLoading: isUpdating }] = useUpdatePackageMutation();
   const [patchStatus, { isLoading: isPatching }] = usePatchPackageStatusMutation();
+  const [assignToZone, { isLoading: isAssigningZone }] = useAssignToZoneMutation();
 
   const qrPayload = JSON.stringify({ _id: id });
 
@@ -173,6 +184,26 @@ export default function ProductDetailPage({
         (err as { error?: string })?.error ||
         "Không thể cập nhật trạng thái.";
       notification.error({ title: "Thất bại", description: errMsg, placement: "topRight" });
+    }
+  };
+
+  // ── Zone Assignment ─────────────────────────────────────────────────
+  const handleZoneAssign = async (zoneCode: ZoneCode | null) => {
+    try {
+      await assignToZone({ id, zoneCode }).unwrap();
+      notification.success({
+        message: "Thành công",
+        description: zoneCode
+          ? `Đã đưa kiện hàng vào khu ${zoneCode}`
+          : "Đã đưa kiện hàng ra khỏi khu",
+        placement: "topRight",
+      });
+    } catch {
+      notification.error({
+        message: "Thất bại",
+        description: "Không thể cập nhật khu.",
+        placement: "topRight",
+      });
     }
   };
 
@@ -391,6 +422,29 @@ export default function ProductDetailPage({
                       )
                     }
                   />
+                  <InfoRow
+                    label="Khu tập kết:"
+                    value={
+                      pkg.zoneCode ? (
+                        <Tag
+                          style={{
+                            borderRadius: "8px",
+                            background: ZONE_STYLES[pkg.zoneCode].bg,
+                            border: `1px solid ${ZONE_STYLES[pkg.zoneCode].border}`,
+                            color: ZONE_STYLES[pkg.zoneCode].text,
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontWeight: 700,
+                            fontSize: "12px",
+                            padding: "2px 10px",
+                          }}
+                        >
+                          {pkg.zoneCode}
+                        </Tag>
+                      ) : (
+                        <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>Chưa xếp</span>
+                      )
+                    }
+                  />
                   {pkg.createdAt && (
                     <InfoRow
                       label="Ngày tạo:"
@@ -463,6 +517,82 @@ export default function ProductDetailPage({
                     </p>
                   </Tooltip>
                 </Card>
+
+                {/* Zone Assignment */}
+                {pkg.status !== "FINISHED" && (
+                  <Card
+                    className="w-full"
+                    style={{
+                      background: "var(--bg-raised)",
+                      border: "1px solid var(--border-mid)",
+                      borderRadius: 12,
+                      marginTop: "1rem",
+                    }}
+                    styles={{ body: { padding: "1.25rem" } }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "12px",
+                        color: "var(--text-muted)",
+                        marginBottom: "0.75rem",
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      Đưa vào khu tập kết
+                    </p>
+                    <div className="grid grid-cols-2" style={{ gap: "0.5rem" }}>
+                      {ZONE_CODES.map((z) => {
+                        const c = ZONE_STYLES[z];
+                        const active = pkg.zoneCode === z;
+                        return (
+                          <button
+                            key={z}
+                            type="button"
+                            disabled={isAssigningZone || active}
+                            onClick={() => handleZoneAssign(z)}
+                            style={{
+                              padding: "12px",
+                              borderRadius: "10px",
+                              border: `2px solid ${active ? c.border : "var(--border-mid)"}`,
+                              background: active ? c.bg : "var(--bg-surface)",
+                              color: active ? c.text : "var(--text-secondary)",
+                              fontWeight: 700,
+                              fontSize: "16px",
+                              fontFamily: "'JetBrains Mono', monospace",
+                              cursor: isAssigningZone ? "not-allowed" : "pointer",
+                              opacity: isAssigningZone ? 0.5 : 1,
+                              transition: "all 0.15s ease",
+                              boxShadow: active ? `0 0 16px ${c.border}` : "none",
+                            }}
+                          >
+                            {z}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {pkg.zoneCode && (
+                      <button
+                        type="button"
+                        disabled={isAssigningZone}
+                        onClick={() => handleZoneAssign(null)}
+                        className="w-full mt-2 py-2 rounded-lg text-xs font-semibold transition-all"
+                        style={{
+                          border: "1px solid var(--border-dim)",
+                          background: "transparent",
+                          color: "var(--text-muted)",
+                          fontFamily: "'JetBrains Mono', monospace",
+                          cursor: isAssigningZone ? "not-allowed" : "pointer",
+                          opacity: isAssigningZone ? 0.5 : 1,
+                        }}
+                      >
+                        Bỏ xếp
+                      </button>
+                    )}
+                  </Card>
+                )}
 
                 {/* Hidden QR for the print popup to read via [data-print-qr] */}
                 <div data-print-qr style={{ display: "none" }}>

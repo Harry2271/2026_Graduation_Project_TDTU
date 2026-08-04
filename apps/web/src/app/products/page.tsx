@@ -30,13 +30,20 @@ import {
   useGetPackagesQuery,
   useCreatePackageMutation,
   useDeletePackageMutation,
-  useAssignPackageToSlotMutation,
+  useAssignToZoneMutation,
 } from '@/store/services/inventoryApi';
-import { useGetAllSlotsQuery } from '@/store/services/inventoryApi';
-import type { PackageItem, Package } from '@/types/inventory';
-import { parseSlotCode, toSlotCode } from '@/types/inventory';
+import type { Package, ZoneCode } from '@/types/inventory';
 
 const { Content } = Layout;
+
+const ZONE_CODES: ZoneCode[] = ['S1', 'S2', 'S3', 'S4'];
+
+const ZONE_STYLES: Record<ZoneCode, { bg: string; border: string; text: string }> = {
+  S1: { bg: 'rgba(0,212,255,0.10)', border: 'rgba(0,212,255,0.30)', text: 'var(--accent)' },
+  S2: { bg: 'rgba(0,255,136,0.10)', border: 'rgba(0,255,136,0.30)', text: 'var(--success)' },
+  S3: { bg: 'rgba(255,184,0,0.10)', border: 'rgba(255,184,0,0.30)', text: 'var(--warning)' },
+  S4: { bg: 'rgba(168,85,247,0.10)', border: 'rgba(168,85,247,0.30)', text: '#a855f7' },
+};
 
 export default function ProductsPage() {
   const { notification } = App.useApp();
@@ -46,56 +53,31 @@ export default function ProductsPage() {
   const [form] = Form.useForm();
 
   const { data: packages = [], isLoading } = useGetPackagesQuery();
-  const { data: slots = [] } = useGetAllSlotsQuery();
   const [createPackage, { isLoading: isCreating }] = useCreatePackageMutation();
   const [deletePackage, { isLoading: isDeleting }] = useDeletePackageMutation();
-  const [assignToSlot, { isLoading: isAssigning }] = useAssignPackageToSlotMutation();
+  const [assignToZone, { isLoading: isAssigning }] = useAssignToZoneMutation();
 
-  const [assignModal, setAssignModal] = useState<{ pkg: Package; shelfId: number | null; cell: string | null } | null>(null);
+  const [zoneAssignPkg, setZoneAssignPkg] = useState<Package | null>(null);
 
-  const openAssignModal = (pkg: Package) => setAssignModal({ pkg, shelfId: null, cell: null });
-  const closeAssignModal = () => setAssignModal(null);
+  const closeZoneModal = () => setZoneAssignPkg(null);
 
-  const handleAssign = async () => {
-    if (!assignModal?.shelfId || !assignModal?.cell || !assignModal?.pkg) {
-      notification.warning({ title: 'Chưa chọn vị trí', description: 'Vui lòng chọn kệ và ô.', placement: 'topRight' });
-      return;
-    }
+  const handleZoneAssign = async (zoneCode: ZoneCode | null) => {
+    if (!zoneAssignPkg) return;
     try {
-      const slotCode = toSlotCode(assignModal.shelfId, assignModal.cell);
-      await assignToSlot({ slotCode, packageId: assignModal.pkg._id }).unwrap();
-      notification.success({ title: 'Thành công', description: 'Xếp kiện hàng vào kệ thành công!', placement: 'topRight' });
-      closeAssignModal();
+      await assignToZone({ id: zoneAssignPkg._id, zoneCode }).unwrap();
+      notification.success({
+        message: 'Thành công',
+        description: zoneCode
+          ? `Đã đưa kiện hàng vào khu ${zoneCode}`
+          : 'Đã đưa kiện hàng ra khỏi khu',
+        placement: 'topRight',
+      });
+      closeZoneModal();
     } catch (err: unknown) {
-      const errMsg = (err as { data?: { message?: string } })?.data?.message || (err as { error?: string })?.error || 'Xếp kiện hàng thất bại!';
+      const errMsg = (err as { data?: { message?: string } })?.data?.message || (err as { error?: string })?.error || 'Cập nhật khu thất bại!';
       notification.error({ title: 'Thất bại', description: errMsg, placement: 'topRight' });
     }
   };
-
-  const occupiedSet = useMemo(() => {
-    const set = new Set<string>();
-    slots.forEach((s) => {
-      if (s.packageId) {
-        const { shelfId, cell } = parseSlotCode(s.code);
-        set.add(`${shelfId}-${cell}`);
-      }
-    });
-    return set;
-  }, [slots]);
-
-  const packageMap = useMemo(() => {
-    const map: Record<string, PackageItem> = {};
-    packages.forEach((pkg) => {
-      const slot = slots.find((s) => s.packageId === pkg._id);
-      if (slot) {
-        const { shelfId, cell } = parseSlotCode(slot.code);
-        map[pkg._id] = { ...pkg, shelfId, cell, importedAt: pkg.createdAt ?? new Date().toISOString() };
-      } else {
-        map[pkg._id] = { _id: pkg._id, packageName: pkg.packageName, shelfId: 0, cell: '', importedAt: pkg.createdAt ?? new Date().toISOString() };
-      }
-    });
-    return map;
-  }, [packages, slots]);
 
   const filteredPackages = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -190,22 +172,23 @@ export default function ProductsPage() {
       },
     },
     {
-      title: 'Kệ',
+      title: 'Khu',
       responsive: ['md'],
-      key: 'shelf',
-      width: 150,
+      key: 'zone',
+      width: 130,
       render: (_: unknown, record: Package) => {
-        const item = packageMap[record._id];
-        if (item?.shelfId > 0) {
+        if (record.zoneCode) {
+          const z = record.zoneCode;
+          const c = ZONE_STYLES[z];
           return (
-            <Tag style={{ borderRadius: '8px', background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.25)', color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: '11px' }}>
-              Kệ {item.shelfId} · Ô {item.cell}
+            <Tag style={{ borderRadius: '8px', background: c.bg, border: `1px solid ${c.border}`, color: c.text, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: '11px' }}>
+              {z}
             </Tag>
           );
         }
         return (
           <Tag style={{ borderRadius: '8px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-dim)', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontSize: '11px' }}>
-            Chưa xếp kệ
+            Chưa vào khu
           </Tag>
         );
       },
@@ -235,16 +218,15 @@ export default function ProductsPage() {
       width: 280,
       fixed: 'right',
       render: (_: unknown, record: Package) => {
-        const item = packageMap[record._id];
-        const notOnShelf = !item || item.shelfId === 0;
+        const isFinished = record.status === 'FINISHED';
         return (
           <div style={{ display: 'flex', gap: '6px' }}>
-            {notOnShelf && (
-              <Tooltip title="Xếp vào kệ">
+            {!isFinished && (
+              <Tooltip title={record.zoneCode ? 'Chuyển khu' : 'Đưa vào khu'}>
                 <Button
                   size="small"
                   icon={<MapPin size={12} />}
-                  onClick={() => openAssignModal(record)}
+                  onClick={() => setZoneAssignPkg(record)}
                   style={{
                     borderRadius: '8px',
                     background: 'rgba(0,212,255,0.08)',
@@ -258,7 +240,7 @@ export default function ProductsPage() {
                     gap: '4px',
                   }}
                 >
-                  Xếp kệ
+                  {record.zoneCode ? 'Chuyển khu' : 'Đưa vào khu'}
                 </Button>
               </Tooltip>
             )}
@@ -392,7 +374,7 @@ export default function ProductsPage() {
                   className="text-lg font-black"
                   style={{ color: 'var(--success)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.02em' }}
                 >
-                  {packages.filter(p => packageMap[p._id]?.shelfId > 0).length}
+                  {packages.filter(p => p.zoneCode).length}
                 </p>
                 <p className="text-[9px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}>
                   ĐÃ XẾP
@@ -407,7 +389,7 @@ export default function ProductsPage() {
                   className="text-lg font-black"
                   style={{ color: 'var(--warning)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.02em' }}
                 >
-                  {packages.filter(p => !packageMap[p._id] || packageMap[p._id].shelfId === 0).length}
+                  {packages.filter(p => !p.zoneCode).length}
                 </p>
                 <p className="text-[9px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}>
                   CHƯA XẾP
@@ -501,127 +483,92 @@ export default function ProductsPage() {
         )}
       </Content>
 
-      {/* ─── Assign to Shelf Modal ─────────────────────── */}
+      {/* ─── Zone Picker Modal ─────────────────────── */}
       <Modal
         title={
           <div className="flex items-center gap-2 font-bold" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
             <MapPin size={18} style={{ color: 'var(--accent)' }} />
-            Xếp kiện hàng vào kệ
+            {zoneAssignPkg?.zoneCode ? 'Chuyển khu tập kết' : 'Đưa kiện hàng vào khu'}
           </div>
         }
-        open={!!assignModal}
-        onCancel={closeAssignModal}
+        open={!!zoneAssignPkg}
+        onCancel={closeZoneModal}
         centered
         style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '16px', margin: 0 }}
         styles={{ body: { padding: '24px' } }}
         footer={
-          <div className="flex gap-3 justify-end pt-2">
-            <Button
-              size="large"
-              onClick={closeAssignModal}
-              style={{ borderRadius: '10px', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, background: 'var(--bg-raised)', border: '1px solid var(--border-mid)', color: 'var(--text-secondary)' }}
-            >
-              Hủy
-            </Button>
-            <Button
-              type="primary"
-              size="large"
-              loading={isAssigning}
-              onClick={handleAssign}
-              disabled={!assignModal?.shelfId || !assignModal?.cell}
-              style={{
-                background: 'linear-gradient(135deg, #00d4ff, #00b8e6)',
-                border: 'none',
-                color: '#080b10',
-                borderRadius: '10px',
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 700,
-                boxShadow: '0 4px 16px rgba(0,212,255,0.3)',
-              }}
-            >
-              Xếp vào kệ
-            </Button>
-          </div>
+          <Button
+            size="large"
+            onClick={closeZoneModal}
+            style={{ borderRadius: '10px', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, background: 'var(--bg-raised)', border: '1px solid var(--border-mid)', color: 'var(--text-secondary)' }}
+          >
+            Đóng
+          </Button>
         }
       >
-        {assignModal && (
+        {zoneAssignPkg && (
           <div>
             <p className="mb-5 text-sm" style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>
-              Chọn vị trí cho kiện hàng:{' '}
-              <strong style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>{assignModal.pkg.packageName}</strong>
+              Chọn khu tập kết cho:{' '}
+              <strong style={{ color: 'var(--accent)' }}>{zoneAssignPkg.packageName}</strong>
+              {zoneAssignPkg.zoneCode && (
+                <span style={{ color: 'var(--text-muted)' }}> (hiện tại: {zoneAssignPkg.zoneCode})</span>
+              )}
             </p>
 
-            {/* Shelf selector */}
-            <div className="mb-4">
-              <p className="text-[11px] font-bold mb-2" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                1 — Chọn kệ
-              </p>
-              <div className="grid grid-cols-4 gap-2">
-                {[1, 2, 3, 4].map((shelfId) => (
+            <div className="grid grid-cols-2 gap-3">
+              {ZONE_CODES.map((z) => {
+                const c = ZONE_STYLES[z];
+                const active = zoneAssignPkg.zoneCode === z;
+                return (
                   <button
-                    key={shelfId}
-                    onClick={() => setAssignModal((prev) => (prev ? { ...prev, shelfId, cell: null } : null))}
+                    key={z}
+                    type="button"
+                    disabled={isAssigning || active}
+                    onClick={() => handleZoneAssign(z)}
                     style={{
-                      flex: 1,
-                      padding: '10px',
-                      borderRadius: '10px',
-                      border: `2px solid ${assignModal?.shelfId === shelfId ? 'var(--accent)' : 'var(--border-mid)'}`,
-                      background: assignModal?.shelfId === shelfId ? 'rgba(0,212,255,0.1)' : 'var(--bg-raised)',
-                      color: assignModal?.shelfId === shelfId ? 'var(--accent)' : 'var(--text-secondary)',
+                      padding: '20px',
+                      borderRadius: '14px',
+                      border: `2px solid ${active ? c.border : 'var(--border-mid)'}`,
+                      background: active ? c.bg : 'var(--bg-raised)',
+                      color: active ? c.text : 'var(--text-secondary)',
                       fontWeight: 700,
-                      fontSize: '14px',
+                      fontSize: '18px',
                       fontFamily: "'JetBrains Mono', monospace",
-                      cursor: 'pointer',
+                      cursor: isAssigning ? 'not-allowed' : 'pointer',
                       transition: 'all 0.15s ease',
-                      boxShadow: assignModal?.shelfId === shelfId ? '0 0 16px rgba(0,212,255,0.15)' : 'none',
+                      opacity: isAssigning ? 0.5 : 1,
+                      boxShadow: active ? `0 0 20px ${c.border}` : 'none',
                     }}
                   >
-                    Kệ {shelfId}
+                    {z}
+                    {active && (
+                      <span className="block text-[10px] mt-1" style={{ opacity: 0.8 }}>
+                        Hiện tại
+                      </span>
+                    )}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
-            {/* Cell selector */}
-            {assignModal?.shelfId && (
-              <div>
-                <p className="text-[11px] font-bold mb-2" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                  2 — Chọn ô
-                </p>
-                <div className="grid grid-cols-4 gap-2">
-                  {['A', 'B', 'C', 'D'].flatMap((row) =>
-                    [1, 2, 3, 4].map((col) => {
-                      const cell = `${row}${col}`;
-                      const key = `${assignModal.shelfId}-${cell}`;
-                      const isOccupied = occupiedSet.has(key);
-                      const isSelected = assignModal.cell === cell;
-                      return (
-                        <button
-                          key={cell}
-                          onClick={() => !isOccupied && setAssignModal((prev) => (prev ? { ...prev, cell } : null))}
-                          disabled={isOccupied}
-                          style={{
-                            padding: '8px 4px',
-                            borderRadius: '8px',
-                            border: `2px solid ${isSelected ? 'var(--accent)' : isOccupied ? 'var(--border-dim)' : 'var(--border-mid)'}`,
-                            background: isSelected ? 'rgba(0,212,255,0.15)' : isOccupied ? 'rgba(255,255,255,0.02)' : 'var(--bg-raised)',
-                            color: isSelected ? 'var(--accent)' : isOccupied ? 'var(--text-muted)' : 'var(--text-primary)',
-                            fontWeight: 700,
-                            fontSize: '13px',
-                            fontFamily: "'JetBrains Mono', monospace",
-                            cursor: isOccupied ? 'not-allowed' : 'pointer',
-                            textDecoration: isOccupied ? 'line-through' : 'none',
-                            transition: 'all 0.15s ease',
-                            boxShadow: isSelected ? '0 0 12px rgba(0,212,255,0.15)' : 'none',
-                          }}
-                        >
-                          {cell}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
+            {zoneAssignPkg.zoneCode && (
+              <button
+                type="button"
+                disabled={isAssigning}
+                onClick={() => handleZoneAssign(null)}
+                className="w-full mt-4 py-3 rounded-xl text-sm font-semibold transition-all"
+                style={{
+                  border: '1px solid var(--border-dim)',
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  cursor: isAssigning ? 'not-allowed' : 'pointer',
+                  opacity: isAssigning ? 0.5 : 1,
+                }}
+              >
+                Bỏ xếp (đưa ra khỏi khu)
+              </button>
             )}
           </div>
         )}
