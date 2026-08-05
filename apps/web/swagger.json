@@ -400,8 +400,8 @@
         }
     },
     "info": {
-        "title": "Park Smart API",
-        "description": "API documentation for Park Smart",
+        "title": "AGV SMART API",
+        "description": "API documentation for AGV SMART",
         "version": "1.0",
         "contact": {}
     },

@@ -15,8 +15,8 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Park Smart API')
-    .setDescription('API documentation for Park Smart')
+    .setTitle('AGV SMART API')
+    .setDescription('API documentation for AGV SMART')
     .setVersion('1.0')
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);

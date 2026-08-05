@@ -1,12 +1,12 @@
-# CLAUDE.md - Park Smart API Development Guide
+# CLAUDE.md - AGV SMART API Development Guide
 
-> Comprehensive development guide for the NestJS "Park Smart" warehouse/package management backend.
+> Comprehensive development guide for the NestJS "AGV SMART" warehouse/package management backend.
 
 ---
 
 ## Project Overview
 
-**Name:** `nguyen-tdtu` — Park Smart API
+**Name:** `nguyen-tdtu` — AGV SMART API
 **Type:** NestJS REST API + WebSocket backend
 **Purpose:** Manage warehouse shelves and packages for an automated robot system (Tran Duc Nguyen)
 **Database:** MongoDB via Mongoose ODM

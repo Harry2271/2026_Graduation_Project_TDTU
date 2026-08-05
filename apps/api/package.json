@@ -1,7 +1,7 @@
 {
   "name": "@robot-for-nguyen/api",
   "version": "0.0.1",
-  "description": "Park Smart API — NestJS backend (package/shelf management + Socket.io)",
+  "description": "AGV SMART API — NestJS backend (package/shelf management + Socket.io)",
   "author": "",
   "private": true,
   "license": "UNLICENSED",
