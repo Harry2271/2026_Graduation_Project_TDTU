@@ -7078,6 +7078,11 @@ expo-router@~55.0.16:
     use-latest-callback "^0.2.1"
     vaul "^1.1.2"
 
+expo-secure-store@~55.0.8:
+  version "55.0.16"
+  resolved "https://registry.yarnpkg.com/expo-secure-store/-/expo-secure-store-55.0.16.tgz#eadddb0371e1db582073b344eecd4016bac13673"
+  integrity sha512-4DkdluBLJnqndKMpvg4bTVoyi1D5p3V7nxyYvlzLvuqMVrUzXPTGTyIw347H3wVU1jp+sfGNX5xqtpQCY3hF+A==
+
 expo-server@^55.0.11:
   version "55.0.11"
   resolved "https://registry.npmjs.org/expo-server/-/expo-server-55.0.11.tgz"

@@ -4,14 +4,31 @@ import type {
   PackageStats,
   ZoneCode,
 } from '@/types/inventory';
+import type { AuthTokens, AuthRegisterResponse } from '@/types/auth';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL;
 
+let getTokenFn: (() => string | null) | null = null;
+
+export function setTokenGetter(fn: () => string | null) {
+  getTokenFn = fn;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
-  });
+  const token = getTokenFn?.();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options?.headers as Record<string, string>) ?? {}),
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (res.status === 401) {
+    const { useAuthStore } = await import('@/store/useAuthStore');
+    useAuthStore.getState().logout();
+    throw new Error('Phiên đăng nhập đã hết hạn.');
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const msg = body?.message ?? `HTTP ${res.status}`;
@@ -47,4 +64,16 @@ export const api = {
 
   deletePackage: (id: string) =>
     request<void>(`/packages/${id}`, { method: 'DELETE' }),
+
+  login: (email: string, password: string) =>
+    request<AuthTokens>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+
+  register: (email: string, password: string) =>
+    request<AuthRegisterResponse>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
 };

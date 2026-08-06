@@ -1,6 +1,6 @@
 # CLAUDE.md — Robot for Nguyen (Monorepo)
 
-This is a **Turborepo + yarn-workspaces** monorepo containing the full-stack Park Smart warehouse + robot control system. Four projects that used to be separate git repos now live in one repo with path-filtered CI/CD.
+This is a **Turborepo + yarn-workspaces** monorepo containing the full-stack AGV SMART warehouse + robot control system. Four projects that used to be separate git repos now live in one repo with path-filtered CI/CD.
 
 **Read the per-app `CLAUDE.md` before working in that app** — they carry the project-specific rules. This file covers the monorepo-level conventions and cross-cutting concerns.
 

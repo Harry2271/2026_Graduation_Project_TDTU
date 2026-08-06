@@ -1,4 +1,4 @@
-# 🤖 Park Smart — Robot Logistics Tự Hành (AIoT)
+# 🤖 AGV SMART — Robot Logistics Tự Hành (AIoT)
 
 > **Monorepo** chứa toàn bộ hệ thống kho hàng tự động: backend, web dashboard, mobile app, ROS 2 robot bridge và firmware ESP32-S3. Dự án tốt nghiệp — sinh viên Trần Đức Nguyên (TDTU).
 

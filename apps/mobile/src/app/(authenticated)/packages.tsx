@@ -16,12 +16,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PackageCard } from '@/components/PackageCard';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { usePackageStore } from '@/store/usePackageStore';
+import { useTheme } from '@/hooks/use-theme';
 import type { ZoneCode } from '@/types/inventory';
 
 const ZONE_FILTER_OPTIONS = ['Tất cả', 'S1', 'S2', 'S3', 'S4', 'Chưa xếp'] as const;
 
 export default function PackageListScreen() {
   const router = useRouter();
+  const theme = useTheme();
   const packages = usePackageStore((s) => s.packages);
   const isLoading = usePackageStore((s) => s.isLoading);
   const load = usePackageStore((s) => s.load);
@@ -65,11 +67,14 @@ export default function PackageListScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <View style={styles.topBar}>
-        <Text style={styles.title}>KIỆN HÀNG</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setAddModalOpen(true)}>
-          <Text style={styles.addBtnText}>+ Thêm</Text>
+        <Text style={[styles.title, { color: theme.text }]}>KIỆN HÀNG</Text>
+        <TouchableOpacity
+          style={[styles.addBtn, { backgroundColor: theme.primary }]}
+          onPress={() => setAddModalOpen(true)}
+          activeOpacity={0.8}>
+          <Text style={[styles.addBtnText, { color: '#080B10' }]}>+ Thêm</Text>
         </TouchableOpacity>
       </View>
 
@@ -77,16 +82,19 @@ export default function PackageListScreen() {
         value={search}
         onChangeText={setSearch}
         placeholder="Tìm theo tên hoặc _id..."
-        placeholderTextColor="#666"
-        style={styles.search}
+        placeholderTextColor={theme.textMuted}
+        style={[styles.search, {
+          backgroundColor: theme.surfaceAlt,
+          borderColor: theme.border,
+          color: theme.text,
+        }]}
       />
 
       <ScrollView
-        horizontal={false}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={isLoading} onRefresh={() => void load()} tintColor="#00d4ff" />
+          <RefreshControl refreshing={isLoading} onRefresh={() => void load()} tintColor={theme.primary} />
         }>
         <View style={styles.filterRow}>
           {ZONE_FILTER_OPTIONS.map((opt) => {
@@ -94,16 +102,20 @@ export default function PackageListScreen() {
             return (
               <TouchableOpacity
                 key={opt}
-                style={[styles.filterChip, active && styles.filterChipActive]}
-                onPress={() => setZoneFilter(opt)}>
-                <Text style={[styles.filterText, active && styles.filterTextActive]}>{opt}</Text>
+                style={[styles.filterChip, {
+                  borderColor: active ? theme.primary : theme.border,
+                  backgroundColor: active ? `${theme.primary}15` : theme.surfaceAlt,
+                }]}
+                onPress={() => setZoneFilter(opt)}
+                activeOpacity={0.7}>
+                <Text style={[styles.filterText, { color: active ? theme.primary : theme.textMuted }]}>{opt}</Text>
               </TouchableOpacity>
             );
           })}
         </View>
 
         {filtered.length === 0 && !isLoading ? (
-          <Text style={styles.empty}>
+          <Text style={[styles.empty, { color: theme.textMuted }]}>
             {search || zoneFilter !== 'Tất cả' ? 'Không tìm thấy kiện hàng phù hợp.' : 'Chưa có kiện hàng nào.'}
           </Text>
         ) : (
@@ -111,7 +123,7 @@ export default function PackageListScreen() {
             <PackageCard
               key={pkg._id}
               pkg={pkg}
-              onPress={() => router.push(`/packages/${pkg._id}`)}
+              onPress={() => router.push(`/packages/${pkg._id}` as never)}
               onAssignZone={async (zone) => { await assign(pkg._id, zone); }}
               onFinish={async () => { await finish(pkg._id); }}
               onDelete={async () => { await remove(pkg._id); }}
@@ -122,28 +134,32 @@ export default function PackageListScreen() {
 
       <Modal visible={addModalOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Thêm kiện hàng mới</Text>
+          <View style={[styles.modalBox, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Thêm kiện hàng mới</Text>
             <TextInput
               value={newName}
               onChangeText={setNewName}
               placeholder="Tên kiện hàng..."
-              placeholderTextColor="#666"
-              style={styles.modalInput}
+              placeholderTextColor={theme.textMuted}
+              style={[styles.modalInput, {
+                backgroundColor: theme.surfaceAlt,
+                borderColor: theme.border,
+                color: theme.text,
+              }]}
               autoFocus
             />
             <View style={styles.modalActions}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={[styles.modalCancelBtn, { borderColor: theme.borderHover }]}
                 onPress={() => { setAddModalOpen(false); setNewName(''); }}>
-                <Text style={styles.modalCancelText}>Hủy</Text>
+                <Text style={[styles.modalCancelText, { color: theme.textSecondary }]}>Hủy</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalConfirmBtn, creating && { opacity: 0.5 }]}
+                style={[styles.modalConfirmBtn, { backgroundColor: theme.primary }, creating && { opacity: 0.5 }]}
                 disabled={creating || !newName.trim()}
                 onPress={() => void handleCreate()}>
                 {creating ? (
-                  <ActivityIndicator color="#080b10" size="small" />
+                  <ActivityIndicator color="#080B10" size="small" />
                 ) : (
                   <Text style={styles.modalConfirmText}>Thêm</Text>
                 )}
@@ -165,14 +181,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.three,
   },
-  title: { fontSize: 22, fontWeight: '900', color: '#fff', fontFamily: 'monospace', letterSpacing: -0.5 },
+  title: { fontSize: 22, fontWeight: '900', fontFamily: 'monospace', letterSpacing: 1 },
   addBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: '#00d4ff',
   },
-  addBtnText: { color: '#080b10', fontWeight: '800', fontSize: 12, fontFamily: 'monospace' },
+  addBtnText: { fontWeight: '800', fontSize: 12, fontFamily: 'monospace' },
   search: {
     marginHorizontal: Spacing.four,
     marginTop: Spacing.two,
@@ -180,9 +195,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#333',
-    backgroundColor: '#111',
-    color: '#fff',
     fontSize: 13,
     fontFamily: 'monospace',
   },
@@ -202,16 +214,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#444',
-    backgroundColor: 'rgba(255,255,255,0.05)',
   },
-  filterChipActive: {
-    borderColor: '#00d4ff',
-    backgroundColor: '#00d4ff15',
-  },
-  filterText: { color: '#888', fontSize: 11, fontWeight: '700', fontFamily: 'monospace' },
-  filterTextActive: { color: '#00d4ff' },
-  empty: { color: '#666', fontFamily: 'monospace', fontSize: 12, paddingVertical: 24, textAlign: 'center' },
+  filterText: { fontSize: 11, fontWeight: '700', fontFamily: 'monospace' },
+  empty: { fontFamily: 'monospace', fontSize: 12, paddingVertical: 24, textAlign: 'center' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -222,16 +227,13 @@ const styles = StyleSheet.create({
   modalBox: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#1a1d24',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#333',
     padding: 24,
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#fff',
     fontFamily: 'monospace',
     marginBottom: 16,
   },
@@ -240,23 +242,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#444',
-    backgroundColor: '#111',
-    color: '#fff',
     fontSize: 14,
     fontFamily: 'monospace',
     marginBottom: 16,
   },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
-  modalCancelBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#555' },
-  modalCancelText: { color: '#888', fontSize: 13, fontWeight: '700', fontFamily: 'monospace' },
+  modalCancelBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
+  modalCancelText: { fontSize: 13, fontWeight: '700', fontFamily: 'monospace' },
   modalConfirmBtn: {
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#00d4ff',
     minWidth: 70,
     alignItems: 'center',
   },
-  modalConfirmText: { color: '#080b10', fontSize: 13, fontWeight: '800', fontFamily: 'monospace' },
+  modalConfirmText: { color: '#080B10', fontSize: 13, fontWeight: '800', fontFamily: 'monospace' },
 });

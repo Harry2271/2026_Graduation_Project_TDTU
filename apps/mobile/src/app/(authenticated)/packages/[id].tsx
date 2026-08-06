@@ -2,17 +2,13 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { SymbolView } from 'expo-symbols';
 
 import { ZonePicker } from '@/components/ZonePicker';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { BottomTabInset, MaxContentWidth, ZoneColors, Spacing } from '@/constants/theme';
 import { usePackageStore } from '@/store/usePackageStore';
-
-const ZONE_COLORS: Record<string, string> = {
-  S1: '#00d4ff',
-  S2: '#00ff88',
-  S3: '#ffb800',
-  S4: '#a855f7',
-};
+import { useTheme } from '@/hooks/use-theme';
+import type { ZoneCode } from '@/types/inventory';
 
 const STATUS_LABELS: Record<string, string> = {
   CREATED: 'Đã tạo',
@@ -23,6 +19,7 @@ const STATUS_LABELS: Record<string, string> = {
 export default function PackageDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const theme = useTheme();
   const packages = usePackageStore((s) => s.packages);
   const load = usePackageStore((s) => s.load);
   const assign = usePackageStore((s) => s.assign);
@@ -38,17 +35,17 @@ export default function PackageDetailScreen() {
 
   if (!pkg) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
         <View style={styles.empty}>
-          <Text style={styles.emptyText}>Đang tải kiện hàng...</Text>
+          <Text style={[styles.emptyText, { color: theme.textMuted }]}>Đang tải kiện hàng...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   const isFinished = pkg.status === 'FINISHED';
-  const statusColor = isFinished ? '#00ff88' : pkg.status === 'IN_PROGRESS' ? '#ffb800' : '#00d4ff';
-  const zoneColor = pkg.zoneCode ? ZONE_COLORS[pkg.zoneCode] : null;
+  const statusColor = isFinished ? theme.success : pkg.status === 'IN_PROGRESS' ? theme.warning : theme.primary;
+  const zoneColor = pkg.zoneCode ? ZoneColors[pkg.zoneCode] : null;
 
   const handleFinish = () => {
     Alert.alert('Hoàn tất kiện hàng?', `${pkg.packageName} sẽ chuyển sang trạng thái hoàn thành.`, [
@@ -68,17 +65,19 @@ export default function PackageDetailScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.heroRow}>
-          <View style={styles.iconWrap}>
-            <View style={styles.iconBox}>
-              <Text style={styles.iconText}>📦</Text>
-            </View>
+          <View style={[styles.iconWrap, { backgroundColor: `${theme.primary}15`, borderColor: `${theme.primary}40` }]}>
+            <SymbolView
+              name={{ ios: 'shippingbox.fill', android: 'inventory_2', web: 'inventory_2' }}
+              size={24}
+              tintColor={theme.primary}
+            />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.title} numberOfLines={2}>{pkg.packageName}</Text>
-            <Text style={styles.id}>#{pkg._id.slice(-12).toUpperCase()}</Text>
+            <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>{pkg.packageName}</Text>
+            <Text style={[styles.id, { color: theme.textMuted }]}>#{pkg._id.slice(-12).toUpperCase()}</Text>
           </View>
         </View>
 
@@ -88,27 +87,27 @@ export default function PackageDetailScreen() {
           </View>
         </View>
 
-        <InfoCard label="Khu tập kết">
+        <InfoCard label="Khu tập kết" theme={theme}>
           {zoneColor ? (
             <View style={[styles.zoneBadge, { borderColor: zoneColor, backgroundColor: `${zoneColor}15` }]}>
               <Text style={[styles.zoneBadgeText, { color: zoneColor }]}>{pkg.zoneCode}</Text>
             </View>
           ) : (
-            <Text style={styles.muted}>Chưa xếp</Text>
+            <Text style={[styles.muted, { color: theme.textMuted }]}>Chưa xếp</Text>
           )}
         </InfoCard>
 
-        <InfoCard label="Mã AprilTag">
+        <InfoCard label="Mã AprilTag" theme={theme}>
           {pkg.tagId !== null && pkg.tagId !== undefined ? (
-            <Text style={styles.tagId}>#{pkg.tagId}</Text>
+            <Text style={[styles.tagId, { color: theme.primary }]}>#{pkg.tagId}</Text>
           ) : (
-            <Text style={styles.muted}>—</Text>
+            <Text style={[styles.muted, { color: theme.textMuted }]}>—</Text>
           )}
         </InfoCard>
 
         {pkg.createdAt && (
-          <InfoCard label="Ngày tạo">
-            <Text style={styles.normalText}>
+          <InfoCard label="Ngày tạo" theme={theme}>
+            <Text style={[styles.normalText, { color: theme.text }]}>
               {new Date(pkg.createdAt).toLocaleString('vi-VN', {
                 day: '2-digit',
                 month: '2-digit',
@@ -123,15 +122,22 @@ export default function PackageDetailScreen() {
         {!isFinished && (
           <View style={styles.actions}>
             <TouchableOpacity
-              style={[styles.btn, styles.btnPrimary]}
-              onPress={() => setShowPicker((v) => !v)}>
-              <Text style={styles.btnPrimaryText}>{showPicker ? 'Đóng' : pkg.zoneCode ? 'Chuyển khu' : 'Đưa vào khu'}</Text>
+              style={[styles.btn, { borderColor: theme.primary, backgroundColor: `${theme.primary}15` }]}
+              onPress={() => setShowPicker((v) => !v)}
+              activeOpacity={0.7}>
+              <Text style={[styles.btnText, { color: theme.primary }]}>{showPicker ? 'Đóng' : pkg.zoneCode ? 'Chuyển khu' : 'Đưa vào khu'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.btnFinish]} onPress={handleFinish}>
-              <Text style={styles.btnFinishText}>Hoàn tất</Text>
+            <TouchableOpacity
+              style={[styles.btn, { borderColor: theme.success, backgroundColor: `${theme.success}15` }]}
+              onPress={handleFinish}
+              activeOpacity={0.7}>
+              <Text style={[styles.btnText, { color: theme.success }]}>Hoàn tất</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.btnDelete]} onPress={handleDelete}>
-              <Text style={styles.btnDeleteText}>Xóa</Text>
+            <TouchableOpacity
+              style={[styles.btn, { borderColor: theme.danger, backgroundColor: `${theme.danger}15` }]}
+              onPress={handleDelete}
+              activeOpacity={0.7}>
+              <Text style={[styles.btnText, { color: theme.danger }]}>Xóa</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -150,10 +156,10 @@ export default function PackageDetailScreen() {
   );
 }
 
-function InfoCard({ label, children }: { label: string; children: React.ReactNode }) {
+function InfoCard({ label, children, theme }: { label: string; children: React.ReactNode; theme: ReturnType<typeof useTheme> }) {
   return (
-    <View style={styles.infoCard}>
-      <Text style={styles.infoLabel}>{label}</Text>
+    <View style={[styles.infoCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={[styles.infoLabel, { color: theme.textMuted }]}>{label}</Text>
       <View style={styles.infoValue}>{children}</View>
     </View>
   );
@@ -163,18 +169,16 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, maxWidth: MaxContentWidth, alignSelf: 'center', width: '100%' },
   scrollContent: { padding: Spacing.four, paddingBottom: BottomTabInset + Spacing.four, gap: 12 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { color: '#888', fontFamily: 'monospace' },
+  emptyText: { fontFamily: 'monospace' },
   heroRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
     marginBottom: 4,
   },
-  iconWrap: { width: 56, height: 56, borderRadius: 14, backgroundColor: '#00d4ff15', borderWidth: 1, borderColor: '#00d4ff40', justifyContent: 'center', alignItems: 'center' },
-  iconBox: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
-  iconText: { fontSize: 18 },
-  title: { fontSize: 22, fontWeight: '900', color: '#fff', fontFamily: 'monospace', letterSpacing: -0.5 },
-  id: { fontSize: 11, color: '#666', fontFamily: 'monospace', marginTop: 4 },
+  iconWrap: { width: 56, height: 56, borderRadius: 14, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  title: { fontSize: 22, fontWeight: '900', fontFamily: 'monospace', letterSpacing: -0.5 },
+  id: { fontSize: 11, fontFamily: 'monospace', marginTop: 4 },
   statusRow: { flexDirection: 'row' },
   statusBadge: {
     paddingHorizontal: 12,
@@ -184,17 +188,14 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 12, fontWeight: '700', fontFamily: 'monospace' },
   infoCard: {
-    backgroundColor: 'rgba(0,212,255,0.04)',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
   infoLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#888',
     fontFamily: 'monospace',
     letterSpacing: 1,
     textTransform: 'uppercase',
@@ -207,20 +208,11 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
   },
-  zoneBadgeText: {
-    fontSize: 13,
-    fontWeight: '700',
-    fontFamily: 'monospace',
-  },
-  muted: { color: '#666', fontStyle: 'italic', fontFamily: 'monospace', fontSize: 13 },
-  normalText: { color: '#fff', fontSize: 13, fontFamily: 'monospace' },
-  tagId: { color: '#00d4ff', fontSize: 14, fontWeight: '700', fontFamily: 'monospace' },
+  zoneBadgeText: { fontSize: 13, fontWeight: '700', fontFamily: 'monospace' },
+  muted: { fontStyle: 'italic', fontFamily: 'monospace', fontSize: 13 },
+  normalText: { fontSize: 13, fontFamily: 'monospace' },
+  tagId: { fontSize: 14, fontWeight: '700', fontFamily: 'monospace' },
   actions: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
   btn: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1, minWidth: 100, alignItems: 'center' },
-  btnPrimary: { borderColor: '#00d4ff', backgroundColor: '#00d4ff15' },
-  btnPrimaryText: { color: '#00d4ff', fontSize: 13, fontWeight: '700', fontFamily: 'monospace' },
-  btnFinish: { borderColor: '#00ff88', backgroundColor: '#00ff8815' },
-  btnFinishText: { color: '#00ff88', fontSize: 13, fontWeight: '700', fontFamily: 'monospace' },
-  btnDelete: { borderColor: '#ff4444', backgroundColor: '#ff444415' },
-  btnDeleteText: { color: '#ff8888', fontSize: 13, fontWeight: '700', fontFamily: 'monospace' },
+  btnText: { fontSize: 13, fontWeight: '700', fontFamily: 'monospace' },
 });
