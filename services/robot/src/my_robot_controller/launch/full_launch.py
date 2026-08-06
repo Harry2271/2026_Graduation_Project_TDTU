@@ -39,6 +39,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 ROBOT_PKG = 'my_robot_controller'
 LAUNCH_DIR = os.path.dirname(__file__)
 ROBOT_WS = os.path.expanduser('~/robot_ws')
+URDF_FILE = os.path.join(os.path.dirname(LAUNCH_DIR), 'urdf', 'agv.urdf.xacro')
 MAP_PATH = os.path.join(ROBOT_WS, 'maps', 'latest')
 SLAM_CONFIG = os.path.join(ROBOT_WS, 'src', ROBOT_PKG, 'config', 'slam_params.yaml')
 NAV2_CONFIG = os.path.join(ROBOT_WS, 'src', ROBOT_PKG, 'config', 'nav2_params.yaml')
@@ -95,7 +96,18 @@ def generate_launch_description():
         }],
     )
 
-    # ── 4. ESP32 telemetry bridge ──────────────────────────────────────────────
+    # ── 4. Odometry node (encoder + IMU -> /odom + TF) ─────────────────────────
+    odom_node = Node(
+        package=ROBOT_PKG,
+        executable='odom',
+        name='odom',
+        output='screen',
+        parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+        }],
+    )
+
+    # ── 5. ESP32 telemetry bridge ──────────────────────────────────────────────
     esp32_telem = Node(
         package=ROBOT_PKG,
         executable='esp32_telemetry_node',
@@ -183,6 +195,7 @@ def generate_launch_description():
         #   pm2 stop nexus-robot-slam && pm2 start nexus-robot-nav2
 
         # Phase 3: Infrastructure
+        odom_node,
         map_manager,
         esp32_telem,
 

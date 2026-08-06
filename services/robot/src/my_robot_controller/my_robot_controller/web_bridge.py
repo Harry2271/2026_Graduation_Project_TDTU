@@ -90,6 +90,7 @@ class WebBridge(Node):
         self.create_subscription(String, '/mapping_status', self._on_mapping_status, 10)
         self.create_subscription(String, '/esp32/status', self._on_esp32_status, 10)
         self.create_subscription(String, '/esp32/encoder', self._on_esp32_encoder, 10)
+        self.create_subscription(String, '/esp32/power', self._on_esp32_power, 10)
 
         # ── Timers ──────────────────────────────────────────────────────
         self.create_timer(5.0, self._broadcast_info)
@@ -219,6 +220,18 @@ class WebBridge(Node):
         except json.JSONDecodeError:
             return
         self._emit({'type': 'esp32_encoder', 'data': data})
+
+    def _on_esp32_power(self, msg: String) -> None:
+        """Forward INA226 type-133 power telemetry to all WebSocket clients.
+
+        Payload includes bus_v (mV), current_ma (mA), power_mw (mW).
+        Browser computes battery % from bus_v using a Li-ion 3S curve.
+        """
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        self._emit({'type': 'esp32_power', 'data': data})
 
     # ── Info ───────────────────────────────────────────────────────────────────
 

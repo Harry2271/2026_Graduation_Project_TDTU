@@ -42,6 +42,7 @@ AutoRoam::AutoRoam()
     , leave_start_count_(0)
     , leave_start_ms_(0)
     , leave_target_heading_(0.0f)
+    , last_encoder_count_(0)
 {
 }
 
@@ -81,12 +82,34 @@ void AutoRoam::reset()
 // =====================================================================
 
 void AutoRoam::startDock(uint16_t tag_id, uint16_t target_distance_mm,
-                         float facing_theta_deg)
+                         float facing_theta_deg, const char* operation_id)
 {
-    if (unload_state_ != UNLOAD_IDLE) return;
+    // Idempotency: if an unload is already in progress and the operation_id
+    // matches, silently ignore (no double-unload).  If it differs, warn
+    // but still reject (only one unload at a time).
+    if (unload_state_ != UNLOAD_IDLE) {
+        if (operation_id && operation_id[0] != '\0' &&
+            strcmp(operation_id, current_operation_id_) == 0) {
+            Serial.printf("[UNLOAD] Duplicate operation_id '%s' — ignoring\n",
+                          operation_id);
+            return;
+        }
+        Serial.printf("[UNLOAD] busy (state=%d) — rejecting new dock\n",
+                      unload_state_);
+        return;
+    }
 
-    Serial.printf("[UNLOAD] startDock tag_id=%u target_mm=%u facing=%.1f\n",
-                  tag_id, target_distance_mm, facing_theta_deg);
+    // Store idempotency key for future duplicate detection
+    if (operation_id) {
+        strncpy(current_operation_id_, operation_id, sizeof(current_operation_id_) - 1);
+        current_operation_id_[sizeof(current_operation_id_) - 1] = '\0';
+    } else {
+        current_operation_id_[0] = '\0';
+    }
+
+    Serial.printf("[UNLOAD] startDock tag_id=%u target_mm=%u facing=%.1f opId=%s\n",
+                  tag_id, target_distance_mm, facing_theta_deg,
+                  current_operation_id_[0] ? current_operation_id_ : "-");
     dock_tag_id_      = tag_id;
     dock_target_mm_   = target_distance_mm;
     heading_err_deg_  = 0.0f;
@@ -123,6 +146,7 @@ void AutoRoam::cancelUnloading()
     unload_state_ = UNLOAD_IDLE;
     heading_err_deg_ = 0.0f;
     heading_ok_ = false;
+    current_operation_id_[0] = '\0';  // clear idempotency key
     if (cylinder_) cylinder_->stop();
 }
 
@@ -347,6 +371,7 @@ bool AutoRoam::compute(uint32_t now_ms,
                 unload_state_ = UNLOAD_IDLE;
                 heading_err_deg_ = 0.0f;
                 heading_ok_ = false;
+                current_operation_id_[0] = '\0';  // clear idempotency key
                 out_vx = out_vy = out_omega = 0;
                 // Fall through to normal roaming below
                 break;
@@ -358,62 +383,42 @@ bool AutoRoam::compute(uint32_t now_ms,
     }
 
     // ========================================================================
-    // NORMAL ROAMING (heading-hold + obstacle avoidance)
+    // NORMAL ROAMING (multi-sensor FSM avoidance + heading-hold)
     // ========================================================================
 
     // Mark the first time we enter the driving loop so we can skip Sharp for
     // the first SHARP_BOOT_SKIP_MS (lets the ADC settle and any warm-up noise
     // dissipate before trusting the reading for a hard-stop).
     if (drive_start_ms_ == 0) drive_start_ms_ = now_ms;
-    bool sharp_warmup = (now_ms - drive_start_ms_) < SHARP_BOOT_SKIP_MS;
 
-    // ----- 2) Sharp-front hard stop -----
-    if (sharp_ && !sharp_warmup) {
-        sharp_->update(now_ms);
-        if (sharp_->isTooClose()) {
-            if (!hard_stop_) {
-                Serial.println("[AUTO_ROAM] Sharp < threshold — ALL 4 wheels STOP");
-            }
-            hard_stop_      = true;
-            sharp_clear_ms_ = now_ms;
-            return false;
-        }
-        if (hard_stop_ && (now_ms - sharp_clear_ms_) >= SHARP_HOLD_MS) {
-            Serial.println("[AUTO_ROAM] Sharp cleared — resume");
-            hard_stop_ = false;
-        }
-        if (hard_stop_) return false;
+    // Update Sharp so avoidance FSM gets a fresh reading
+    if (sharp_) sharp_->update(now_ms);
+
+    // ----- Feed FSM with encoder delta + heading for state decisions -----
+    if (encoders && encoders[0].getCumulativeCount() != last_encoder_count_) {
+        int32_t delta = encoders[0].getCumulativeCount() - last_encoder_count_;
+        avoidance_fsm_.feedEncoderDelta(delta);
+        last_encoder_count_ = encoders[0].getCumulativeCount();
+    }
+    if (imu_ && imu_->isOperational()) {
+        avoidance_fsm_.feedHeading(imu_->getHeading());
     }
 
-    // ----- 3) Decide base forward speed -----
-    int16_t vx = BASE_FWD_SPEED;
-    if (sharp_ && sharp_->isSlowing()) {
-        vx = SLOW_FWD_SPEED;
+    // ----- Base forward speed (with battery + Sharp slow-down logic) -----
+    int16_t base_vx = BASE_FWD_SPEED;
+    bool sharp_warmup = (now_ms - drive_start_ms_) < SHARP_BOOT_SKIP_MS;
+    if (sharp_ && !sharp_warmup && sharp_->isSlowing()) {
+        base_vx = SLOW_FWD_SPEED;
     }
     if (power_ && power_->isOperational() && power_->getBatteryPct() <= 20.0f) {
-        vx /= 2;
+        base_vx /= 2;
+    }
+    if (sharp_warmup) {
+        base_vx = 0;  // wait for Sharp to settle before driving
     }
 
-    int16_t vy    = 0;
-    int16_t omega = 0;
-
-    // ----- 4) IR proximity — ANY sensor detected → STOP ALL 4 WHEELS -----
-    if (ir_) {
-        uint8_t mask = ir_->detectedMask();
-        if (mask != 0) {
-            if (mask != last_ir_mask_) {
-                Serial.printf("[AUTO_ROAM] IR mask=0x%02X — BRAKE\n", mask);
-                last_ir_mask_ = mask;
-            }
-            return false;
-        }
-        if (last_ir_mask_ != 0) {
-            Serial.println("[AUTO_ROAM] IR clear — resume forward");
-        }
-        last_ir_mask_ = 0;
-    }
-
-    // ----- 5) Heading hold (PI on BNO055) -----
+    // ----- Heading-hold PI (produces small omega correction) -----
+    int16_t nav_vy = 0, nav_omega = 0;
     if (imu_ && imu_->isOperational() && has_heading_) {
         float err = headingError(hold_heading_, imu_->getHeading());
         if (err > -60.0f && err < 60.0f) {
@@ -422,13 +427,50 @@ bool AutoRoam::compute(uint32_t now_ms,
             if (heading_integral_ < -100.0f) heading_integral_ = -100.0f;
         }
         float omega_f = heading_kp_ * err + heading_ki_ * heading_integral_;
-        if (vy == 0) {
-            omega = (int16_t)constrain(omega_f, -120.0f, 120.0f);
-        }
+        nav_omega = (int16_t)constrain(omega_f, -120.0f, 120.0f);
     }
 
-    out_vx    = vx;
-    out_vy    = vy;
-    out_omega = omega;
+    // Tick FSM — it can override base motion based on sensors
+    AvoidanceAction action;
+    if (ir_ && sharp_) {
+        action = avoidance_fsm_.tick(now_ms, *ir_, *sharp_, base_vx, nav_vy, nav_omega);
+    } else {
+        action.vx = base_vx;
+        action.vy = nav_vy;
+        action.omega = nav_omega;
+        action.hard_stop = false;
+        action.description = "no sensors";
+    }
+
+    // Apply FSM action
+    if (action.hard_stop) {
+        out_vx = 0;
+        out_vy = 0;
+        out_omega = 0;
+        // Track hard_stop_ for backward compatibility (Sharp hard-stop)
+        if (action.description && strstr(action.description, "front_stop")) {
+            hard_stop_ = true;
+            sharp_clear_ms_ = now_ms;
+        }
+        return false;
+    }
+
+    // Log state transitions for debugging
+    static AvoidanceState last_logged_state = STATE_IDLE;
+    AvoidanceState cur_state = avoidance_fsm_.getState();
+    if (cur_state != last_logged_state) {
+        Serial.printf("[AUTO_ROAM] FSM → %s\n", avoidance_fsm_.getStateName());
+        last_logged_state = cur_state;
+    }
+
+    // Clear legacy hard_stop_ if FSM is no longer in FRONT_STOP
+    if (hard_stop_) {
+        hard_stop_ = false;
+        Serial.println("[AUTO_ROAM] FSM cleared — resume");
+    }
+
+    out_vx    = action.vx;
+    out_vy    = action.vy;
+    out_omega = action.omega;
     return true;
 }

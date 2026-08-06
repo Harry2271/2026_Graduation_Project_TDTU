@@ -6,13 +6,13 @@ Nav2 for global path planning. Jobs come from the API via Socket.io.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import time
+from datetime import datetime, timezone
 from enum import Enum
-
-import json
-import time
+from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -61,6 +61,10 @@ UNLOAD_STATE_COMPLETE   = 7
 # timeouts + 8s leave-dock + ~20s IMU settling ≈ 60s.
 DOCK_SEQUENCE_TIMEOUT_S = 90.0
 
+# Serialized job execution: only 1 job runs at a time; retries on failure.
+_JOB_MAX_ATTEMPTS = 3      # 1 original + 2 retries
+_JOB_RETRY_BACKOFF_S = 3.0 # seconds between retries
+
 
 # Whether to instantiate the real hardware bridge or the fake test double.
 # Set USE_REAL_BRIDGE=0 in the PM2 environment to force the fake for tests.
@@ -75,6 +79,12 @@ class BrainNode(Node):
         self._bridge_connected: bool = False
         self._api_client = BrainApiClient()
         self._api_client.on_job_dispatch(self._handle_job_dispatch)
+
+        # Exactly one worker consumes jobs. Socket.io events are queued so a
+        # second dispatch can never start a parallel motor sequence.
+        self._job_queue: asyncio.Queue[dict] = asyncio.Queue()
+        self._job_worker_task: asyncio.Task[None] | None = None
+        self._health_task: asyncio.Task[None] | None = None
 
         # AprilTag detection subscriber — latest detection stored for job execution
         self._latest_tag: Optional[dict] = None
@@ -167,6 +177,15 @@ class BrainNode(Node):
                 f'Home pose captured: ({x:.2f}, {y:.2f}, {math.degrees(yaw):.1f}°)')
         except Exception:
             pass  # TF not ready yet — timer retries in 1s
+
+    async def _health_heartbeat_loop(self) -> None:
+        """Periodically emit robot:health to the API so it can track brain liveness."""
+        try:
+            while True:
+                await asyncio.sleep(10.0)
+                await self._api_client.emit_robot_health()
+        except asyncio.CancelledError:
+            return
 
     async def disconnect_bridge(self) -> None:
         if not self._bridge_connected:
@@ -524,102 +543,298 @@ class BrainNode(Node):
         return True
 
     async def _handle_job_dispatch(self, payload: dict) -> None:
-        """Called when a job:dispatch event is received from the API."""
-        job_id = payload.get('_id', 'unknown')
-        self.get_logger().info(f'Received job dispatch: {job_id}')
-        asyncio.create_task(self._execute_job(payload))
+        """Called when a job:dispatch event is received from the API.
 
-    async def _execute_job(self, job: dict) -> None:
+        Enqueue (do NOT spawn a parallel task). A single worker task pops
+        jobs from the queue and runs them serially — guarantees one motor
+        sequence at a time and that the API's queue ordering survives a
+        brief Socket.io reconnect storm.
+        """
+        job_id = payload.get('_id', 'unknown')
+        op_id = payload.get('operationId')
+        self.get_logger().info(f'Enqueue job {job_id} (op={op_id})')
+        await self._job_queue.put(payload)
+
+    async def _job_worker_loop(self) -> None:
+        """Single-consumer job execution loop.
+
+        Pops jobs off `_job_queue` and runs them through `_execute_job`.
+        Wraps each execution in a retry-with-backoff to survive transient
+        Nav2 / dock failures (1 original + 2 retries = 3 attempts max).
+        """
+        self.get_logger().info('Job worker started')
+        while rclpy.ok():
+            payload = await self._job_queue.get()
+            job_id = payload.get('_id', 'unknown')
+            try:
+                last_error: str | None = None
+                for attempt in range(1, _JOB_MAX_ATTEMPTS + 1):
+                    try:
+                        await self._api_client.emit_job_phase(
+                            job_id, f'ATTEMPT_{attempt}' if attempt > 1 else 'STARTED')
+                        await self._execute_job(payload, attempt=attempt)
+                        last_error = None
+                        break
+                    except Exception as e:
+                        last_error = repr(e)
+                        self.get_logger().warn(
+                            f'Job {job_id} attempt {attempt}/{_JOB_MAX_ATTEMPTS} '
+                            f'failed: {e}')
+                        if attempt < _JOB_MAX_ATTEMPTS:
+                            # Brief backoff; stay below watchdog timeout.
+                            await asyncio.sleep(_JOB_RETRY_BACKOFF_S)
+                        else:
+                            raise
+                if last_error is not None:
+                    self.get_logger().error(
+                        f'Job {job_id} exhausted {_JOB_MAX_ATTEMPTS} attempts: {last_error}')
+                    await self._api_client.emit_job_status(job_id, 'FAILED')
+                    self.transition_to(BrainState.ERROR, f'job {job_id} retries exhausted')
+            finally:
+                self._job_queue.task_done()
+        self.get_logger().info('Job worker stopped')
+
+    async def _execute_job(self, job: dict, *, attempt: int = 1) -> None:
         """Walk the state machine with real ESP32 + Nav2 movement.
 
         Job payload may include:
           pickup:  {x, y, theta} — map-frame pose to navigate to
           dropoff: {x, y, theta, tag_id} — tag_id triggers Apriltag docking
           dock_distance_mm: target distance for VL53L0X alignment (default 40)
+          operationId: idempotency key for firmware dock sequence
+
+        **Exceptions propagate to the caller** — the worker loop decides
+        whether to retry or emit FAILED.
         """
         job_id = job.get('_id', 'unknown')
-        self.get_logger().info(f'Starting job {job_id}')
+        op_id = job.get('operationId')
+        self.get_logger().info(f'Starting job {job_id} (attempt {attempt})')
+
+        # ── Timing: start clock ──────────────────────────────────────────
+        t_start = time.time()
+        t_started = datetime.now(timezone.utc).isoformat()
+        t_pickup_at: str | None = None
+        t_dropoff_at: str | None = None
+        t_unload_at: str | None = None
+        travel_to_pickup_ms: int = 0
+        travel_to_dropoff_ms: int = 0
+        unload_duration_ms: int = 0
 
         # Lazy-connect the bridge at the first job so initial boot is fast
         # and the brain can still come up cleanly without a wired ESP32.
         await self.connect_bridge()
 
-        try:
-            # ── Phase 1: Navigate to pickup ─────────────────────────────
-            self.transition_to(BrainState.JOB_NAV_TO_PICKUP, f'job {job_id}')
-            await self._api_client.emit_job_status(job_id, 'IN_PROGRESS')
+        # ── Phase 1: Navigate to pickup ──────────────────────────────────
+        self.transition_to(BrainState.JOB_NAV_TO_PICKUP, f'job {job_id}')
+        await self._api_client.emit_job_status(job_id, 'IN_PROGRESS')
+        await self._api_client.emit_job_phase(job_id, 'NAVIGATE_PICKUP')
 
-            pickup = job.get('pickup', {})
-            if pickup:
-                reached = await self._nav_to_pose(
-                    pickup.get('x', 0.0),
-                    pickup.get('y', 0.0),
-                    pickup.get('theta', 0.0))
-                if not reached:
-                    self.transition_to(BrainState.ERROR, 'nav to pickup failed')
-                    await self._api_client.emit_job_status(job_id, 'FAILED')
-                    return
+        pickup = job.get('pickup', {})
+        if pickup:
+            reached = await self._nav_to_pose(
+                pickup.get('x', 0.0),
+                pickup.get('y', 0.0),
+                pickup.get('theta', 0.0))
+            if not reached:
+                raise RuntimeError(f'Nav2 failed to reach pickup ({pickup.get("x", 0)}, {pickup.get("y", 0)})')
+        else:
+            self.get_logger().warn('job has no pickup coords — pausing 5s')
+            await asyncio.sleep(5)
+
+        # ── Timing: arrived at pickup ────────────────────────────────────
+        t_pickup_at = datetime.now(timezone.utc).isoformat()
+        travel_to_pickup_ms = int((time.time() - t_start) * 1000)
+        self.get_logger().info(f'Timing: arrived at pickup after {travel_to_pickup_ms}ms')
+
+        # ── Phase 2: Navigate to dropoff ─────────────────────────────────
+        self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, f'job {job_id}')
+        await self._api_client.emit_job_phase(job_id, 'NAVIGATE_DROPOFF')
+        t_dropoff_start = time.time()
+        dropoff = job.get('dropoff', {})
+        tag_id = dropoff.get('tag_id')  # None if no Apriltag dock needed
+        target_mm = job.get('dock_distance_mm', 40)
+
+        if dropoff:
+            reached = await self._nav_to_pose(
+                dropoff.get('x', 0.0),
+                dropoff.get('y', 0.0),
+                dropoff.get('theta', 0.0))
+            if not reached:
+                raise RuntimeError(f'Nav2 failed to reach dropoff ({dropoff.get("x", 0)}, {dropoff.get("y", 0)})')
+        else:
+            await asyncio.sleep(5)
+
+        # ── Timing: arrived at dropoff ───────────────────────────────────
+        t_dropoff_at = datetime.now(timezone.utc).isoformat()
+        travel_to_dropoff_ms = int((time.time() - t_dropoff_start) * 1000)
+        self.get_logger().info(f'Timing: arrived at dropoff after {travel_to_dropoff_ms}ms')
+
+        # ── Phase 3: Dock + firmware unload sequence ────────────────────
+        t_unload_start = time.time()
+
+        # 3a: Camera-based AprilTag alignment
+        if tag_id is not None:
+            self.transition_to(BrainState.JOB_DOCK_UNLOAD, f'job {job_id}')
+            await self._api_client.emit_job_phase(job_id, 'AT_PICKUP')
+            dock_ok = await self._dock_align(tag_id, target_mm)
+            if not dock_ok:
+                raise RuntimeError('Dock align failed')
+
+        # 3b: Hand off to ESP32 firmware for autonomous unload
+        self.get_logger().info(f'Sending begin_dock to firmware (op={op_id})...')
+        await self._api_client.emit_job_phase(job_id, 'UNLOADING')
+        await self._bridge.begin_dock(tag_id or 0, target_mm, operation_id=op_id)
+        unload_ok = await self._poll_unload_state()
+        if not unload_ok:
+            raise RuntimeError(f'Job {job_id} unload timed out')
+
+        # ── Timing: unload complete ──────────────────────────────────────
+        t_unload_at = datetime.now(timezone.utc).isoformat()
+        unload_duration_ms = int((time.time() - t_unload_start) * 1000)
+        delivery_duration_ms = int((time.time() - t_start) * 1000)
+        self.get_logger().info(
+            f'Timing: unload completed in {unload_duration_ms}ms; '
+            f'delivery total={delivery_duration_ms}ms')
+
+        # ── Phase 4: Return home ────────────────────────────────────────
+        self.transition_to(BrainState.JOB_RETURN_HOME, f'job {job_id}')
+        await self._api_client.emit_job_phase(job_id, 'RETURNING')
+        await self._return_home()
+        full_cycle_duration_ms = int((time.time() - t_start) * 1000)
+
+        # ── Phase 5: Idle — job done ────────────────────────────────────
+        self.transition_to(BrainState.IDLE, f'job {job_id} completed')
+        await self._stop()
+        self._clear_tag()
+
+        # ── Timing: compute totals + send to API ────────────────────────
+        timing = {
+            'startedAt': t_started,
+            'pickupAt': t_pickup_at,
+            'dropoffAt': t_dropoff_at,
+            'unloadAt': t_unload_at,
+            'totalDurationMs': delivery_duration_ms,
+            'fullCycleDurationMs': full_cycle_duration_ms,
+            'travelToPickupMs': travel_to_pickup_ms,
+            'travelToDropoffMs': travel_to_dropoff_ms,
+            'unloadDurationMs': unload_duration_ms,
+        }
+        await self._api_client.emit_job_timing(job_id, timing)
+        await self._api_client.emit_job_status(job_id, 'COMPLETED')
+        self.get_logger().info(f'Job {job_id} completed successfully')
+
+    # ─────────────────────────────────────────────────────────────────
+    #  LiDAR Direction Scoring (Layer 2 global path planning)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _score_escape_directions(self) -> tuple[str, float]:
+        """Evaluate all 4 LiDAR zones + 4 mecanum directions, return (best_dir, score).
+
+        Direction names → ESP32 velocity (vx, vy, omega):
+          'forward':   (100, 0, 0)   — advance ahead
+          'backward':  (-100, 0, 0)  — reverse away
+          'strafe_left': (0, -100, 0) — dodge left
+          'strafe_right':(0, +100, 0) — dodge right
+          'rotate_ccw': (0, 0, -100) — rotate counter-clockwise
+          'rotate_cw':  (0, 0, +100) — rotate clockwise
+        """
+        # Zone clearance scores (meters)
+        zones = {
+            'front': max(self._lidar_min_front, 0.0),
+            'left':  max(self._lidar_min_left, 0.0),
+            'right': max(self._lidar_min_right, 0.0),
+            'rear':  max(self._lidar_min_rear, 0.0),
+        }
+
+        # Check stale data (>500ms) → don't trust zones
+        if (time.time() - self._lidar_last_update) > 0.5:
+            return 'forward', 0.0
+
+        # Score each direction by: min_dist + bonus for free zones
+        THRESHOLD = 1.5  # meters — trigger avoidance distance
+
+        def blocked(z): return z < THRESHOLD
+        def free(z):    return z >= THRESHOLD
+
+        directions = {
+            'forward':    zones['front'],
+            'left':       zones['left'],
+            'right':      zones['right'],
+            'backward':   zones['rear'],
+            'rotate_cw':  min(zones['right'], zones['rear']) * 0.7,   # rotate CW → go right+rear
+            'rotate_ccw': min(zones['left'], zones['rear']) * 0.7,   # rotate CCW → go left+rear
+        }
+
+        # Score each direction
+        scores = {}
+        for name, clearance in directions.items():
+            if clearance >= THRESHOLD:
+                # Free direction — bonus for clearance
+                scores[name] = clearance + 1.0
             else:
-                self.get_logger().warn(
-                    'job has no pickup coords — sitting in NAV state for 5s')
-                await asyncio.sleep(5)
+                # Blocked direction — negative score
+                scores[name] = -1.0
 
-            # ── Phase 2: Navigate to dropoff ─────────────────────────────
-            self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, f'job {job_id}')
-            dropoff = job.get('dropoff', {})
-            tag_id = dropoff.get('tag_id')  # None if no Apriltag dock needed
-            target_mm = job.get('dock_distance_mm', 40)
+        # Pick best
+        best_dir = max(scores, key=scores.get)
+        best_score = scores[best_dir]
 
-            if dropoff:
-                reached = await self._nav_to_pose(
-                    dropoff.get('x', 0.0),
-                    dropoff.get('y', 0.0),
-                    dropoff.get('theta', 0.0))
-                if not reached:
-                    self.transition_to(BrainState.ERROR, 'nav to dropoff failed')
-                    await self._api_client.emit_job_status(job_id, 'FAILED')
-                    return
-            else:
-                await asyncio.sleep(5)
+        # If all blocked → return 'e_stop'
+        if all(s < 0 for s in scores.values()):
+            return 'e_stop', 0.0
 
-            # ── Phase 3: Dock + firmware unload sequence ────────────────
-            # 3a: Camera-based AprilTag alignment (brings robot close enough
-            #     for the ESP32's VL53L0X + IMU to take over).
-            if tag_id is not None:
-                self.transition_to(BrainState.JOB_DOCK_UNLOAD, f'job {job_id}')
-                dock_ok = await self._dock_align(tag_id, target_mm)
-                if not dock_ok:
-                    self.transition_to(BrainState.ERROR, 'dock align failed')
-                    await self._api_client.emit_job_status(job_id, 'FAILED')
-                    return
+        return best_dir, best_score
 
-            # 3b: Hand off to ESP32 firmware: heading hold → VL53L0X adjust
-            #     → cylinder extend (L298N) → hold → retract → leave dock.
-            #     Brain polls type-140 telemetry until UNLOAD_STATE_COMPLETE.
-            self.get_logger().info('Sending begin_dock to firmware...')
-            await self._bridge.begin_dock(tag_id or 0, target_mm)
-            unload_ok = await self._poll_unload_state()
-            if not unload_ok:
-                self.transition_to(BrainState.ERROR, f'job {job_id} unload timeout')
-                await self._api_client.emit_job_status(job_id, 'FAILED')
-                return
+    def _velocity_for_direction(self, direction: str) -> tuple[float, float, float]:
+        """Convert direction name to (vx, vy, omega)."""
+        VELOCITY_MAP = {
+            'forward':      (100, 0, 0),
+            'backward':     (-100, 0, 0),
+            'strafe_left':  (0, -100, 0),
+            'strafe_right': (0, 100, 0),
+            'rotate_ccw':   (0, 0, -100),
+            'rotate_cw':    (0, 0, 100),
+        }
+        return VELOCITY_MAP.get(direction, (0, 0, 0))
 
-            # ── Phase 4: Return home ────────────────────────────────────
-            self.transition_to(BrainState.JOB_RETURN_HOME, f'job {job_id}')
-            await self._return_home()
+    # ─────────────────────────────────────────────────────────────────
+    #  Navigation with LiDAR obstacle avoidance (Layer 2)
+    # ─────────────────────────────────────────────────────────────────
 
-            # ── Phase 5: Idle — job done ────────────────────────────────
-            self.transition_to(BrainState.IDLE, f'job {job_id} completed')
-            await self._stop()
-            self._clear_tag()
-            await self._api_client.emit_job_status(job_id, 'COMPLETED')
-            self.get_logger().info(f'Job {job_id} completed successfully')
+    async def _replan_escape_if_blocked(self) -> bool:
+        """If a zone is blocked, send a velocity override to ESP32 to escape.
 
-        except Exception as e:
-            self.get_logger().error(f'Job {job_id} failed: {e}')
-            await self._api_client.emit_job_status(job_id, 'FAILED')
-            await self._stop()
-            self.transition_to(BrainState.ERROR, f'job {job_id} failed')
+        Returns True if sent an escape velocity, False if path is clear.
+        On "e_stop" all zones blocked → sends hard stop.
+        """
+        # Refresh sensors first
+        esp32_blocked = self._esp32_obstacle_blocking()
+        if esp32_blocked:
+            # ESP32 layer 1 already handles this — just send stop
+            self.get_logger().warn('ESP32 sensors blocked → stop')
+            await self._bridge.stop()
+            return True
+
+        direction, score = self._score_escape_directions()
+        if direction == 'e_stop':
+            self.get_logger().error('ALL zones blocked → E-STOP')
+            await self._bridge.stop()
+            return True
+
+        # Only override if LiDAR sees something close
+        THRESHOLD = 1.5
+        min_clear = min(self._lidar_min_front, self._lidar_min_left,
+                         self._lidar_min_right, self._lidar_min_rear)
+        if min_clear >= THRESHOLD:
+            # Path clear → no override needed
+            return False
+
+        vx, vy, omega = self._velocity_for_direction(direction)
+        self.get_logger().info(
+            f'LiDAR replan: dir={direction} score={score:.2f} → '
+            f'vx={vx:.0f} vy={vy:.0f} omega={omega:.0f}')
+        await self._bridge.move(vx, vy, omega)
+        return True
 
     async def _nav_to_pose(self, x: float, y: float, theta: float) -> bool:
         """Drive to a map-frame pose via Nav2.
@@ -627,7 +842,16 @@ class BrainNode(Node):
         Nav2's SimpleFollowPath does local obstacle avoidance using the
         costmap.  The global path replans automatically when LiDAR detects
         new obstacles.  This is our primary obstacle-avoidance path.
+
+        Before Nav2 starts, run one LiDAR replanning pass to:
+          - Check 4 zones for obstacles
+          - If blocked, send a short escape maneuver (~500ms)
+          - Then let Nav2 take over
         """
+        # Pre-flight: check LiDAR + ESP32 sensors before Nav2
+        if await self._replan_escape_if_blocked():
+            await asyncio.sleep(0.5)  # brief escape duration
+
         loop = asyncio.get_event_loop()
         try:
             ok = await loop.run_in_executor(None, self.navigate_to, x, y, theta)
@@ -649,9 +873,18 @@ async def _run_async(node: BrainNode) -> None:
     The API connection is non-fatal — if the backend is unreachable the brain
     keeps spinning ROS and periodically retries the connection.  This prevents
     PM2 crash-looping 1500+ times when the backend is temporarily down.
+
+    Also starts the single ``_job_worker_loop`` task that consumes jobs off
+    the asyncio queue — exactly one motor sequence at a time.
     """
     node.get_logger().info('Attempting initial API connection...')
     await node._api_client.connect()
+
+    # Start the serialized job worker (one queue, one consumer).
+    node._job_worker_task = asyncio.create_task(node._job_worker_loop())
+
+    # Periodic health heartbeat to the API so the UI can show "brain alive".
+    node._health_task = asyncio.create_task(node._health_heartbeat_loop())
 
     last_reconnect = asyncio.get_event_loop().time()
 
@@ -668,6 +901,14 @@ async def _run_async(node: BrainNode) -> None:
 
         await asyncio.sleep(0.1)
 
+    # Shutdown — cancel worker + health heartbeat before tearing down.
+    for task in (node._job_worker_task, node._health_task):
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     await node._api_client.disconnect()
     await node.disconnect_bridge()
 

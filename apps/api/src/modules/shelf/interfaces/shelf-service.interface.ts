@@ -1,3 +1,5 @@
+import type { ClientSession } from 'mongoose';
+
 import type { Shelf } from '../schemas/shelf.schema';
 import type { ShelfSlot } from '../schemas/shelf-slot.schema';
 
@@ -14,4 +16,6 @@ export interface IShelfService {
   assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot>;
   findByAprilTagId(aprilTagId: number): Promise<ShelfSlot | null>;
   assignCoordinatesBatch(entries: { slotCode: string; slotX: number; slotY: number; facingTheta: number | null }[]): Promise<ShelfSlot[]>;
+  findSlotByCode(slotCode: string, session?: ClientSession): Promise<ShelfSlot | null>;
+  updateSlotStatus(slotCode: string, status: import('../schemas/shelf-slot.schema').SlotStatus, session?: ClientSession): Promise<void>;
 }

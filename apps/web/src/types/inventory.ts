@@ -82,7 +82,17 @@ export interface MoveCommandResponse {
 
 // ─── Job types (Phase 4) ──────────────────────────────────────────
 
-export type JobStatus = 'DISPATCHED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+export type JobStatus = 'QUEUED' | 'DISPATCHED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export type JobPhase =
+  | 'NONE'
+  | 'NAVIGATE_PICKUP'
+  | 'AT_PICKUP'
+  | 'CARRYING'
+  | 'NAVIGATE_DROPOFF'
+  | 'AT_DROPOFF'
+  | 'UNLOADING'
+  | 'RETURNING';
 
 export interface Job {
   _id: string;
@@ -90,10 +100,40 @@ export interface Job {
   fromSlotCode: string;
   toSlotCode: string;
   status: JobStatus;
+  phase?: JobPhase;
+  failureReason?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  pickupAt?: string;
+  dropoffAt?: string;
+  unloadAt?: string;
+  totalDurationMs?: number;
+  fullCycleDurationMs?: number;
+  travelToPickupMs?: number;
+  travelToDropoffMs?: number;
+  unloadDurationMs?: number;
   createdAt?: string;
   updatedAt?: string;
 }
 
 export interface DispatchMoveResponse {
   jobId: string;
+}
+
+export interface DispatchMovePayload {
+  fromSlotCode: string;
+  toSlotCode: string;
+  operationId?: string;
+}
+
+export interface RobotMapFile {
+  name: string;
+  sizeBytes: number;
+  savedAt?: string;
+}
+
+export interface BrainHealth {
+  connected: boolean;
+  runningJobId: string | null;
+  lastSeenAt: string | null;
 }

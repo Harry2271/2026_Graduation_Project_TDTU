@@ -9,8 +9,9 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 
-import { Job, JobStatus } from '../job/job.schema';
+import { Job, JobPhase, JobStatus } from '../job/job.schema';
 import { JobService } from '../job/job.service';
+import { ShelfService } from '../shelf/shelf-service';
 import { RobotService } from './robot.service';
 
 @WebSocketGateway({
@@ -31,6 +32,7 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private robotService: RobotService,
     @Inject(forwardRef(() => JobService))
     private jobService: JobService,
+    private shelfService: ShelfService,
   ) {}
 
   handleConnection(client: Socket): void {
@@ -43,6 +45,9 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     this.robotService.registerBrain(client);
     this.logger.log(`Brain connected: ${client.id}`);
+
+    // Trigger queue drain on reconnection — brain may have dropped mid-job.
+    this.jobService.tryDispatchNext().catch((e) => this.logger.warn('tryDispatchNext failed', e));
   }
 
   handleDisconnect(client: Socket): void {
@@ -50,25 +55,94 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`Brain disconnected: ${client.id}`);
   }
 
+  // ── Brain → API messages ─────────────────────────────────────────────
+
   @SubscribeMessage('job:status')
   async handleJobStatus(
     _client: Socket,
-    payload: { jobId: string; status: JobStatus },
+    payload: { jobId: string; status: JobStatus; failureReason?: string },
   ): Promise<void> {
     this.logger.log(`job:status from brain — ${payload.jobId} → ${payload.status}`);
     await this.jobService.updateStatus(payload.jobId, payload.status);
   }
 
-  dispatchJob(job: Job): void {
+  @SubscribeMessage('job:phase')
+  async handleJobPhase(
+    _client: Socket,
+    payload: { jobId: string; phase: JobPhase },
+  ): Promise<void> {
+    this.logger.log(`job:phase from brain — ${payload.jobId} → ${payload.phase}`);
+    await this.jobService.updatePhase(payload.jobId, payload.phase);
+  }
+
+  @SubscribeMessage('job:timing')
+  async handleJobTiming(
+    _client: Socket,
+    payload: {
+      jobId: string;
+      startedAt?: string;
+      pickupAt?: string;
+      dropoffAt?: string;
+      unloadAt?: string;
+      totalDurationMs?: number;
+      fullCycleDurationMs?: number;
+      travelToPickupMs?: number;
+      travelToDropoffMs?: number;
+      unloadDurationMs?: number;
+    },
+  ): Promise<void> {
+    this.logger.log(`job:timing from brain — ${payload.jobId} total=${payload.totalDurationMs ?? '?'}ms`);
+    await this.jobService.updateTiming(payload.jobId, {
+      startedAt: payload.startedAt ? new Date(payload.startedAt) : undefined,
+      pickupAt: payload.pickupAt ? new Date(payload.pickupAt) : undefined,
+      dropoffAt: payload.dropoffAt ? new Date(payload.dropoffAt) : undefined,
+      unloadAt: payload.unloadAt ? new Date(payload.unloadAt) : undefined,
+      totalDurationMs: payload.totalDurationMs,
+      fullCycleDurationMs: payload.fullCycleDurationMs,
+      travelToPickupMs: payload.travelToPickupMs,
+      travelToDropoffMs: payload.travelToDropoffMs,
+      unloadDurationMs: payload.unloadDurationMs,
+    });
+  }
+
+  @SubscribeMessage('robot:health')
+  handleHealth(
+    _client: Socket,
+    _payload: Record<string, unknown>,
+  ): void {
+    this.robotService.recordHealth();
+    // No reply needed — brain fires this every 5 s as a keepalive.
+  }
+
+  // ── API → Brain dispatch ─────────────────────────────────────────────
+
+  async dispatchJob(job: Job): Promise<void> {
     if (!this.robotService.isBrainConnected()) {
       this.logger.warn('Cannot dispatch job — brain not connected');
       return;
     }
+
+    // Resolve slot coordinates so brain can navigate to actual map poses
+    const fromSlot = await this.shelfService.findSlotByCode(job.fromSlotCode);
+    const toSlot = await this.shelfService.findSlotByCode(job.toSlotCode);
+
+    const pickup = fromSlot && fromSlot.slotX !== undefined
+      ? { x: fromSlot.slotX, y: fromSlot.slotY ?? 0, theta: fromSlot.facingTheta ?? 0 }
+      : null;
+    const dropoff = toSlot && toSlot.slotX !== undefined
+      ? { x: toSlot.slotX, y: toSlot.slotY ?? 0, theta: toSlot.facingTheta ?? 0, tag_id: toSlot.aprilTagId ?? null }
+      : null;
+
     this.server.emit('job:dispatch', {
       _id: job._id,
+      operationId: job.operationId,
       packageId: job.packageId,
       fromSlotCode: job.fromSlotCode,
       toSlotCode: job.toSlotCode,
+      pickup,
+      dropoff,
+      dock_distance_mm: 40,
     });
+    this.logger.log(`Dispatch ${job._id}: ${job.fromSlotCode}→${job.toSlotCode} pickup=${pickup ? 'ok' : 'none'} dropoff=${dropoff ? 'ok' : 'none'}`);
   }
 }

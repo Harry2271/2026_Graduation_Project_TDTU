@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class DispatchMoveDto {
   @ApiProperty({ example: 'S1A1' })
@@ -11,4 +11,9 @@ export class DispatchMoveDto {
   @IsString()
   @IsNotEmpty()
   toSlotCode!: string;
+
+  @ApiPropertyOptional({ description: 'Client-supplied idempotency key — duplicate dispatches collapse to one job' })
+  @IsOptional()
+  @IsString()
+  operationId?: string;
 }

@@ -47,12 +47,19 @@ class Esp32Bridge(Protocol):
     async def get_status(self) -> dict: ...
     async def get_encoder(self) -> list[dict]: ...
     async def begin_dock(self, tag_id: int, target_distance_mm: int,
-                         facing_theta_deg: float = -999.0) -> None: ...
+                         facing_theta_deg: float = -999.0,
+                         operation_id: str | None = None) -> None: ...
     async def cancel_dock(self) -> None: ...
     async def get_unload_state(self) -> dict: ...
+    def battery_pct(self) -> Optional[float]: ...
+    def battery_voltage(self) -> Optional[float]: ...
+    def battery_current(self) -> Optional[float]: ...
+    def last_error(self) -> str: ...
 
     on_status_update: Callable[[dict], None]
     on_encoder_update: Callable[[list[dict]], None]
+    on_imu: Callable[[dict], None]
+    on_power: Callable[[dict], None]
     on_e_stop: Callable[[], None]
     on_error: Callable[[str], None]
     on_alive: Callable[[dict], None]
@@ -125,6 +132,8 @@ class FakeEsp32Bridge:
 
         self.on_status_update: Callable[[dict], None] = lambda _data: None
         self.on_encoder_update: Callable[[list[dict]], None] = lambda _data: None
+        self.on_imu: Callable[[dict], None] = lambda _data: None
+        self.on_power: Callable[[dict], None] = lambda _data: None
         self.on_e_stop: Callable[[], None] = lambda: None
         self.on_error: Callable[[str], None] = lambda _msg: None
         self.on_alive: Callable[[dict], None] = lambda _data: None
@@ -192,11 +201,14 @@ class FakeEsp32Bridge:
         return []
 
     async def begin_dock(self, tag_id: int, target_distance_mm: int,
-                         facing_theta_deg: float = -999.0) -> None:
+                         facing_theta_deg: float = -999.0,
+                         operation_id: str | None = None) -> None:
         cmd: dict[str, Any] = {'cmd': 'begin_dock', 'tag_id': tag_id,
                                'target_distance_mm': target_distance_mm}
         if facing_theta_deg >= 0:
             cmd['facing_theta'] = facing_theta_deg
+        if operation_id:
+            cmd['operation_id'] = operation_id
         await self._send(cmd)
 
     async def cancel_dock(self) -> None:
@@ -204,6 +216,18 @@ class FakeEsp32Bridge:
 
     async def get_unload_state(self) -> dict:
         return {}
+
+    def battery_pct(self) -> Optional[float]:
+        return None
+
+    def battery_voltage(self) -> Optional[float]:
+        return None
+
+    def battery_current(self) -> Optional[float]:
+        return None
+
+    def last_error(self) -> str:
+        return ''
 
     def inject_unload_state(self, state: dict) -> None:
         self.on_unload_state(state)
@@ -222,6 +246,12 @@ class FakeEsp32Bridge:
 
     def inject_error(self, message: str) -> None:
         self.on_error(message)
+
+    def inject_imu(self, data: dict) -> None:
+        self.on_imu(data)
+
+    def inject_power(self, data: dict) -> None:
+        self.on_power(data)
 
     def inject_alive(self, data: dict) -> None:
         self._last_alive_counter = data.get('alive', -1)
@@ -307,6 +337,8 @@ class RealEsp32Bridge:
 
         self.on_status_update: Callable[[dict], None] = lambda _data: None
         self.on_encoder_update: Callable[[list[dict]], None] = lambda _data: None
+        self.on_imu: Callable[[dict], None] = lambda _data: None
+        self.on_power: Callable[[dict], None] = lambda _data: None
         self.on_e_stop: Callable[[], None] = lambda: None
         self.on_error: Callable[[str], None] = lambda _msg: None
         self.on_alive: Callable[[dict], None] = lambda _data: None
@@ -316,6 +348,14 @@ class RealEsp32Bridge:
         # without going through the callback.  Updated from _handle_line().
         self._last_unload_state: dict = {}
         self._last_unload_state_ms: float = 0.0
+
+        # Cached power telemetry (type 133) for battery health reporting.
+        self._last_power: dict = {}
+        self._last_power_ms: float = 0.0
+
+        # Cached last error string + monotonic timestamp.
+        self._last_error: str = ''
+        self._last_error_ms: float = 0.0
 
     # ----- lifecycle -----
 
@@ -382,12 +422,20 @@ class RealEsp32Bridge:
         return []
 
     async def begin_dock(self, tag_id: int, target_distance_mm: int,
-                         facing_theta_deg: float = -999.0) -> None:
-        """Start firmware dock+unload sequence (heading → VL53L0X → cylinder)."""
+                         facing_theta_deg: float = -999.0,
+                         operation_id: str | None = None) -> None:
+        """Start firmware dock+unload sequence (heading → VL53L0X → cylinder).
+
+        `operation_id` is an idempotency key — the firmware will reject a
+        duplicate `begin_dock` with the same `operation_id` so the brain
+        can safely retry without firing the cylinder twice.
+        """
         cmd: dict[str, Any] = {'cmd': 'begin_dock', 'tag_id': tag_id,
                                'target_distance_mm': target_distance_mm}
         if facing_theta_deg >= 0:
             cmd['facing_theta'] = facing_theta_deg
+        if operation_id:
+            cmd['operation_id'] = operation_id
         await self._send_line(cmd)
 
     async def cancel_dock(self) -> None:
@@ -422,6 +470,44 @@ class RealEsp32Bridge:
     def last_alive_counter(self) -> int:
         """The most recent alive counter value seen, or -1 if none yet."""
         return self._last_alive_counter
+
+    # ----- battery + error health accessors ---------------------------------
+
+    def battery_pct(self) -> Optional[float]:
+        """Battery percentage (0.0-1.0) from cached type-133, or None if stale."""
+        if not self._last_power:
+            return None
+        import time as _t
+        if (_t.monotonic() - self._last_power_ms) > 5.0:
+            return None
+        pct = self._last_power.get('pct')
+        return float(pct) / 100.0 if pct is not None else None
+
+    def battery_voltage(self) -> Optional[float]:
+        """Bus voltage in volts from cached type-133, or None if stale."""
+        if not self._last_power:
+            return None
+        import time as _t
+        if (_t.monotonic() - self._last_power_ms) > 5.0:
+            return None
+        return self._last_power.get('bus_v')
+
+    def battery_current(self) -> Optional[float]:
+        """Current draw in amps from cached type-133, or None if stale."""
+        if not self._last_power:
+            return None
+        import time as _t
+        if (_t.monotonic() - self._last_power_ms) > 5.0:
+            return None
+        return self._last_power.get('current_a')
+
+    def last_power(self) -> dict:
+        """Return the latest cached power frame, empty when none received."""
+        return dict(self._last_power)
+
+    def last_error(self) -> str:
+        """Last error message from firmware, or '' if none."""
+        return self._last_error
 
     # ----- internals -----
 
@@ -531,7 +617,11 @@ class RealEsp32Bridge:
             motors = data.get('motors') or []
             self.on_encoder_update(motors)
         elif msg_type == self.TYPE_ERROR:
-            self._safe_call(self.on_error, str(data.get('error', 'unknown')))
+            error_text = str(data.get('error', 'unknown'))
+            import time as _t
+            self._last_error = error_text
+            self._last_error_ms = _t.monotonic()
+            self._safe_call(self.on_error, error_text)
         elif msg_type == self.TYPE_MOVE_ACK:
             status = data.get('status')
             if status == 'rejected':
@@ -552,9 +642,20 @@ class RealEsp32Bridge:
             self._last_unload_state = data
             self._last_unload_state_ms = _t.monotonic()
             self._safe_call(self.on_unload_state, data)
+        elif msg_type == self.TYPE_POWER:
+            # INA226 battery telemetry (type 133). Cache for odom_node AND
+            # notify any subscribers (e.g. web_bridge / telemetry node).
+            import time as _t
+            self._last_power = data
+            self._last_power_ms = _t.monotonic()
+            self._safe_call(self.on_power, data)
+        elif msg_type == self.TYPE_IMU:
+            # BNO055 IMU telemetry (type 134). No caching required today
+            # (odom_node subscribes via /esp32/imu), but fire the callback
+            # so live UIs can show heading.
+            self._safe_call(self.on_imu, data)
         else:
-            # IMU, POWER, IR, SHARP, TOF, UNLOAD_STATE, ACK, … — ignore
-            # by default.  Hosts that want them can subclass or wrap.
+            # IR, SHARP, TOF, ACK, … — ignore by default.
             pass
 
         # Rising-edge e_stop trigger from any status frame.

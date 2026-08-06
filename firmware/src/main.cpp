@@ -734,9 +734,8 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
 
         case CMD_BEGIN_DOCK:
             g_modeManager.onPiCommand(cmd, now_ms);
-            // Also pass facing_theta to AutoRoam for heading gate
-            g_modeManager.startDock(cmd.tag_id, cmd.target_distance_mm,
-                                    cmd.facing_theta_deg);
+            // onPiCommand handles startDock with full params (tag, distance,
+            // facing_theta, operation_id) — no duplicate call needed here.
             PiSerial.printf("ACK: dock cmd %d\n", cmd.type);
             break;
 

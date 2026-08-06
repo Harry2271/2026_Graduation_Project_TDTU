@@ -48,8 +48,16 @@ export default function CalibratePage() {
     async (e: React.MouseEvent<HTMLImageElement>) => {
       if (!selectedCode || !imgRef.current) return;
       const rect = imgRef.current.getBoundingClientRect();
-      const px = e.clientX - rect.left;
-      const py = e.clientY - rect.top;
+      const displayPx = e.clientX - rect.left;
+      const displayPy = e.clientY - rect.top;
+
+      // Scale from rendered display pixels → natural map pixels so coordinates
+      // stay correct even when the <img> is zoomed/scaled by CSS.
+      const displayScaleX = rect.width > 0 ? imageSize.w / rect.width : 1;
+      const displayScaleY = rect.height > 0 ? imageSize.h / rect.height : 1;
+      const px = displayPx * displayScaleX;
+      const py = displayPy * displayScaleY;
+
       const meterScale = MAP_METERS / imageSize.w;
       const slotX = px * meterScale - MAP_PADDING_M;
       const slotY = MAP_PADDING_M - py * meterScale;

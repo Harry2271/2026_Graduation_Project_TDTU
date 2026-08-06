@@ -40,8 +40,9 @@ public:
 
     /// Trigger unloading sequence (forward to Pi via CMD)
     void startDock(uint16_t tag_id, uint16_t target_distance_mm,
-                   float facing_theta_deg = -999.0f) {
-        auto_roam_.startDock(tag_id, target_distance_mm, facing_theta_deg);
+                   float facing_theta_deg = -999.0f,
+                   const char* operation_id = nullptr) {
+        auto_roam_.startDock(tag_id, target_distance_mm, facing_theta_deg, operation_id);
     }
 
     /// Manually trigger the leave-dock reverse phase

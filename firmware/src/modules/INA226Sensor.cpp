@@ -76,10 +76,17 @@ bool INA226Sensor::read()
     if (!operational_) return false;
     last_read_ms_ = millis();
 
+    // Guard: skip read if bus is busy.  Prevents Wire.endTransmission()
+    // from blocking on shared I2C bus with BNO055.
+    if (!I2CBus::linesIdle(INA226_SDA_PIN, INA226_SCL_PIN)) {
+        // Don't report failure here — let health monitor handle it
+        return false;
+    }
+
     float mv = 0.0f, ma = 0.0f, mw = 0.0f;
     uint8_t res = ina226_basic_read(&mv, &ma, &mw);
     if (res != 0) {
-        Serial.println("[INA226] Read failed");
+        Serial.printf("[INA226] Read err=%u — bus may need recovery\n", res);
         return false;
     }
 

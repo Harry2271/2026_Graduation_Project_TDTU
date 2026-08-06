@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Activity, Cpu, Power, Radar, Wifi, WifiOff } from 'lucide-react';
+import { Activity, Cpu, Power, Radar, Wifi, WifiOff, Brain, Battery } from 'lucide-react';
 import { useRobotTelemetry } from './RobotTelemetryProvider';
+import { useGetRobotHealthQuery } from '@/store/services/inventoryApi';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -100,6 +101,128 @@ function PanelHeader() {
       </div>
     </div>
   );
+}
+
+// ── Status tab ─────────────────────────────────────────────────────────────
+
+// ── Brain section (Phase 5) ──────────────────────────────────────────
+
+function BrainSection() {
+  const { data: health } = useGetRobotHealthQuery(undefined, { pollingInterval: 10_000 });
+  const { power } = useRobotTelemetry();
+  const connected = health?.connected ?? false;
+  const jobId = health?.runningJobId;
+  const lastSeen = health?.lastSeenAt ? new Date(health.lastSeenAt) : null;
+
+  const ago = lastSeen ? formatAgo(lastSeen) : '—';
+  const voltageMv = power?.voltage_mv ?? (power?.bus_v !== undefined ? power.bus_v * 1000 : null);
+  const batteryPct = voltageMv != null ? voltageToPct(voltageMv) : null;
+  const batteryColor = batteryPct == null ? 'var(--text-muted)' : batteryPct < 20 ? 'var(--danger)' : batteryPct < 40 ? 'var(--warning)' : 'var(--success)';
+
+  return (
+    <div className="flex flex-col gap-2 p-3">
+      {/* Brain connection badge */}
+      <div
+        className="flex items-center justify-between px-3 py-2 rounded-lg"
+        style={{
+          background: connected ? 'rgba(0,255,136,0.1)' : 'rgba(255,59,92,0.1)',
+          border: `1px solid ${connected ? 'var(--success)' : 'var(--danger)'}`,
+        }}
+      >
+        <span className="flex items-center gap-1.5">
+          <Brain size={12} style={{ color: connected ? 'var(--success)' : 'var(--danger)' }} />
+          <span
+            className="text-[9px] font-bold tracking-widest"
+            style={{ color: connected ? 'var(--success)' : 'var(--danger)' }}
+          >
+            BRAIN
+          </span>
+        </span>
+        <span
+          className="font-bold text-[12px] tracking-widest"
+          style={{ color: connected ? 'var(--success)' : 'var(--danger)', fontFamily: "'JetBrains Mono', monospace" }}
+        >
+          {connected ? '● LIVE' : '○ OFF'}
+        </span>
+      </div>
+
+      {/* Heartbeat age */}
+      <Row label="HEARTBEAT" value={ago} mono small />
+
+      {/* Running job */}
+      <div
+        className="flex items-center justify-between px-3 py-1.5 rounded-lg"
+        style={{ background: 'rgba(17,24,39,0.4)', border: '1px solid var(--border-dim)' }}
+      >
+        <span className="text-[9px] font-bold tracking-widest" style={{ color: 'var(--text-muted)' }}>
+          JOB
+        </span>
+        <span
+          className="text-[10px]"
+          style={{
+            color: jobId ? 'var(--accent)' : 'var(--text-muted)',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          {jobId ? `#${jobId.slice(-6).toUpperCase()}` : '—'}
+        </span>
+      </div>
+
+      {/* Battery bar */}
+      <div
+        className="flex flex-col gap-1 px-3 py-2 rounded-lg"
+        style={{ background: 'rgba(17,24,39,0.6)', border: '1px solid var(--border-dim)' }}
+      >
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <Battery size={11} style={{ color: batteryColor }} />
+            <span className="text-[9px] font-bold tracking-widest" style={{ color: 'var(--text-muted)' }}>
+              BATTERY
+            </span>
+          </span>
+          <span
+            className="text-[11px] font-bold"
+            style={{
+              color: batteryColor,
+              fontFamily: "'JetBrains Mono', monospace",
+              textShadow: batteryPct != null ? `0 0 6px ${batteryColor}` : undefined,
+            }}
+          >
+            {batteryPct != null ? `${batteryPct.toFixed(0)}%` : '—'}
+          </span>
+        </div>
+        <div
+          className="h-1 rounded-full overflow-hidden"
+          style={{ background: 'var(--bg-raised)' }}
+        >
+          <div
+            className="h-full transition-all duration-300"
+            style={{ width: batteryPct != null ? `${batteryPct}%` : '0%', background: batteryColor, boxShadow: `0 0 4px ${batteryColor}` }}
+          />
+        </div>
+        <span className="text-[9px]" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+          {voltageMv != null ? `${(voltageMv / 1000).toFixed(2)} V` : '—'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Li-ion 3S curve: 9.0 V empty → 12.6 V full, piecewise linear. */
+function voltageToPct(mv: number): number {
+  const v = mv / 1000;
+  if (v >= 12.6) return 100;
+  if (v <= 9.0) return 0;
+  if (v >= 11.1) return 50 + ((v - 11.1) / (12.6 - 11.1)) * 50;
+  return ((v - 9.0) / (11.1 - 9.0)) * 50;
+}
+
+function formatAgo(date: Date): string {
+  const sec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (sec < 5) return 'vừa xong';
+  if (sec < 60) return `${sec}s trước`;
+  const min = Math.floor(sec / 60);
+  return `${min}m ${sec % 60}s trước`;
 }
 
 // ── Status tab ─────────────────────────────────────────────────────────────
@@ -463,6 +586,10 @@ export function TelemetryPanel() {
       <PanelHeader />
       <div className="flex-1 min-h-0 overflow-y-auto p-2" style={{ scrollbarWidth: 'thin' }}>
         <div className="flex flex-col gap-3">
+          <SectionShell>
+            <SectionHeader icon={<Brain size={12} />} label="BRAIN" />
+            <BrainSection />
+          </SectionShell>
           <SectionShell>
             <SectionHeader icon={<Activity size={12} />} label="STATUS" />
             <StatusTab />

@@ -34,4 +34,8 @@ export class EventsGateway {
   emitJobUpdated(data: unknown) {
     this.server.emit('job:updated', data);
   }
+
+  emitRobotHealth(data: unknown) {
+    this.server.emit('robot:health', data);
+  }
 }
