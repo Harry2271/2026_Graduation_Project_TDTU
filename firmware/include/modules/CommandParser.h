@@ -78,6 +78,7 @@ struct Command {
     uint16_t tag_id;
     uint16_t target_distance_mm;
     float facing_theta_deg;   // target heading for heading gate
+    char    operation_id[37]; // UUID string from Pi (36 chars + NUL); empty if absent
 };
 
 class CommandParser {

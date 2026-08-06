@@ -10,6 +10,7 @@ APP_DIR="$SCRIPT_DIR"
 MONOREPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 
 ROS_WS="$HOME/robot_ws"
+MAPS_DIR="${MAPS_DIR:-$HOME/robot_ws/maps}"
 LIDAR_MODEL="${LIDAR_MODEL:-a1}"
 SERVICE_NAME_PREFIX="nexus-robot"
 
@@ -98,7 +99,6 @@ BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBO
 
 # 2. Logic Nodes (brain_node added in Phase 0 of robot-controller-brain plan)
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
-start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
 
 # ESP32 telemetry bridge — opens /dev/ttyACM0 and forwards type-130/131 frames
 # to /esp32/encoder and /esp32/status, which web_bridge relays to the browser.
@@ -107,6 +107,13 @@ start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller
 ESP32_PORT="${ESP32_PORT:-/dev/ttyACM0}"
 sudo chmod 666 "$ESP32_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $ESP32_PORT"
 start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
+
+# web_bridge now subscribes to /esp32/status, /esp32/encoder AND /esp32/power
+# so it must start after esp32-telemetry to have topic subscribers ready.
+start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
+
+# Ensure maps directory exists for map_saver_cli and MapsController
+mkdir -p "$MAPS_DIR"
 
 # Brain node gets extra PM2 settings: exponential backoff on restart so a
 # temporarily-unreachable API doesn't cause a 1500-restart crash loop.

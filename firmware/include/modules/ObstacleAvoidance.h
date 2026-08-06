@@ -41,6 +41,11 @@ public:
     // Clear obstacle state (path is clear)
     void clearObstacles(uint32_t now_ms);
 
+    // Bump "last obstacle seen" timestamp without changing obstacle_active_
+    // direction state.  Used by local sensors (IR/Sharp) to keep the
+    // safety window open while the physical obstacle is still present.
+    void updateLastSeen(uint32_t now_ms);
+
     // Given a raw navigation command, apply avoidance logic
     AvoidanceResult processCommand(int16_t vx, int16_t vy, int16_t omega,
                                     uint32_t now_ms);

@@ -51,6 +51,38 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 
+# ── AprilTag library detection ─────────────────────────────────────────────────
+# pupil-apriltags is the original MIT library (Patrick Mihelich).
+# dt-apriltags is a drop-in fork that's published on PyPI as wheels
+# including arm64 (pupil-apriltags only ships a source distribution and
+# fails to build on Pi 5's Python 3.12 without numpy 2.x compat).
+#
+# pupil_apriltags returns `pose_t` / `pose_R` directly when
+# `estimate_tag_pose=True` is passed.  dt_apriltags returns the same.
+# Both expose `tag_id` and `decision_margin`.  So the wrapper below
+# works against either backend.
+#
+# Install hints (Ubuntu 22.04 / Pi 5 with ROS 2 Jazzy):
+#   sudo apt install python3-opencv ffmpeg
+#   pip install --break-system-packages pupil-apriltags   # or dt-apriltags
+#
+# If neither is found, the node logs the install command at WARN.
+APRILTAG_LIB = None
+APRILTAG_DETECTOR_CLS = None
+try:
+    from pupil_apriltags import Detector as _PupilDetector  # type: ignore
+    APRILTAG_LIB = 'pupil_apriltags'
+    APRILTAG_DETECTOR_CLS = _PupilDetector
+except ImportError:
+    try:
+        from dt_apriltags import Detector as _DtDetector  # type: ignore
+        APRILTAG_LIB = 'dt_apriltags'
+        APRILTAG_DETECTOR_CLS = _DtDetector
+    except ImportError:
+        APRILTAG_LIB = None
+        APRILTAG_DETECTOR_CLS = None
+
+
 # ── Defaults ────────────────────────────────────────────────
 DEVICE = os.environ.get('CAMERA_DEVICE', '/dev/video0')
 WIDTH = int(os.environ.get('CAMERA_WIDTH', '640'))
@@ -121,17 +153,18 @@ class AprilTagNode(Node):
             f'family={FAMILY} size={SIZE_M}m @ {HZ}Hz')
 
     def _init_detector(self):
-        """Lazy import of pupil-apriltags (preferred). Falls back to dt_apriltags."""
-        try:
-            from pupil_apriltags import Detector  # type: ignore
-            return Detector(families=FAMILY, nthreads=2,
-                            quad_decimate=1.0, quad_sigma=0.0,
-                            refine_edges=True, decode_sharpening=0.25)
-        except ImportError:
-            from dt_apriltags import Detector  # type: ignore
-            return Detector(families=FAMILY, nthreads=2,
-                            quad_decimate=1.0, quad_sigma=0.0,
-                            refine_edges=True, decode_sharpening=0.25)
+        """Create an AprilTag Detector using whichever library is installed."""
+        if APRILTAG_DETECTOR_CLS is None:
+            raise ImportError(
+                'No AprilTag library found. Install one with:\n'
+                '  pip install --break-system-packages pupil-apriltags\n'
+                '  # or\n'
+                '  pip install --break-system-packages dt-apriltags'
+            )
+        self.get_logger().info(f'Using {APRILTAG_LIB} for AprilTag detection')
+        return APRILTAG_DETECTOR_CLS(families=FAMILY, nthreads=2,
+                                      quad_decimate=1.0, quad_sigma=0.0,
+                                      refine_edges=True, decode_sharpening=0.25)
 
     def destroy_node(self):
         self._stop_event.set()
@@ -146,30 +179,46 @@ class AprilTagNode(Node):
 
         dt = 1.0 / HZ
         proc: Optional[subprocess.Popen] = None
+        jpeg_buffer = bytearray()
 
         while not self._stop_event.is_set():
             try:
                 if proc is None or proc.poll() is not None:
                     proc = self._start_ffmpeg()
+                    jpeg_buffer.clear()
                     if proc is None:
                         time.sleep(2.0)
                         continue
 
-                raw = proc.stdout.read(4096) if proc.stdout else b''
+                raw = proc.stdout.read(8192) if proc.stdout else b''
                 if not raw:
-                    self._get_logger().debug('ffmpeg returned empty frame')
                     time.sleep(0.05)
                     continue
 
-                # Decode one JPEG frame from the buffer
-                np_arr = np.frombuffer(raw, dtype=np.uint8)
-                img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                if img is None:
-                    continue
+                # image2pipe is a concatenated JPEG stream; one read() can
+                # contain half a frame or several frames.  Accumulate bytes
+                # and extract complete SOI (FFD8) → EOI (FFD9) frames.
+                jpeg_buffer.extend(raw)
+                while True:
+                    start = jpeg_buffer.find(b'\xff\xd8')
+                    if start < 0:
+                        if len(jpeg_buffer) > 1:
+                            del jpeg_buffer[:-1]
+                        break
+                    end = jpeg_buffer.find(b'\xff\xd9', start + 2)
+                    if end < 0:
+                        if start > 0:
+                            del jpeg_buffer[:start]
+                        break
+                    frame = bytes(jpeg_buffer[start:end + 2])
+                    del jpeg_buffer[:end + 2]
 
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                self._process_frame(gray)
-                time.sleep(dt)
+                    img = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8),
+                                       cv2.IMREAD_GRAYSCALE)
+                    if img is not None:
+                        self._process_frame(img)
+                        time.sleep(dt)
+                    break
 
             except Exception as e:
                 self.get_logger().warn(f'detect loop error: {e}')

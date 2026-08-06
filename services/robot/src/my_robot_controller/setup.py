@@ -19,6 +19,9 @@ setup(
         # Include config files from config/
         (os.path.join('share', package_name, 'config'),
             sorted(glob('config/*.yaml'))),
+        # Include URDF/Xacro files
+        (os.path.join('share', package_name, 'urdf'),
+            sorted(glob('urdf/*.xacro') + glob('urdf/*.urdf'))),
     ],
     install_requires=['setuptools', 'websockets>=10.0'],
     zip_safe=True,
@@ -35,6 +38,7 @@ setup(
             'april_tag_node = my_robot_controller.april_tag_node:main',
             'camera_stream = my_robot_controller.camera_stream:main',
             'esp32_telemetry_node = my_robot_controller.esp32_telemetry_node:main',
+            'odom = my_robot_controller.odom_node:main',
             'teleop_node = my_robot_controller.teleop_node:main',
         ],
     },

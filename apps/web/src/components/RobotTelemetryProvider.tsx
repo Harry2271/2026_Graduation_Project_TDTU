@@ -48,6 +48,16 @@ export interface Esp32EncoderMotor {
   rpm: number;
 }
 
+export interface Esp32Power {
+  bus_v?: number;
+  voltage_mv?: number;
+  current_ma?: number;
+  current_a?: number;
+  power_mw?: number;
+  power_w?: number;
+  uptime_ms?: number;
+}
+
 export type Esp32Encoder = Esp32EncoderMotor[];
 
 export type WsStatus = 'connecting' | 'connected' | 'disconnected';
@@ -55,6 +65,7 @@ export type WsStatus = 'connecting' | 'connected' | 'disconnected';
 interface TelemetryContextValue {
   status: Esp32Status | null;
   encoder: Esp32Encoder | null;
+  power: Esp32Power | null;
   wsStatus: WsStatus;
   lastReceivedAt: number; // Date.now() of last esp32 frame
 }
@@ -62,6 +73,7 @@ interface TelemetryContextValue {
 const TelemetryContext = createContext<TelemetryContextValue>({
   status: null,
   encoder: null,
+  power: null,
   wsStatus: 'connecting',
   lastReceivedAt: 0,
 });
@@ -82,6 +94,7 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
   // Refs hold the latest payload — never trigger a render themselves.
   const statusRef = useRef<Esp32Status | null>(null);
   const encoderRef = useRef<Esp32Encoder | null>(null);
+  const powerRef = useRef<Esp32Power | null>(null);
   const lastReceivedRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -93,6 +106,7 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<TelemetryContextValue>({
     status: null,
     encoder: null,
+    power: null,
     wsStatus: 'connecting',
     lastReceivedAt: 0,
   });
@@ -104,6 +118,7 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
         const next: TelemetryContextValue = {
           status: statusRef.current,
           encoder: encoderRef.current,
+          power: powerRef.current,
           wsStatus: prev.wsStatus,
           lastReceivedAt: lastReceivedRef.current,
         };
@@ -111,6 +126,7 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
         if (
           next.status === prev.status &&
           next.encoder === prev.encoder &&
+          next.power === prev.power &&
           next.wsStatus === prev.wsStatus &&
           next.lastReceivedAt === prev.lastReceivedAt
         ) {
@@ -140,6 +156,9 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
           lastReceivedRef.current = Date.now();
         } else if (msg.type === 'esp32_encoder') {
           encoderRef.current = msg.data as Esp32Encoder;
+          lastReceivedRef.current = Date.now();
+        } else if (msg.type === 'esp32_power') {
+          powerRef.current = msg.data as Esp32Power;
           lastReceivedRef.current = Date.now();
         }
       } catch {

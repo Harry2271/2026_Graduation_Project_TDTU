@@ -1,5 +1,5 @@
 import { BadRequestException, forwardRef,Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { ClientSession, Types } from 'mongoose';
 
 import { EventsGateway } from '../../gateway/events-gateway';
 import { PackageService } from '../package/package-service';
@@ -162,12 +162,16 @@ export class ShelfService implements IShelfService, OnModuleInit {
 
   // ─── Job/robot integration helpers (Phase 4) ─────────────────────
 
-  async findSlotByCode(slotCode: string): Promise<ShelfSlot | null> {
-    return this.shelfRepository.findSlotByCode(slotCode);
+  async findSlotByCode(slotCode: string, session?: ClientSession): Promise<ShelfSlot | null> {
+    return this.shelfRepository.findSlotByCode(slotCode, session);
   }
 
-  async updateSlotStatus(slotCode: string, status: SlotStatus): Promise<void> {
-    await this.shelfRepository.updateSlotStatus(slotCode, status);
+  async updateSlotStatus(
+    slotCode: string,
+    status: SlotStatus,
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.shelfRepository.updateSlotStatus(slotCode, status, session);
   }
 
   async assignPackageToSlot(slotCode: string, packageId: Types.ObjectId): Promise<ShelfSlot | null> {

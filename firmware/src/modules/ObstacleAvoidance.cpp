@@ -56,6 +56,16 @@ void ObstacleAvoidance::clearObstacles(uint32_t now_ms)
     last_dir_ = ObstacleDirection::NONE;
 }
 
+void ObstacleAvoidance::updateLastSeen(uint32_t now_ms)
+{
+    // Bump the "last obstacle event" timestamp so the500ms safety
+    // window in applyToCommand keeps obstacle_active_ true until the
+    // sensors have been clear for a full CLEAR_THRESHOLD_MS period.
+    if (obstacle_active_) {
+        last_obstacle_ms_ = now_ms;
+    }
+}
+
 bool ObstacleAvoidance::hasActiveObstacle() const
 {
     return obstacle_active_;
@@ -85,6 +95,16 @@ AvoidanceResult ObstacleAvoidance::processCommand(int16_t vx, int16_t vy,
 void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
                                           uint32_t now_ms)
 {
+    // Front obstacle → HARD STOP.  The vehicle should not advance when
+    // the physical sensors (IR/Sharp) report something directly ahead,
+    // regardless of how the dodge state-machine ticks.
+    if (obstacle_active_ && last_dir_ == ObstacleDirection::FRONT) {
+        vx = 0;
+        vy = 0;
+        omega = 0;
+        return;
+    }
+
     updateDodge(now_ms);
 
     if (!dodging_ && last_dir_ != ObstacleDirection::NONE) {
@@ -106,10 +126,10 @@ void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
 
     switch (last_dir_) {
         case ObstacleDirection::FRONT:
-            // Stop forward, rotate to find clear path
+            // FRONT direction dodge (fallback path when not in active-stop above)
             vx = 0;
-            omega = 80;  // default rotate CW
             vy = 0;
+            omega = 0;
             break;
 
         case ObstacleDirection::LEFT:

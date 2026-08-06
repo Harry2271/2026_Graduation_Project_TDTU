@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Package, Map as MapIcon, Camera, Layers, Activity, Box } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Package, Map as MapIcon, Camera, Layers, Activity, Box, Clock } from 'lucide-react';
 
 const menuItems = [
   { name: 'Kho hàng',          path: '/inventory', icon: Package  },
+  { name: 'Lịch sử vận chuyển', path: '/jobs',     icon: Clock    },
   { name: 'Quản lý kiện hàng', path: '/products',  icon: Layers   },
   { name: 'Bản đồ',            path: '/map',       icon: MapIcon  },
   { name: 'Quỹ đạo 3D',        path: '/trajectory', icon: Box     },
@@ -13,6 +15,13 @@ const menuItems = [
 ];
 
 function BrandHeader() {
+  const [host, setHost] = useState('');
+
+  useEffect(() => {
+    // Hiển thị hostname/ip mà từ đó đang truy cập trang web
+    setHost(window.location.hostname || window.location.host);
+  }, []);
+
   return (
     <div
       className="px-5 py-5"
@@ -50,6 +59,22 @@ function BrandHeader() {
           <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>
             TDTU CAPSTONE 2025
           </p>
+          {/* Hiển thị IP/hostname Raspberry Pi */}
+          {host && (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: '#facc15', boxShadow: '0 0 6px rgba(250,204,21,0.3)' }}
+              />
+              <span
+                className="text-[9px] select-all"
+                style={{ color: '#facc15', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}
+                title="Click to copy — paste this URL to open on other devices"
+              >
+                {host}
+              </span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5 mt-1.5">
             <span
               className="w-1.5 h-1.5 rounded-full"

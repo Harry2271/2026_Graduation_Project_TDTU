@@ -1,4 +1,4 @@
-import type { Types } from 'mongoose';
+import type { ClientSession, Types } from 'mongoose';
 
 import type { Shelf } from '../schemas/shelf.schema';
 import type { ShelfSlot, SlotStatus } from '../schemas/shelf-slot.schema';
@@ -10,7 +10,7 @@ export interface IShelfRepository {
   findSlotsByShelf(shelfCode: string): Promise<ShelfSlot[]>;
   countShelves(): Promise<number>;
   createSlots(slots: ShelfSlot[]): Promise<void>;
-  findSlotByCode(code: string): Promise<ShelfSlot | null>;
+  findSlotByCode(code: string, session?: ClientSession): Promise<ShelfSlot | null>;
   findSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null>;
   findByAprilTagId(aprilTagId: number): Promise<ShelfSlot | null>;
   assignPackageToSlot(slotCode: string, packageId: Types.ObjectId): Promise<ShelfSlot | null>;
@@ -18,5 +18,5 @@ export interface IShelfRepository {
   clearSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null>;
   updateCoordinates(slotCode: string, slotX: number, slotY: number, facingTheta: number | null): Promise<ShelfSlot | null>;
   assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null>;
-  updateSlotStatus(slotCode: string, status: SlotStatus): Promise<void>;
+  updateSlotStatus(slotCode: string, status: SlotStatus, session?: ClientSession): Promise<void>;
 }

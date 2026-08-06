@@ -10,7 +10,10 @@ import type {
   ShelfSlot,
   MovePackageDto,
   Job,
+  DispatchMovePayload,
   DispatchMoveResponse,
+  RobotMapFile,
+  BrainHealth,
 } from "@/types/inventory";
 
 // Tag type helpers matching RTK Query's FullTagDescription
@@ -244,6 +247,15 @@ export const inventoryApi = baseApi.injectEndpoints({
       ],
     }),
 
+    dispatchMove: builder.mutation<DispatchMoveResponse, DispatchMovePayload>({
+      query: (body) => ({
+        url: "/jobs/dispatch",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: (): TagDescription[] => [{ type: "Jobs" }, { type: "Slots" }],
+    }),
+
     getJobs: builder.query<Job[], void>({
       query: () => "/jobs",
       providesTags: (): TagDescription[] => [{ type: "Jobs" }],
@@ -316,6 +328,24 @@ export const inventoryApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: (): TagDescription[] => [{ type: "Slots" }],
     }),
+
+    // ─── Maps (Phase 4) ──────────────────────────────────────
+    getRobotHealth: builder.query<BrainHealth, void>({
+      query: () => "/jobs/health",
+      providesTags: (): TagDescription[] => [{ type: "Jobs" }],
+    }),
+
+    getRobotMaps: builder.query<RobotMapFile[], void>({
+      query: () => "/robot/maps",
+    }),
+
+    saveRobotMap: builder.mutation<{ savedAs: string }, { name?: string }>({
+      query: (body) => ({
+        url: "/robot/maps/save",
+        method: "POST",
+        body,
+      }),
+    }),
   }),
 });
 
@@ -337,5 +367,9 @@ export const {
   useAssignCoordinatesMutation,
   useAssignCoordinatesBatchMutation,
   useAssignAprilTagMutation,
+  useDispatchMoveMutation,
   useGetJobsQuery,
+  useGetRobotHealthQuery,
+  useGetRobotMapsQuery,
+  useSaveRobotMapMutation,
 } = inventoryApi;

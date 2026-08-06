@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIoT Robot — Tín hiệu PID & LiDAR</title>
+<style>
+/* ═══ Palette (validated CVD-safe, light+dark) ═══ */
+:root {
+  --s1:#3987e5; --s1d:#256abf; --s1l:rgba(57,135,229,0.12);
+  --s2:#d95926; --s2d:#b54518; --s2l:rgba(217,89,38,0.12);
+  --s3:#199e70; --s3d:#147857; --s3l:rgba(25,158,112,0.12);
+  --s4:#c98500; --s4d:#a06a00; --s4l:rgba(201,133,0,0.12);
+  --s5:#d55181; --s6:#008300;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --bg:#0d0d0d; --surf:#1a1a19; --surf2:#242422;
+  --ink:#ffffff; --ink2:#c3c2b7; --ink3:#898781; --grid:#2c2c2a;
+  --radius:12px; font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media(prefers-color-scheme:light){
+  :root{--bg:#fcfcfb;--surf:#f9f9f7;--surf2:#f0efec;--ink:#0b0b0b;--ink2:#52514e;--ink3:#898781;--grid:#e1e0d9;
+    --s1:#2a78d6;--s1d:#1c5cab;--s2:#eb6834;--s2d:#cc5520;--s3:#1baf7a;--s3d:#147a55;--s4:#eda100;--s4d:#c07e00;
+    --s5:#e87ba4;--s6:#006300;}
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);line-height:1.55;overflow-x:hidden}
+.container{max-width:1160px;margin:0 auto;padding:36px 24px 72px}
+
+/* ── Header ── */
+.hero{text-align:center;padding:48px 0 32px;border-bottom:1px solid var(--grid);margin-bottom:40px}
+.hero h1{font-size:2rem;font-weight:900;letter-spacing:-0.03em;margin-bottom:6px}
+.hero h1 em{color:var(--s1);font-style:normal}
+.hero p{font-size:.88rem;color:var(--ink2);max-width:680px;margin:0 auto}
+
+/* ── Sections ── */
+section{margin-bottom:48px}
+section>h2{font-size:1.15rem;font-weight:800;letter-spacing:-0.02em;padding-bottom:6px;border-bottom:2px solid var(--s1);display:inline-block;margin-bottom:20px}
+section>h3{font-size:.95rem;font-weight:700;color:var(--s1);margin:24px 0 10px}
+
+/* ── Card ── */
+.card{background:var(--surf);border:1px solid var(--grid);border-radius:var(--radius);padding:20px;margin-bottom:16px;position:relative}
+.card h4{font-size:.88rem;font-weight:800;color:var(--ink);margin-bottom:8px}
+.card p{font-size:.82rem;color:var(--ink2)}
+
+/* ── Canvas/SVG wrapper ── */
+.chart-wrap{position:relative;width:100%;background:var(--surf);border:1px solid var(--grid);border-radius:var(--radius);overflow:hidden;margin:12px 0}
+.chart-wrap canvas{display:block;width:100%}
+.chart-title{position:absolute;top:12px;left:16px;font-size:.72rem;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;font-family:"JetBrains Mono",monospace;pointer-events:none;z-index:2}
+
+/* ── Legend ── */
+.legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 16px;border-top:1px solid var(--grid);font-size:.72rem;font-family:"JetBrains Mono",monospace;color:var(--ink2)}
+.legend span{display:flex;align-items:center;gap:5px}
+.legend .dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+
+/* ── Controls ── */
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.btn{padding:6px 14px;border-radius:8px;border:1px solid var(--grid);background:var(--surf);color:var(--ink2);font-size:.75rem;font-family:"JetBrains Mono",monospace;font-weight:700;cursor:pointer;transition:all .15s}
+.btn:hover{border-color:var(--s1);color:var(--s1)}
+.btn.active{background:var(--s1);color:#000;border-color:var(--s1)}
+.slider-row{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:.78rem;color:var(--ink2);font-family:"JetBrains Mono",monospace}
+.slider-row input[type=range]{flex:1;accent-color:var(--s1)}
+.slider-row .val{min-width:40px;text-align:right;color:var(--ink);font-weight:700}
+
+/* ── Stat pills ── */
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.pill{background:var(--surf2);border:1px solid var(--grid);border-radius:8px;padding:8px 14px;font-size:.75rem;font-family:"JetBrains Mono",monospace}
+.pill .label{color:var(--ink3);text-transform:uppercase;letter-spacing:.04em;font-size:.65rem;display:block}
+.pill .value{font-weight:800;color:var(--ink);font-size:1.05rem}
+
+/* ── Table ── */
+.tbl-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--grid);margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:.78rem;font-family:"JetBrains Mono",monospace}
+thead{background:var(--surf2)}
+th{text-align:left;padding:8px 12px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:.65rem;border-bottom:1px solid var(--grid)}
+td{padding:8px 12px;border-bottom:1px solid var(--grid);color:var(--ink2)}
+tr:last-child td{border-bottom:none}
+
+footer{text-align:center;padding:28px 0;border-top:1px solid var(--grid);color:var(--ink3);font-size:.68rem}
+
+/* ── 2-col grid ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:720px){.grid2{grid-template-columns:1fr}}
+
+/* Tooltip */
+#tooltip{position:fixed;display:none;background:var(--surf2);border:1px solid var(--grid);border-radius:8px;padding:8px 12px;font-size:.72rem;font-family:"JetBrains Mono",monospace;color:var(--ink);pointer-events:none;z-index:999;max-width:220px;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+#tooltip .tlabel{color:var(--ink3);font-size:.65rem;margin-bottom:2px}
+#tooltip .tval{font-weight:800}
+</style>
+</head>
+<body>
+<div id="tooltip"><div class="tlabel"></div><div class="tval"></div></div>
+
+<div class="container">
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="hero">
+  <h1>Tín hiệu <em>PID</em> & <em>LiDAR</em></h1>
+  <p>Trực quan hóa tín hiệu điều khiển motor PID 50 Hz và dữ liệu quét LiDAR 360° của robot tự hành kho hàng.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHẦN 1: PID CONTROL                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+<h2>1. PID Motor Control — 50 Hz loop</h2>
+
+<!-- Controls -->
+<div class="controls" id="pidBtns">
+  <button class="btn active" data-scene="step">Step Response</button>
+  <button class="btn" data-scene="tracking">Speed Tracking</button>
+  <button class="btn" data-scene="compare">Tune Compare</button>
+</div>
+
+<div class="slider-row">
+  <label>Kp:</label><input type="range" id="slKp" min="0.5" max="8" step="0.1" value="2.5"><span class="val" id="vKp">2.5</span>
+  <label>Ki:</label><input type="range" id="slKi" min="0" max="2" step="0.02" value="0.2"><span class="val" id="vKi">0.2</span>
+  <label>Kd:</label><input type="range" id="slKd" min="0" max="1" step="0.01" value="0.05"><span class="val" id="vKd">0.05</span>
+</div>
+
+<!-- Chart 1: RPM -->
+<div class="chart-wrap" style="height:280px">
+  <div class="chart-title">Motor RPM — Target vs Actual</div>
+  <canvas id="cvRpm"></canvas>
+</div>
+<div class="legend">
+  <span><div class="dot" style="background:var(--s1)"></div> Target RPM</span>
+  <span><div class="dot" style="background:var(--s2)"></div> Actual RPM</span>
+  <span><div class="dot" style="background:var(--s4)"></div> Error</span>
+</div>
+
+<!-- Chart 2: PWM output -->
+<div class="chart-wrap" style="height:200px">
+  <div class="chart-title">PWM Duty Output (0–511)</div>
+  <canvas id="cvPwm"></canvas>
+</div>
+<div class="legend">
+  <span><div class="dot" style="background:var(--s3)"></div> PWM duty</span>
+  <span><div class="dot" style="background:var(--ink3);height:2px;width:14px;border-radius:1px"></div> Max duty (511)</span>
+</div>
+
+<!-- Stats -->
+<div class="stats" id="pidStats">
+  <div class="pill"><span class="label">Overshoot</span><span class="value" id="stOvershoot">—</span></div>
+  <div class="pill"><span class="label">Rise time</span><span class="value" id="stRise">—</span></div>
+  <div class="pill"><span class="label">Settling time</span><span class="value" id="stSettle">—</span></div>
+  <div class="pill"><span class="label">Steady-state err</span><span class="value" id="stSSE">—</span></div>
+  <div class="pill"><span class="label">Update rate</span><span class="value">50 Hz</span></div>
+</div>
+
+<!-- PID Theory -->
+<div class="card">
+  <h4>Công thức PID</h4>
+  <div style="background:var(--surf2);border-left:3px solid var(--s1);border-radius:0 8px 8px 0;padding:14px 18px;margin:8px 0;font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--ink2);overflow-x:auto;white-space:pre"><em style="color:var(--s1);font-weight:700">output</em> = Kp × error  +  Ki × ∫error·dt  +  Kd × d(error)/dt
+
+<em style="color:var(--s1);font-weight:700">error</em>     = target_RPM − actual_RPM
+<em style="color:var(--s1);font-weight:700">integral</em>  += error × dt     (clamped ± 400 anti-windup)
+<em style="color:var(--s1);font-weight:700">derivative</em> = (error − prev_error) / dt
+
+output clamped to ± 511 PWM → BTS7960 duty cycle</div>
+</div>
+
+<!-- Compare table -->
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>Thuộc tính</th><th>Kp quá cao</th><th>Ki quá cao</th><th>Kd quá cao</th><th>Cân bằng (2.5/0.2/0.05)</th></tr></thead>
+<tbody>
+  <tr><td>Overshoot</td><td style="color:var(--crit)">Lớn (&gt;20%)</td><td style="color:var(--warn)">Trung bình</td><td style="color:var(--good)">Nhỏ</td><td style="color:var(--good)">~5–10%</td></tr>
+  <tr><td>Settling time</td><td style="color:var(--crit)">Dài (oscillate)</td><td style="color:var(--crit)">Rất dài (windup)</td><td style="color:var(--warn)">Dài (chậm)</td><td style="color:var(--good)">Ngắn (~0.3s)</td></tr>
+  <tr><td>Steady-state err</td><td style="color:var(--warn)">Có thể còn</td><td style="color:var(--good)">= 0</td><td style="color:var(--warn)">Có thể còn</td><td style="color:var(--good)">~ 0</td></tr>
+  <tr><td>Phản hồi</td><td>Nhanh nhưng oscillate</td><td>Nhanh nhưng overshoot</td><td>Chậm, overdamped</td><td>Nhanh, ổn định</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHẦN 2: LIDAR                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+<h2>2. LiDAR Scan 360° — RPLIDAR A1M8-R6</h2>
+
+<div class="controls" id="lidarBtns">
+  <button class="btn active" data-scene="room">Phòng mô hình</button>
+  <button class="btn" data-scene="corridor">Hành lang</button>
+  <button class="btn" data-scene="cluttered">Kho hàng chật</button>
+</div>
+
+<div class="grid2">
+  <!-- Polar chart -->
+  <div class="chart-wrap" style="aspect-ratio:1/1;max-height:420px">
+    <div class="chart-title">LiDAR 360° Polar Scan</div>
+    <canvas id="cvPolar"></canvas>
+  </div>
+  <!-- 4-zone bars -->
+  <div>
+    <div class="chart-wrap" style="height:220px">
+      <div class="chart-title">4-Zone Minimum Distance (m)</div>
+      <canvas id="cvZones"></canvas>
+    </div>
+    <div class="legend">
+      <span><div class="dot" style="background:var(--s1)"></div> Front</span>
+      <span><div class="dot" style="background:var(--s3)"></div> Left</span>
+      <span><div class="dot" style="background:var(--s2)"></div> Right</span>
+      <span><div class="dot" style="background:var(--s4)"></div> Rear</span>
+    </div>
+
+    <!-- Zone stats -->
+    <div class="stats">
+      <div class="pill"><span class="label">Min distance</span><span class="value" id="stMinDist">—</span></div>
+      <div class="pill"><span class="label">Obstacle</span><span class="value" id="stObs">None</span></div>
+      <div class="pill"><span class="label">Points</span><span class="value">360</span></div>
+      <div class="pill"><span class="label">Range</span><span class="value">0.15–12 m</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- LiDAR info -->
+<div class="card">
+  <h4>Thông số LiDAR</h4>
+  <div class="tbl-wrap">
+  <table>
+  <thead><tr><th>Thông số</th><th>Giá trị</th></tr></thead>
+  <tbody>
+    <tr><td>Model</td><td>RPLIDAR A1M8-R6</td></tr>
+    <tr><td>Góc quét</td><td>360° (full circle)</td></tr>
+    <tr><td>Phạm vi</td><td>0.15 – 12 m</td></tr>
+    <tr><td>Tần số quét</td><td>~8 Hz (5.5 kHz sample rate)</td></tr>
+    <tr><td>Kết nối</td><td>USB-UART (ttyUSB0) trên Pi 5</td></tr>
+    <tr><td>ROS 2 topic</td><td>/scan (sensor_msgs/LaserScan)</td></tr>
+    <tr><td>Zones phân chia</td><td>Front [−45°,+45°], Left [+45°,+135°], Rear [+135°,−135°], Right [−135°,−45°]</td></tr>
+    <tr><td>Threshold tránh vật cản</td><td>1.5 m (LiDAR global), 60 cm (Sharp slowdown), 15 cm (Sharp hard-stop), 20 cm (IR hard-stop)</td></tr>
+  </tbody>
+  </table>
+  </div>
+</div>
+
+<!-- Avoidance algorithm -->
+<div class="card">
+  <h4>Tránh vật cản 3 lớp</h4>
+  <div style="background:var(--surf2);border-radius:8px;padding:16px 20px;margin:8px 0;font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--ink2);line-height:1.9">
+<span style="color:var(--crit)">Priority 1 — IR Proximity</span>  ≤ 20 cm  →  <span style="color:var(--crit)">HARD STOP ngay lập tức</span>  (ESP32 interrupt, &lt;1ms latency)
+<span style="color:var(--serious)">Priority 2 — Sharp Front</span>   &lt; 15 cm  →  <span style="color:var(--serious)">HARD STOP</span>  |  15–60 cm  →  <span style="color:var(--warn)">Slowdown proportional</span>
+<span style="color:var(--s1)">Priority 3 — LiDAR Zones</span>   &lt; 1.5 m  →  <span style="color:var(--s1)">Replan: score 6 directions</span>  →  strafe/rotate/reverse
+  </div>
+</div>
+</section>
+
+<footer>
+  AIoT Autonomous Warehouse Robot — Trần Đức Nguyên — TDTU 2025–2026<br>
+  Tín hiệu mô phỏng từ config.h: PID Kp=2.5 Ki=0.2 Kd=0.05 @ 50 Hz | LiDAR A1M8-R6 360° 12m
+</footer>
+
+</div><!-- /container -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SCRIPT                                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+// ── Palette from CSS vars ──
+const CS = getComputedStyle(document.documentElement);
+const P = (v)=>CS.getPropertyValue(v).trim();
+const COL = {
+  s1:P('--s1'), s2:P('--s2'), s3:P('--s3'), s4:P('--s4'),
+  s5:P('--s5'), good:P('--good'), warn:P('--warn'), crit:P('--crit'),
+  ink:P('--ink'), ink2:P('--ink2'), ink3:P('--ink3'),
+  grid:P('--grid'), surf:P('--surf'), bg:P('--bg')
+};
+
+// ── DPR-aware canvas helper ──
+function setupCanvas(cv, w, h){
+  const dpr = window.devicePixelRatio||1;
+  cv.width = w*dpr; cv.height = h*dpr;
+  cv.style.width = w+'px'; cv.style.height = h+'px';
+  const ctx = cv.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return ctx;
+}
+
+// ── Tooltip ──
+const ttEl = document.getElementById('tooltip');
+function showTT(x,y,label,val){
+  ttEl.style.display='block';
+  ttEl.querySelector('.tlabel').textContent=label;
+  ttEl.querySelector('.tval').textContent=val;
+  ttEl.style.left=(x+14)+'px'; ttEl.style.top=(y-10)+'px';
+}
+function hideTT(){ttEl.style.display='none'}
+
+// ══════════════════════════════════════════════════════════════════════
+// PID SIMULATION
+// ══════════════════════════════════════════════════════════════════════
+let pidScene = 'step';
+const DT = 0.02; // 50Hz = 20ms
+const SIM_TIME = 2.0; // seconds
+const N = Math.round(SIM_TIME / DT);
+
+function simulatePID(kp, ki, kd, targetFn, noiseAmp = 2){
+  let rpm = 0, integral = 0, prevErr = 0;
+  const data = { t:[], target:[], actual:[], error:[], pwm:[] };
+  for(let i=0;i<=N;i++){
+    const t = i*DT;
+    const target = targetFn(t);
+    const err = target - rpm;
+    integral += err * DT;
+    integral = Math.max(-400, Math.min(400, integral)); // anti-windup
+    const deriv = (err - prevErr) / DT;
+    let out = kp*err + ki*integral + kd*deriv;
+    out = Math.max(-511, Math.min(511, out));
+    // Motor model: simplified first-order response
+    const accel = out * 0.8; // motor constant
+    rpm += accel * DT;
+    rpm += (Math.random()-0.5)*noiseAmp; // noise
+    rpm = Math.max(0, Math.min(400, rpm));
+    prevErr = err;
+    data.t.push(t);
+    data.target.push(target);
+    data.actual.push(rpm);
+    data.error.push(target - rpm);
+    data.pwm.push(Math.max(0, Math.round(Math.abs(out))));
+  }
+  return data;
+}
+
+function computeStats(data){
+  const tgt = data.target;
+  const act = data.actual;
+  const finalTgt = tgt[tgt.length-1];
+  if(finalTgt === 0) return {overshoot:0, rise:0, settle:0, sse:0};
+  // Overshoot
+  let peak = 0;
+  for(const v of act) if(v>peak) peak=v;
+  const overshoot = Math.max(0, (peak - finalTgt)/finalTgt*100);
+  // Rise time (10%→90%)
+  let rise = 0;
+  for(let i=0;i<act.length;i++){
+    if(act[i] >= finalTgt*0.9){rise=data.t[i];break;}
+  }
+  // Settling time (within 2% of final)
+  let settle = SIM_TIME;
+  for(let i=act.length-1;i>=0;i--){
+    if(Math.abs(act[i]-finalTgt) > finalTgt*0.02){settle=data.t[Math.min(i+1,act.length-1)];break;}
+  }
+  // SSE
+  const last10 = act.slice(-10);
+  const sse = Math.abs(finalTgt - last10.reduce((a,b)=>a+b,0)/last10.length);
+  return {overshoot:overshoot.toFixed(1)+'%', rise:(rise*1000).toFixed(0)+'ms', settle:(settle*1000).toFixed(0)+'ms', sse:sse.toFixed(1)+' RPM'};
+}
+
+function drawLineChart(canvasId, data, options){
+  const cv = document.getElementById(canvasId);
+  const rect = cv.parentElement.getBoundingClientRect();
+  const W = rect.width, H = rect.height;
+  const ctx = setupCanvas(cv, W, H);
+
+  const pad = {t:36, r:16, b:32, l:56};
+  const cw = W-pad.l-pad.r, ch = H-pad.t-pad.b;
+
+  // Resolve series data (accepts either an array or a key like 'target')
+  const resolvedSeries = options.series.map(s => ({
+    ...s,
+    values: Array.isArray(s.data) ? s.data : data[s.data]
+  }));
+
+  // Compute ranges
+  let yMin=Infinity, yMax=-Infinity;
+  for(const s of resolvedSeries){
+    for(const v of s.values){yMin=Math.min(yMin,v);yMax=Math.max(yMax,v);}
+  }
+  if(options.yMin!==undefined) yMin=Math.min(yMin,options.yMin);
+  if(options.yMax!==undefined) yMax=Math.max(yMax,options.yMax);
+  const yPad = (yMax-yMin)*0.08||10;
+  yMin -= yPad; yMax += yPad;
+  const xMin = data.t[0], xMax = data.t[data.t.length-1];
+
+  const sx = (v)=>pad.l + (v-xMin)/(xMax-xMin)*cw;
+  const sy = (v)=>pad.t + ch - (v-yMin)/(yMax-yMin)*ch;
+
+  // Grid
+  ctx.strokeStyle = COL.grid; ctx.lineWidth = 1;
+  const nGridY = 5;
+  for(let i=0;i<=nGridY;i++){
+    const y = pad.t + ch*i/nGridY;
+    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(pad.l+cw,y); ctx.stroke();
+    ctx.fillStyle=COL.ink3; ctx.font='10px monospace'; ctx.textAlign='right';
+    const val = yMax - (yMax-yMin)*i/nGridY;
+    ctx.fillText(val.toFixed(0), pad.l-8, y+3);
+  }
+  // X axis labels
+  const nGridX = 5;
+  ctx.textAlign='center';
+  for(let i=0;i<=nGridX;i++){
+    const x = pad.l + cw*i/nGridX;
+    const val = xMin + (xMax-xMin)*i/nGridX;
+    ctx.fillText(val.toFixed(1)+'s', x, H-8);
+    ctx.beginPath(); ctx.moveTo(x,pad.t); ctx.lineTo(x,pad.t+ch); ctx.stroke();
+  }
+
+  // Horizontal threshold lines (dashed)
+  if(options.thresholds){
+    for(const th of options.thresholds){
+      ctx.setLineDash([6,4]);
+      ctx.strokeStyle = th.color||COL.ink3;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, sy(th.value));
+      ctx.lineTo(pad.l+cw, sy(th.value));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=th.color||COL.ink3;
+      ctx.font='9px monospace'; ctx.textAlign='left';
+      ctx.fillText(th.label, pad.l+4, sy(th.value)-4);
+    }
+  }
+
+  // Series
+  for(const s of resolvedSeries){
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.width||2;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if(s.dash) ctx.setLineDash(s.dash); else ctx.setLineDash([]);
+    ctx.beginPath();
+    const step = Math.max(1, Math.floor(data.t.length/500)); // max 500 points
+    for(let i=0;i<data.t.length;i+=step){
+      const x = sx(data.t[i]), y = sy(s.values[i]);
+      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Interactive hover
+  cv.onmousemove = (e)=>{
+    const r = cv.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const idx = Math.round((mx-pad.l)/cw * (data.t.length-1));
+    if(idx<0||idx>=data.t.length){hideTT();return;}
+    const t = data.t[idx].toFixed(3)+'s';
+    let lines = [`t = ${t}`];
+    for(const s of resolvedSeries){
+      lines.push(`${s.label}: ${s.values[idx].toFixed(1)}`);
+    }
+    showTT(e.clientX, e.clientY, lines[0], lines.slice(1).join(' | '));
+  };
+  cv.onmouseleave = hideTT;
+}
+
+function updatePID(){
+  const kp = parseFloat(document.getElementById('slKp').value);
+  const ki = parseFloat(document.getElementById('slKi').value);
+  const kd = parseFloat(document.getElementById('slKd').value);
+  document.getElementById('vKp').textContent = kp.toFixed(1);
+  document.getElementById('vKi').textContent = ki.toFixed(2);
+  document.getElementById('vKd').textContent = kd.toFixed(2);
+
+  let targetFn, series;
+  if(pidScene === 'step'){
+    targetFn = (t)=> t < 0.3 ? 0 : 200; // step at 0.3s
+    series = [
+      {data:'target', color:COL.s1, label:'Target RPM', width:2, dash:[8,4]},
+      {data:'actual', color:COL.s2, label:'Actual RPM', width:2.5},
+      {data:'error',  color:COL.s4, label:'Error', width:1.5, dash:[4,3]},
+    ];
+  } else if(pidScene === 'tracking'){
+    targetFn = (t)=> 120 + 80*Math.sin(t*3) + 40*Math.sin(t*7); // sine wave
+    series = [
+      {data:'target', color:COL.s1, label:'Target RPM', width:2, dash:[8,4]},
+      {data:'actual', color:COL.s2, label:'Actual RPM', width:2.5},
+    ];
+  } else { // compare
+    targetFn = (t)=> t < 0.3 ? 0 : 200;
+    // We'll draw 3 overlaid lines
+    const d_good = simulatePID(2.5, 0.2, 0.05, targetFn, 1);
+    const d_osc  = simulatePID(6, 0.2, 0.05, targetFn, 1);
+    const d_slow = simulatePID(1, 0.05, 0.01, targetFn, 1);
+    drawLineChart('cvRpm', d_good, {
+      series:[
+        {data:d_good.actual, color:COL.s1, label:'Kp=2.5 Ki=0.2 Kd=0.05 (balanced)', width:2.5},
+        {data:d_osc.actual,  color:COL.s2, label:'Kp=6.0 (overdamped/oscillate)', width:2, dash:[6,3]},
+        {data:d_slow.actual, color:COL.s4, label:'Kp=1.0 (underdamped/slow)', width:2, dash:[3,3]},
+        {data:d_good.target, color:COL.ink3, label:'Target', width:1.5, dash:[10,5]},
+      ],
+      yMin:0, yMax:320,
+      thresholds:[{value:200, color:COL.ink3, label:'Target: 200 RPM'}]
+    });
+    // Stats for balanced
+    const stats = computeStats(d_good);
+    document.getElementById('stOvershoot').textContent = stats.overshoot;
+    document.getElementById('stRise').textContent = stats.rise;
+    document.getElementById('stSettle').textContent = stats.settle;
+    document.getElementById('stSSE').textContent = stats.sse;
+    // PWM chart: blank for compare
+    const cvP = document.getElementById('cvPwm');
+    const rp = cvP.parentElement.getBoundingClientRect();
+    const ctxP = setupCanvas(cvP, rp.width, rp.height);
+    ctxP.fillStyle=COL.ink3; ctxP.font='12px system-ui'; ctxP.textAlign='center';
+    ctxP.fillText('PWM output — switch to Step/Tracking to see', rp.width/2, rp.height/2);
+    return;
+  }
+
+  const data = simulatePID(kp, ki, kd, targetFn);
+  drawLineChart('cvRpm', data, {
+    series: series,
+    yMin:0, yMax: pidScene==='tracking'?350:280,
+    thresholds:[{value:targetFn(1), color:COL.ink3, label:`Target: ${targetFn(1)} RPM`}]
+  });
+
+  // PWM chart
+  drawLineChart('cvPwm', data, {
+    series:[{data:'pwm', color:COL.s3, label:'PWM duty', width:2}],
+    yMin:0, yMax:550,
+    thresholds:[{value:511, color:COL.ink3, label:'Max 511 (50% duty)'}]
+  });
+
+  // Stats
+  const stats = computeStats(data);
+  document.getElementById('stOvershoot').textContent = stats.overshoot;
+  document.getElementById('stRise').textContent = stats.rise;
+  document.getElementById('stSettle').textContent = stats.settle;
+  document.getElementById('stSSE').textContent = stats.sse;
+}
+
+// PID buttons
+document.getElementById('pidBtns').addEventListener('click', (e)=>{
+  if(!e.target.matches('.btn')) return;
+  document.querySelectorAll('#pidBtns .btn').forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active');
+  pidScene = e.target.dataset.scene;
+  updatePID();
+});
+['slKp','slKi','slKd'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', updatePID);
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// LIDAR SIMULATION
+// ══════════════════════════════════════════════════════════════════════
+let lidarScene = 'room';
+let lidarData = [];
+let lidarAnimFrame = 0;
+
+function generateLidar(scene){
+  const pts = [];
+  for(let deg=0; deg<360; deg++){
+    const rad = deg * Math.PI/180;
+    let dist;
+    if(scene === 'room'){
+      // Rectangular room ~4m × 3m
+      const cos=Math.cos(rad), sin=Math.sin(rad);
+      let d = Infinity;
+      if(cos>0.01) d=Math.min(d, 2.0/cos);       // front wall
+      if(cos<-0.01) d=Math.min(d, -2.0/cos);      // back wall
+      if(sin>0.01) d=Math.min(d, 1.5/sin);        // left wall
+      if(sin<-0.01) d=Math.min(d, -1.5/sin);      // right wall
+      dist = d + (Math.random()-0.5)*0.15;
+      // Add obstacle at front-right ~1.2m
+      const oAngle = 30*Math.PI/180;
+      if(Math.abs(rad-oAngle)<0.25 || Math.abs(rad-oAngle+2*Math.PI)<0.25){
+        dist = Math.min(dist, 1.0 + (Math.random()-0.5)*0.1);
+      }
+      // Add obstacle at left ~1.8m
+      const lAngle = 110*Math.PI/180;
+      if(Math.abs(rad-lAngle)<0.2){
+        dist = Math.min(dist, 1.4 + (Math.random()-0.5)*0.08);
+      }
+    } else if(scene === 'corridor'){
+      // Narrow corridor 1.2m wide, 8m long
+      const cos=Math.cos(rad), sin=Math.sin(rad);
+      let d = Infinity;
+      if(cos>0.01) d=Math.min(d, 4.0/cos);
+      if(cos<-0.01) d=Math.min(d, -4.0/cos);
+      if(sin>0.01) d=Math.min(d, 0.6/sin);
+      if(sin<-0.01) d=Math.min(d, -0.6/sin);
+      dist = d + (Math.random()-0.5)*0.1;
+      // Obstacle ahead at 2m
+      if(Math.abs(rad)<0.15) dist = Math.min(dist, 1.8 + Math.random()*0.15);
+    } else { // cluttered
+      const cos=Math.cos(rad), sin=Math.sin(rad);
+      let d = Infinity;
+      if(cos>0.01) d=Math.min(d, 2.5/cos);
+      if(cos<-0.01) d=Math.min(d, -2.5/cos);
+      if(sin>0.01) d=Math.min(d, 2.0/sin);
+      if(sin<-0.01) d=Math.min(d, -2.0/sin);
+      dist = d;
+      // Multiple obstacles
+      const obs = [{a:20,d:0.8},{a:60,d:1.2},{a:150,d:0.6},{a:200,d:1.5},{a:300,d:0.9},{a:340,d:1.1}];
+      for(const o of obs){
+        const oRad = o.a*Math.PI/180;
+        if(Math.abs(rad-oRad)<0.18) dist = Math.min(dist, o.d + Math.random()*0.08);
+      }
+      dist += (Math.random()-0.5)*0.12;
+    }
+    pts.push({deg, rad, dist: Math.max(0.15, Math.min(12, dist))});
+  }
+  return pts;
+}
+
+function computeZones(pts){
+  const zones = {front:Infinity, left:Infinity, right:Infinity, rear:Infinity};
+  for(const p of pts){
+    const d = p.deg;
+    if((d>=315||d<=45)) zones.front = Math.min(zones.front, p.dist);
+    else if(d>45 && d<=135) zones.left = Math.min(zones.left, p.dist);
+    else if(d>135 && d<=225) zones.rear = Math.min(zones.rear, p.dist);
+    else zones.right = Math.min(zones.right, p.dist);
+  }
+  return zones;
+}
+
+function drawPolar(canvasId, pts, sweepAngle){
+  const cv = document.getElementById(canvasId);
+  const rect = cv.parentElement.getBoundingClientRect();
+  const S = Math.min(rect.width, rect.height);
+  const ctx = setupCanvas(cv, S, S);
+  const cx = S/2, cy = S/2;
+  const maxR = S*0.42;
+  const maxDist = 5; // max display distance (m)
+
+  // Background rings
+  ctx.strokeStyle = COL.grid; ctx.lineWidth = 1;
+  for(let r=1; r<=4; r++){
+    const px = maxR * r/maxDist;
+    ctx.beginPath(); ctx.arc(cx, cy, px, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle=COL.ink3; ctx.font='9px monospace'; ctx.textAlign='center';
+    ctx.fillText(r+'m', cx+4, cy-px+12);
+  }
+  // Axis lines
+  ctx.strokeStyle = COL.grid; ctx.lineWidth=0.5;
+  for(let a=0;a<360;a+=45){
+    const rad=a*Math.PI/180;
+    ctx.beginPath(); ctx.moveTo(cx,cy);
+    ctx.lineTo(cx+Math.cos(rad)*maxR, cy-Math.sin(rad)*maxR);
+    ctx.stroke();
+  }
+  // Direction labels
+  ctx.fillStyle=COL.ink2; ctx.font='bold 11px system-ui'; ctx.textAlign='center';
+  ctx.fillText('Front',cx,cy-maxR-6);
+  ctx.fillText('Back',cx,cy+maxR+14);
+  ctx.textAlign='left'; ctx.fillText('Left',cx-maxR-8,cy-4);
+  ctx.textAlign='right'; ctx.fillText('Right',cx+maxR+8,cy-4);
+
+  // Obstacle threshold circle (1.5m)
+  const thR = maxR * 1.5/maxDist;
+  ctx.setLineDash([6,4]);
+  ctx.strokeStyle = COL.warn; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, thR, 0, Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Scan points
+  const sweepRad = sweepAngle * Math.PI/180;
+  for(const p of pts){
+    const drawRad = p.deg * Math.PI/180;
+    const r = maxR * Math.min(p.dist, maxDist)/maxDist;
+    const x = cx + Math.cos(drawRad)*r;
+    const y = cy - Math.sin(drawRad)*r;
+
+    const isSwept = p.rad <= sweepRad;
+    const isClose = p.dist < 1.5;
+
+    ctx.beginPath();
+    ctx.arc(x, y, isClose?3:2, 0, Math.PI*2);
+    ctx.fillStyle = isClose ? COL.crit : (isSwept ? COL.s1 : COL.ink3+'60');
+    ctx.fill();
+  }
+
+  // Sweep line
+  const swRad = sweepAngle * Math.PI/180;
+  ctx.strokeStyle = COL.s1; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy);
+  ctx.lineTo(cx+Math.cos(swRad)*maxR, cy-Math.sin(swRad)*maxR);
+  ctx.stroke();
+}
+
+function drawZoneBars(canvasId, zones){
+  const cv = document.getElementById(canvasId);
+  const rect = cv.parentElement.getBoundingClientRect();
+  const W = rect.width, H = rect.height;
+  const ctx = setupCanvas(cv, W, H);
+
+  const pad = {t:32, r:20, b:28, l:80};
+  const cw = W-pad.l-pad.r, ch = H-pad.t-pad.b;
+  const maxDist = 5;
+  const names = ['Front','Left','Right','Rear'];
+  const vals = [zones.front, zones.left, zones.right, zones.rear];
+  const colors = [COL.s1, COL.s3, COL.s2, COL.s4];
+  const barH = Math.min(28, (ch-12)/4);
+
+  // Threshold line (1.5m)
+  const thX = pad.l + (1.5/maxDist)*cw;
+  ctx.setLineDash([5,3]); ctx.strokeStyle=COL.warn; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(thX, pad.t); ctx.lineTo(thX, pad.t+ch); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle=COL.warn; ctx.font='9px monospace'; ctx.textAlign='center';
+  ctx.fillText('1.5m', thX, pad.t-4);
+
+  // Bars
+  for(let i=0;i<4;i++){
+    const y = pad.t + i*(barH+8);
+    const w = Math.min(vals[i]/maxDist, 1) * cw;
+    // Label
+    ctx.fillStyle=COL.ink2; ctx.font='11px monospace'; ctx.textAlign='right';
+    ctx.fillText(names[i], pad.l-10, y+barH/2+4);
+    // Bar background
+    ctx.fillStyle=COL.grid;
+    ctx.fillRect(pad.l, y, cw, barH);
+    // Bar fill
+    ctx.fillStyle = vals[i]<1.5 ? COL.crit : colors[i];
+    ctx.beginPath();
+    ctx.roundRect(pad.l, y, w, barH, 4);
+    ctx.fill();
+    // Value label
+    ctx.fillStyle=COL.ink; ctx.font='bold 10px monospace'; ctx.textAlign='left';
+    if(w>40) ctx.fillText(vals[i].toFixed(2)+'m', pad.l+w-40, y+barH/2+3.5);
+    else ctx.fillText(vals[i].toFixed(2)+'m', pad.l+w+6, y+barH/2+3.5);
+  }
+}
+
+let lidarSweep = 0;
+function animLidar(){
+  if(!document.hidden){
+    lidarSweep = (lidarSweep + 4) % 360;
+    drawPolar('cvPolar', lidarData, lidarSweep);
+    const zones = computeZones(lidarData);
+    drawZoneBars('cvZones', zones);
+    // Update stats
+    const min = Math.min(zones.front, zones.left, zones.right, zones.rear);
+    document.getElementById('stMinDist').textContent = min.toFixed(2)+' m';
+    const blocked = min < 1.5;
+    document.getElementById('stObs').textContent = blocked ? '⚠ DETECTED' : 'None';
+    document.getElementById('stObs').style.color = blocked ? COL.crit : COL.good;
+  }
+  requestAnimationFrame(animLidar);
+}
+
+function updateLidar(){
+  lidarData = generateLidar(lidarScene);
+  lidarSweep = 0;
+}
+
+document.getElementById('lidarBtns').addEventListener('click',(e)=>{
+  if(!e.target.matches('.btn')) return;
+  document.querySelectorAll('#lidarBtns .btn').forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active');
+  lidarScene = e.target.dataset.scene;
+  updateLidar();
+});
+
+// ── Init ──
+window.addEventListener('resize', ()=>{ updatePID(); updateLidar(); });
+updatePID();
+updateLidar();
+requestAnimationFrame(animLidar);
+</script>
+</body>
+</html>

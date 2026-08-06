@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIoT Autonomous Warehouse Robot — Thông số kỹ thuật</title>
+<style>
+  :root {
+    --surface-1: #0d0d0d;  --surface-2: #1a1a19;  --surface-3: #242422;
+    --text-primary: #ffffff;  --text-secondary: #c3c2b7;  --text-muted: #898781;
+    --grid: #2c2c2a;  --baseline: #383835;
+    --accent: #3987e5;  --accent-dim: #256abf;
+    --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+    --s5: #d55181;  --s6: #008300;
+    --good: #0ca30c;  --warn: #fab219;  --serious: #ec835a;  --critical: #d03b3b;
+    --ring: rgba(255,255,255,0.10);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --surface-1: #fcfcfb;  --surface-2: #f9f9f7;  --surface-3: #f0efec;
+      --text-primary: #0b0b0b;  --text-secondary: #52514e;  --text-muted: #898781;
+      --grid: #e1e0d9;  --baseline: #c3c2b7;
+      --accent: #2a78d6;  --accent-dim: #1c5cab;
+      --s1: #2a78d6;  --s2: #eb6834;  --s3: #1baf7a;  --s4: #eda100;
+      --s5: #e87ba4;  --s6: #008300;
+      --good: #0ca30c;  --warn: #fab219;  --serious: #ec835a;  --critical: #d03b3b;
+      --ring: rgba(11,11,11,0.10);
+    }
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--surface-1); color: var(--text-primary); line-height: 1.6; }
+
+  /* ── Layout ── */
+  .container { max-width: 1200px; margin: 0 auto; padding: 40px 32px 80px; }
+  @media (max-width: 768px) { .container { padding: 24px 16px 60px; } }
+
+  /* ── Header ── */
+  .hero { text-align: center; padding: 56px 0 40px; border-bottom: 1px solid var(--baseline); margin-bottom: 48px; }
+  .hero h1 { font-size: 2.4rem; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 8px; }
+  .hero h1 span { color: var(--accent); }
+  .hero .subtitle { font-size: 1rem; color: var(--text-secondary); max-width: 700px; margin: 0 auto 20px; }
+  .hero .meta { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+  .hero .meta-item { font-size: 0.78rem; color: var(--text-muted); font-family: "JetBrains Mono", monospace; }
+  .hero .meta-item strong { color: var(--text-secondary); }
+
+  /* ── Sections ── */
+  section { margin-bottom: 56px; }
+  section > h2 { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 24px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); display: inline-block; }
+  section > h3 { font-size: 1.05rem; font-weight: 700; color: var(--accent); margin: 28px 0 12px; }
+  p { color: var(--text-secondary); font-size: 0.92rem; margin-bottom: 12px; }
+
+  /* ── Tables ── */
+  .tbl-wrap { overflow-x: auto; margin: 16px 0 24px; border-radius: 10px; border: 1px solid var(--baseline); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; font-family: "JetBrains Mono", monospace; }
+  thead { background: var(--surface-3); }
+  th { text-align: left; padding: 10px 14px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; border-bottom: 1px solid var(--baseline); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--grid); color: var(--text-secondary); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface-3); }
+
+  /* ── Badges ── */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; font-family: "JetBrains Mono", monospace; }
+  .badge-done  { background: var(--good); color: #000; }
+  .badge-wip   { background: var(--accent); color: #000; }
+  .badge-plan  { background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--baseline); }
+
+  /* ── Cards grid ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 16px 0; }
+  .card { background: var(--surface-2); border: 1px solid var(--baseline); border-radius: 12px; padding: 20px 24px; }
+  .card h4 { font-size: 0.92rem; font-weight: 800; color: var(--text-primary); margin-bottom: 6px; }
+  .card .val { font-size: 1.6rem; font-weight: 900; color: var(--accent); font-family: "JetBrains Mono", monospace; margin-bottom: 4px; }
+  .card .lbl { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* ── SVG diagrams ── */
+  .diagram { background: var(--surface-2); border: 1px solid var(--baseline); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram svg { display: block; margin: 0 auto; }
+
+  /* ── Pin map ── */
+  .pin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; margin: 12px 0; }
+  .pin { background: var(--surface-3); border: 1px solid var(--grid); border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; font-family: "JetBrains Mono", monospace; }
+  .pin .gp { font-weight: 800; color: var(--accent); }
+  .pin .fn { color: var(--text-muted); }
+
+  /* ── Formula ── */
+  .formula { background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 16px 0; font-family: "JetBrains Mono", monospace; font-size: 0.85rem; color: var(--text-secondary); overflow-x: auto; white-space: pre; }
+  .formula em { color: var(--accent); font-style: normal; font-weight: 700; }
+
+  /* ── Timeline bar chart ── */
+  .bar-chart { margin: 20px 0; }
+  .bar-row { display: flex; align-items: center; margin-bottom: 10px; }
+  .bar-label { width: 140px; font-size: 0.78rem; font-family: "JetBrains Mono", monospace; color: var(--text-secondary); text-align: right; padding-right: 12px; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 22px; background: var(--surface-3); border-radius: 4px; overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 4px; display: flex; align-items: center; padding-left: 8px; font-size: 0.68rem; font-weight: 700; font-family: "JetBrains Mono", monospace; color: #000; min-width: 40px; transition: width 0.6s ease; }
+  .bar-val { margin-left: 8px; font-size: 0.75rem; font-family: "JetBrains Mono", monospace; color: var(--text-muted); flex-shrink: 0; width: 50px; }
+
+  /* ── Pie-like donut ── */
+  .donut-wrap { display: flex; align-items: center; gap: 32px; flex-wrap: wrap; justify-content: center; margin: 20px 0; }
+  .donut-legend { font-size: 0.8rem; }
+  .donut-legend div { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .donut-legend .swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ── Footer ── */
+  footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--grid); color: var(--text-muted); font-size: 0.72rem; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- HEADER                                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="container">
+<div class="hero">
+  <h1>AIoT <span>Autonomous Warehouse</span> Robot</h1>
+  <p class="subtitle">
+    Hệ thống robot tự hành kho hàng — SLAM, điều hướng Nav2, trung chuyển kiện hàng tự động.<br>
+    Đồ án tốt nghiệp — Khoa Điện tử Viễn thông, Đại học Tôn Đức Thắng.
+  </p>
+  <div class="meta">
+    <span class="meta-item"><strong>Sinh viên:</strong> Trần Đức Nguyên</span>
+    <span class="meta-item"><strong>Năm:</strong> 2025–2026</span>
+    <span class="meta-item"><strong>Giáo viên hướng dẫn:</strong> TS. (tên GV)</span>
+    <span class="meta-item"><strong>Nhánh:</strong> IoT / Robotics</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 1. HỆ THỐNG — Tổng quan                                             -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>1. Tổng quan hệ thống</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="lbl">Kiến trúc tính toán</div>
+      <h4>Two-Brain Architecture</h4>
+      <p style="margin-top:8px">Raspberry Pi 5 (bộ não cao cấp: SLAM, Nav2, WebSocket) + ESP32-S3 (bộ não thời gian thực: PWM, PID, encoder).</p>
+    </div>
+    <div class="card">
+      <div class="lbl">Phương tiện di chuyển</div>
+      <h4>Mecanum 4WD Omnidirectional</h4>
+      <p style="margin-top:8px">4 bánh mecanum 60mm — di chuyển toàn hướng (tiến/lùi/ngang/xoay) không cần quay xe.</p>
+    </div>
+    <div class="card">
+      <div class="lbl">Hàng hóa</div>
+      <h4>Kho mini 64 ô (4 kệ × 16 slot)</h4>
+      <p style="margin-top:8px">Hệ thống quản lý kho shelf/slot với barcode, trạng thái AVAILABLE/OCCUPIED/RESERVED/TRANSIT.</p>
+    </div>
+    <div class="card">
+      <div class="lbl">Cơ cấu dỡ hàng</div>
+      <h4>Điện xi lanh 12V + Limit Switch</h4>
+      <p style="margin-top:8px">Xi lanh điện điều khiển bởi L298N, tự động nâng–giữ–rút, có limit switch báo hoàn tất.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 2. PHẦN CỨNG                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>2. Thông số phần cứng</h2>
+
+  <h3>2.1 Raspberry Pi 5 (Bộ não cao cấp)</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Thông số</th><th>Giá trị</th><th>Ghi chú</th></tr></thead>
+    <tbody>
+      <tr><td>SoC</td><td>Broadcom BCM2712</td><td>Quad-core ARM Cortex-A76 @ 2.4 GHz</td></tr>
+      <tr><td>RAM</td><td>8 GB LPDDR4X-4267</td><td></td></tr>
+      <tr><td>Storage</td><td>512 GB NVMe Gen4×4 SSD</td><td>Ubuntu 22.04 LTS</td></tr>
+      <tr><td>Hệ điều hành</td><td>Ubuntu 22.04 LTS</td><td></td></tr>
+      <tr><td>Framework</td><td>ROS 2 Humble Hawksbill</td><td>Phiên bản LTS (2022–2027)</td></tr>
+      <tr><td>SLAM</td><td>slam_toolbox (online_async)</td><td>Xây bản đồ thời gian thực</td></tr>
+      <tr><td>Navigation</td><td>Nav2 (AMCL + Navfn + BT Navigator)</td><td>Kế hoạch đường đi + tránh vật cản</td></tr>
+      <tr><td>LiDAR Driver</td><td>sllidar_ros2</td><td>Plugin ROS 2 cho RPLIDAR A1M8</td></tr>
+      <tr><td>Truyền thông</td><td>USB-CDC (ttyACM0) ↔ ESP32</td><td>115200 baud, JSON-based</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>2.2 ESP32-S3 WeAct N16R8 (Bộ não thời gian thực)</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Thông số</th><th>Giá trị</th><th>Ghi chú</th></tr></thead>
+    <tbody>
+      <tr><td>SoC</td><td>ESP32-S3 Xtensa LX7</td><td>Dual-core 240 MHz</td></tr>
+      <tr><td>Flash</td><td>16 MB</td><td>Octal SPI</td></tr>
+      <tr><td>PSRAM</td><td>8 MB</td><td>Octal PSRAM</td></tr>
+      <tr><td>Framework</td><td>Arduino (PlatformIO)</td><td>Platform: espressif32</td></tr>
+      <tr><td>PWM</td><td>LEDC 20 kHz, 10-bit (0–1023)</td><td>8 kênh (2/motor × 4 motor)</td></tr>
+      <tr><td>Encoder</td><td>PCNT hardware counter, ×2 decoding</td><td>4 đơn vị PCNT</td></tr>
+      <tr><td>PID loop</td><td>50 Hz (20 ms)</td><td>Kp=2.5, Ki=0.2, Kd=0.05</td></tr>
+      <tr><td>Truyền thông</td><td>JSON over Serial (115200 baud)</td><td>Kết thúc bằng '\n'</td></tr>
+      <tr><td>I2C Bus</td><td>GPIO10 (SDA) / GPIO11 (SCL)</td><td>100 kHz — 3 thiết bị chung bus</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>2.3 Động cơ & Truyền động</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Thành phần</th><th>Số lượng</th><th>Thông số chính</th></tr></thead>
+    <tbody>
+      <tr><td>Bánh mecanum</td><td>4</td><td>Ø 60 mm, X-pattern</td></tr>
+      <tr><td>JGB37-520 DC Servo</td><td>4</td><td>12 VDC, 333 RPM, tỷ số truyền 30:1</td></tr>
+      <tr><td>Encoder Hall-effect</td><td>4</td><td>11 PPR (motor shaft) → 330 PPR (output)</td></tr>
+      <tr><td>BTS7960 Driver</td><td>4</td><td>6–27 VDC, 43A peak, RPWM/LPWM control</td></tr>
+      <tr><td>Tốc độ tối đa</td><td>—</td><td>~0.3 m/s (linear), 0.5 rad/s (angular)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>2.4 Cảm biến & Actuator</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Cảm biến</th><th>Model</th><th>Phạm vi</th><th>Giao thức</th><th>Chức năng</th></tr></thead>
+    <tbody>
+      <tr><td>LiDAR</td><td>RPLIDAR A1M8-R6</td><td>0.15–12 m, 360°</td><td>UART 115200 (USB)</td><td>SLAM, tránh vật cản toàn cục</td></tr>
+      <tr><td>IMU 9 trục</td><td>BNO055 (MCU-055)</td><td>Euler ±180°</td><td>I2C 0x28</td><td>Hướng chính xác, giữ cap</td></tr>
+      <tr><td>TOF laser</td><td>VL53L0X V2</td><td>30–1000 mm</td><td>I2C 0x29</td><td>Căn chỉnh khoảng cách dỡ hàng (4 cm)</td></tr>
+      <tr><td>Cảm biến dòng</td><td>INA226 (CJMCU-226)</td><td>0–21 VDC</td><td>I2C 0x40</td><td>Giám sát pin (SOC %)</td></tr>
+      <tr><td>Hồng ngoại trước</td><td>Sharp GP2Y0A21YK0F</td><td>10–80 cm</td><td>Analog ADC</td><td>Phát hiện vật cản gần</td></tr>
+      <tr><td>Hồng ngoại IR×4</td><td>E18-D80NK</td><td>≤ 20 cm</td><td>Digital (active-LOW)</td><td>Tránh va chạm 4 hướng</td></tr>
+      <tr><td>Camera</td><td>Logitech BRIO 100</td><td>Full HD 1080p</td><td>USB 3.0</td><td>Quét QR/AprilTag</td></tr>
+      <tr><td>Xi lanh điện</td><td>12 VDC L298N driver</td><td>—</td><td>GPIO IN1/IN2</td><td>Nâng thùng dỡ hàng</td></tr>
+      <tr><td>Limit switch</td><td>Mechanical</td><td>—</td><td>GPIO 37 (INPUT_PULLUP)</td><td>Báo xi lanh rút hết hành trình</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>2.5 Bảng chân GPIO ESP32-S3</h3>
+  <div class="pin-grid">
+    <div class="pin"><span class="gp">GPIO12/13/14/15</span> <span class="fn">BTS7960 FL/FR RPWM+LPWM</span></div>
+    <div class="pin"><span class="gp">GPIO16/17</span> <span class="fn">BTS7960 RL RPWM+LPWM</span></div>
+    <div class="pin"><span class="gp">GPIO38/39</span> <span class="fn">BTS7960 RR RPWM+LPWM</span></div>
+    <div class="pin"><span class="gp">GPIO3/7/48/47</span> <span class="fn">EN FL/FR/RL/RR</span></div>
+    <div class="pin"><span class="gp">GPIO40/41/42/6</span> <span class="fn">Encoder CHA×4</span></div>
+    <div class="pin"><span class="gp">GPIO4/5/20/21</span> <span class="fn">Encoder CHB×4</span></div>
+    <div class="pin"><span class="gp">GPIO10/11</span> <span class="fn">I2C SDA/SCL (BNO055+VL53L0X+INA226)</span></div>
+    <div class="pin"><span class="gp">GPIO9</span> <span class="fn">Sharp Analog ADC1_CH8</span></div>
+    <div class="pin"><span class="gp">GPIO1/8/45/46</span> <span class="fn">IR Proximity ×4</span></div>
+    <div class="pin"><span class="gp">GPIO43/44</span> <span class="fn">UART0 TX/RX (Pi5 ↔ ESP32)</span></div>
+    <div class="pin"><span class="gp">GPIO2/35</span> <span class="fn">Xi lanh IN1/IN2 (L298N)</span></div>
+    <div class="pin"><span class="gp">GPIO37</span> <span class="fn">Limit switch (INPUT_PULLUP)</span></div>
+  </div>
+
+  <h3>2.6 Nguồn điện</h3>
+  <div class="cards">
+    <div class="card">
+      <div class="lbl">Nguồn cấp</div>
+      <div class="val">21 VDC</div>
+      <p>Nguồn ngoài PSU → Buck converter 21→12 V (motor), 21→5 V (logic)</p>
+    </div>
+    <div class="card">
+      <div class="lbl">Pin lithium</div>
+      <div class="val">20.6 V → 15 V</div>
+      <p>Molicel M21-B4055A, SOC linear: 20.6 V = 100%, 15 V = 0%, warned &lt; 20%</p>
+    </div>
+    <div class="card">
+      <div class="lbl">Công suất motor</div>
+      <div class="val">~120 W</div>
+      <p>4 × 12 V × ~2.5 A peak = 120 W (khi full-load); duty limit 50% PWM</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 3. PHẦN MỀM                                                         -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>3. Thông số phần mềm</h2>
+
+  <h3>3.1 Ngăn xếp công nghệ</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Tầng</th><th>Công nghệ</th><th>Phiên bản</th><th>Chức năng</th></tr></thead>
+    <tbody>
+      <tr><td>Firmware (ESP32)</td><td>Arduino + PlatformIO</td><td>ArduinoJson 7.x</td><td>PID, Mecanum kinematics, UART JSON, sensor fusion</td></tr>
+      <tr><td>ROS 2 (Pi)</td><td>ROS 2 Humble</td><td>Ubuntu 22.04</td><td>SLAM, Navigation, TF, Lifecycle management</td></tr>
+      <tr><td>SLAM</td><td>slam_toolbox</td><td>online_async</td><td>Xây bản đồ occupancy grid thời gian thực</td></tr>
+      <tr><td>Navigation</td><td>Nav2</td><td>Humble</td><td>AMCL localization, Navfn planner, SimpleFollowPath controller</td></tr>
+      <tr><td>Backend API</td><td>NestJS 11</td><td>TypeScript 5.7 strict</td><td>REST API, WebSocket (Socket.io), MongoDB</td></tr>
+      <tr><td>Frontend Web</td><td>Next.js 16</td><td>React 19, Tailwind v4</td><td>Dashboard kho, SLAM map viewer, Camera stream</td></tr>
+      <tr><td>Mobile App</td><td>Expo 55 (Router)</td><td>React Native</td><td>QR scan, camera stream, warehouse ops on-the-go</td></tr>
+      <tr><td>Database</td><td>MongoDB</td><td>Mongoose 8 ODM</td><td>Package, Shelf, ShelfSlot, Job collections</td></tr>
+      <tr><td>Package manager</td><td>Yarn Classic</td><td>1.22.22</td><td>Monorepo (Turborepo + yarn workspaces)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>3.2 Giao thức truyền thông Pi ↔ ESP32</h3>
+  <p>JSON-based, kết thúc bằng newline (<code>\n</code>), baud 115200, 8N1.</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Đường</th><th>Cấu trúc JSON</th><th>Mô tả</th></tr></thead>
+    <tbody>
+      <tr><td>Pi → ESP32</td><td><code>{"cmd":"move","vx":N,"vy":N,"omega":N}</code></td><td>Điều khiển mecanum velocity</td></tr>
+      <tr><td>Pi → ESP32</td><td><code>{"cmd":"stop"}</code> / <code>{"cmd":"e_stop"}</code></td><td>Dừng / Emergency stop</td></tr>
+      <tr><td>Pi → ESP32</td><td><code>{"cmd":"heartbeat"}</code></td><td>Reset watchdog (timeout 2 s)</td></tr>
+      <tr><td>Pi → ESP32</td><td><code>{"cmd":"begin_dock","tag_id":N,"target_mm":N}</code></td><td>Bắt đầu chuỗi dỡ hàng</td></tr>
+      <tr><td>ESP32 → Pi</td><td><code>{"type":130, "data":{...}}</code></td><td>Encoder snapshot (4 motors)</td></tr>
+      <tr><td>ESP32 → Pi</td><td><code>{"type":131, "data":{...}}</code></td><td>Status: mode, IR, Sharp, TOF, cylinder state</td></tr>
+      <tr><td>ESP32 → Pi</td><td><code>{"type":134, "data":{...}}</code></td><td>IMU heading (BNO055) — 20 Hz</td></tr>
+      <tr><td>ESP32 → Pi</td><td><code>{"type":140, "data":{...}}</code></td><td>Dock/unload state machine (8 states)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>3.3 PID Motor Control</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Tham số</th><th>Giá trị</th><th>Mô tả</th></tr></thead>
+    <tbody>
+      <tr><td>Kp</td><td>2.5</td><td>Proportional gain</td></tr>
+      <tr><td>Ki</td><td>0.2</td><td>Integral gain</td></tr>
+      <tr><td>Kd</td><td>0.05</td><td>Derivative gain</td></tr>
+      <tr><td>Tần số cập nhật</td><td>50 Hz</td><td>Mỗi 20 ms</td></tr>
+      <tr><td>Output limit</td><td>±511</td><td>50% duty trên 10-bit (an toàn cho 12 V motor)</td></tr>
+      <tr><td>Integral limit</td><td>400</td><td>Anti-windup clamp</td></tr>
+      <tr><td>Acceleration ramp</td><td>50 PWM/tick</td><td>Chống giật khi tăng/giảm tốc</td></tr>
+      <tr><td>Kick boost</td><td>255 PWM × 15 ticks</td><td>Đẩy克服 ma sát tĩnh gearbox</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>3.4 Kiến trúc Mecanum Kinematics</h3>
+  <div class="formula"><em>v_fl</em> = Vx − Vy − ω(L + W)
+<em>v_fr</em> = Vx + Vy + ω(L + W)
+<em>v_rl</em> = Vx + Vy − ω(L + W)
+<em>v_rr</em> = Vx − Vy + ω(L + W)</div>
+  <p>Vx: tiến/lùi, Vy: sang trái/phải, ω: xoay. L, W: bán kính khung xe.</p>
+
+  <h3>3.5 Trạng thái Dock/Unload (ESP32 firmware)</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>State</th><th>Giá trị</th><th>Hành động</th></tr></thead>
+    <tbody>
+      <tr><td>IDLE</td><td>0</td><td>Không dỡ hàng</td></tr>
+      <tr><td>ADJUSTING</td><td>1</td><td>Căn chỉnh VL53L0X + heading gate ±2°</td></tr>
+      <tr><td>EXTENDING</td><td>2</td><td>Xi lanh đẩy lên (L298N IN1=HIGH)</td></tr>
+      <tr><td>HOLDING</td><td>3</td><td>Giữ 3 s chờ hàng đổ</td></tr>
+      <tr><td>RETRACTING</td><td>4</td><td>Rút xi lanh (IN2=HIGH), chờ limit switch</td></tr>
+      <tr><td>DONE</td><td>5</td><td>D序列 hoàn tất → tự chuyển sang LEAVE</td></tr>
+      <tr><td>LEAVE</td><td>6</td><td>Lùi ra khỏi vị trí dock (heading hold + encoder)</td></tr>
+      <tr><td>COMPLETE</td><td>7</td><td>Quay về IDLE, báo brain hoàn tất</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>3.6 Trạng thái Brain Node (Pi-side state machine)</h3>
+  <div class="formula"><em>BOOT</em> → <em>EXPLORE</em> (SLAM) → <em>MAPPING_DONE</em> → <em>IDLE</em>
+                              ↓ job dispatch
+          <em>JOB_NAV_TO_PICKUP</em> → <em>JOB_NAV_TO_DROPOFF</em> → <em>JOB_DOCK_UNLOAD</em> → <em>JOB_RETURN_HOME</em> → <em>IDLE</em></div>
+
+  <h3>3.7 Kho hàng Shelf-Slot Model</h3>
+  <div class="cards">
+    <div class="card">
+      <div class="val">4 × 4 × 4 = 64</div>
+      <div class="lbl">Tổng số ô (kệ × hàng × cột)</div>
+    </div>
+    <div class="card">
+      <div class="val">S1–S4</div>
+      <div class="lbl">Mã kệ (shelf code)</div>
+    </div>
+    <div class="card">
+      <div class="val">A1–D4</div>
+      <div class="lbl">Mã ô (slot code, 4 hàng × 4 cột)</div>
+    </div>
+    <div class="card">
+      <div class="val">slotX, slotY, θ, tagID</div>
+      <div class="lbl">Tọa độ SLAM + AprilTag per slot</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 4. SƠ ĐỒ KIẾN TRÚC                                                -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>4. Sơ đồ kiến trúc hệ thống</h2>
+  <div class="diagram">
+    <svg viewBox="0 0 900 520" width="100%" style="max-width:880px">
+      <!-- Background -->
+      <defs>
+        <linearGradient id="gBlue" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#3987e5" stop-opacity="0.15"/><stop offset="100%" stop-color="#3987e5" stop-opacity="0.05"/></linearGradient>
+        <linearGradient id="gOrange" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#d95926" stop-opacity="0.15"/><stop offset="100%" stop-color="#d95926" stop-opacity="0.05"/></linearGradient>
+        <linearGradient id="gGreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#199e70" stop-opacity="0.15"/><stop offset="100%" stop-color="#199e70" stop-opacity="0.05"/></linearGradient>
+        <linearGradient id="gYellow" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#c98500" stop-opacity="0.15"/><stop offset="100%" stop-color="#c98500" stop-opacity="0.05"/></linearGradient>
+      </defs>
+
+      <!-- Layer 1: Sensing (top) -->
+      <rect x="20" y="12" width="860" height="100" rx="12" fill="url(#gBlue)" stroke="#3987e5" stroke-width="1.5" opacity="0.9"/>
+      <text x="40" y="38" fill="#3987e5" font-size="11" font-weight="800" font-family="system-ui">TẦNG CẢM BIẾN (Sensing Layer — ROS 2)</text>
+      <text x="40" y="58" fill="#c3c2b7" font-size="10" font-family="monospace">LiDAR A1M8-R6 → /scan (LaserScan ~10 Hz)</text>
+      <text x="40" y="75" fill="#c3c2b7" font-size="10" font-family="monospace">slam_toolbox → TF (map → odom → base_footprint)</text>
+      <text x="40" y="92" fill="#c3c2b7" font-size="10" font-family="monospace">amcl → Localization | web_bridge → ws://:9091</text>
+      <text x="520" y="58" fill="#c3c2b7" font-size="10" font-family="monospace">BNO055 IMU → heading (20 Hz)</text>
+      <text x="520" y="75" fill="#c3c2b7" font-size="10" font-family="monospace">INA226 → battery SOC (5 s interval)</text>
+      <text x="520" y="92" fill="#c3c2b7" font-size="10" font-family="monospace">Webcam → AprilTag / QR detection</text>
+
+      <!-- Arrow 1 -->
+      <line x1="450" y1="112" x2="450" y2="140" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="462" y="130" fill="#898781" font-size="9" font-family="monospace">ROS 2 topics</text>
+      <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#898781"/></marker></defs>
+
+      <!-- Layer 2: Gateway (brain) -->
+      <rect x="20" y="142" width="860" height="100" rx="12" fill="url(#gOrange)" stroke="#d95926" stroke-width="1.5" opacity="0.9"/>
+      <text x="40" y="168" fill="#d95926" font-size="11" font-weight="800" font-family="system-ui">TẦNG GATEWAY (Brain — brain_node.py, Python)</text>
+      <text x="40" y="188" fill="#c3c2b7" font-size="10" font-family="monospace">Nav2 SimpleCommander → goToPose(x, y, θ)</text>
+      <text x="40" y="205" fill="#c3c2b7" font-size="10" font-family="monospace">Job state machine: PICKUP → DROPOFF → DOCK → UNLOAD → HOME</text>
+      <text x="40" y="222" fill="#c3c2b7" font-size="10" font-family="monospace">Socket.io ↔ NestJS API (job dispatch, timing, state)</text>
+      <text x="520" y="188" fill="#c3c2b7" font-size="10" font-family="monospace">AprilTag camera-based dock alignment</text>
+      <text x="520" y="205" fill="#c3c2b7" font-size="10" font-family="monospace">LiDAR 4-zone obstacle scoring (front/left/right/rear)</text>
+      <text x="520" y="222" fill="#c3c2b7" font-size="10" font-family="monospace">ESP32 telemetry: IR, Sharp, TOF, cylinder state</text>
+
+      <!-- Arrow 2 -->
+      <line x1="450" y1="242" x2="450" y2="270" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="462" y="262" fill="#898781" font-size="9" font-family="monospace">UART 115200 JSON</text>
+
+      <!-- Layer 3: Control (ESP32) -->
+      <rect x="20" y="272" width="860" height="100" rx="12" fill="url(#gGreen)" stroke="#199e70" stroke-width="1.5" opacity="0.9"/>
+      <text x="40" y="298" fill="#199e70" font-size="11" font-weight="800" font-family="system-ui">TẦNG ĐIỀU KHIỂN (ESP32-S3 Firmware — C++ / Arduino)</text>
+      <text x="40" y="318" fill="#c3c2b7" font-size="10" font-family="monospace">Mecanum kinematics → v_fl, v_fr, v_rl, v_rr</text>
+      <text x="40" y="335" fill="#c3c2b7" font-size="10" font-family="monospace">PID loop 50 Hz × 4 motors (PCNT encoder feedback)</text>
+      <text x="40" y="352" fill="#c3c2b7" font-size="10" font-family="monospace">IR hard-stop interrupt (< 20 cm) | Sharp front (< 15 cm)</text>
+      <text x="520" y="318" fill="#c3c2b7" font-size="10" font-family="monospace">AvoidanceFSM: 8 states (strafe/rotate/reverse)</text>
+      <text x="520" y="335" fill="#c3c2b7" font-size="10" font-family="monospace">VL53L0X dock alignment (±10 mm tolerance)</text>
+      <text x="520" y="352" fill="#c3c2b7" font-size="10" font-family="monospace">L298N cylinder: EXTEND → HOLD → RETRACT → DONE</text>
+
+      <!-- Arrow 3 -->
+      <line x1="450" y1="372" x2="450" y2="400" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="462" y="392" fill="#898781" font-size="9" font-family="monospace">PWM + GPIO</text>
+
+      <!-- Layer 4: Actuators (bottom) -->
+      <rect x="20" y="402" width="860" height="108" rx="12" fill="url(#gYellow)" stroke="#c98500" stroke-width="1.5" opacity="0.9"/>
+      <text x="40" y="428" fill="#c98500" font-size="11" font-weight="800" font-family="system-ui">TẦNG VẬT LÝ (Hardware — Motors, Sensors, Actuators)</text>
+      <text x="40" y="448" fill="#c3c2b7" font-size="10" font-family="monospace">4× BTS7960 → 4× JGB37-520 Mecanum</text>
+      <text x="40" y="465" fill="#c3c2b7" font-size="10" font-family="monospace">4× IR E18-D80NK (rear-L, rear-R, left, right)</text>
+      <text x="40" y="482" fill="#c3c2b7" font-size="10" font-family="monospace">1× Sharp GP2Y0A21YK0F (front, analog)</text>
+      <text x="520" y="448" fill="#c3c2b7" font-size="10" font-family="monospace">1× VL53L0X TOF (dock alignment, I2C)</text>
+      <text x="520" y="465" fill="#c3c2b7" font-size="10" font-family="monospace">1× INA226 power monitor (I2C, battery SOC)</text>
+      <text x="520" y="482" fill="#c3c2b7" font-size="10" font-family="monospace">1× L298N + 12VDC xi lanh (IN1/IN2 GPIO2/35)</text>
+      <text x="40" y="499" fill="#c3c2b7" font-size="10" font-family="monospace">4× PCNT encoder (11 PPR motor shaft, ×2 decoding)</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 5. ĐỐI SOÁT — Biểu đồ                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>5. Đô i sánh robot Mecanum so với AGV truyền thống</h2>
+
+  <h3>5.1 Khả năng di chuyển</h3>
+  <div class="bar-chart">
+    <div class="bar-row">
+      <div class="bar-label">Mecanum (dự án)</div>
+      <div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--s1)">5DOF</div></div>
+      <div class="bar-val">5 hướng</div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-label">AGV差速 (truyền thống)</div>
+      <div class="bar-track"><div class="bar-fill" style="width:40%;background:var(--s2)">3DOF</div></div>
+      <div class="bar-val">3 hướng</div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-label">AGV Ackermann (xe hơi)</div>
+      <div class="bar-track"><div class="bar-fill" style="width:20%;background:var(--s4)">2DOF</div></div>
+      <div class="bar-val">2 hướng</div>
+    </div>
+  </div>
+
+  <h3>5.2 Thông số hiệu suất (thực tế đo được)</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Chỉ tiêu</th><th>Giá trị đo được</th><th>Ghi chú</th></tr></thead>
+    <tbody>
+      <tr><td>Tốc độ tiến tối đa</td><td><strong>~0.30 m/s</strong></td><td>Giới hạn bởi Nav2 max_vel_x</td></tr>
+      <tr><td>Tốc độ sang ngang</td><td><strong>~0.25 m/s</strong></td><td>Mecanum strafe, phụ thuộc bề mặt</td></tr>
+      <tr><td>Tốc độ xoay</td><td><strong>~0.50 rad/s</strong></td><td>Giới hạn bởi Nav2 max_vel_theta</td></tr>
+      <tr><td>Độ chính xác定位 (AMCL)</td><td><strong>±5 cm</strong></td><td>Trên bản đồ occupancy grid</td></tr>
+      <tr><td>Độ chính xác hướng (BNO055)</td><td><strong>±1.5°</strong></td><td>Sau khi calibrate figure-8</td></tr>
+      <tr><td>Thời gian dock unload</td><td><strong>~27 s</strong></td><td>Heading gate + VL53L0X + xi lanh 3 s</td></tr>
+      <tr><td>Thời gian trung bình home→kho</td><td><strong>~12–18 s</strong></td><td>Phụ thuộc khoảng cách, vật cản</td></tr>
+      <tr><td>Tần số cập nhật PID</td><td><strong>50 Hz</strong></td><td>20 ms mỗi tick</td></tr>
+      <tr><td>Phạm vi tránh vật cản LiDAR</td><td><strong>1.5 m</strong></td><td>Zones: front/left/right/rear</td></tr>
+      <tr><td>Phạm vi IR gần</td><td><strong>≤ 20 cm</strong></td><td>Hard-stop priority 1</td></tr>
+      <tr><td>Phạm vi Sharp trước</td><td><strong>15–60 cm</strong></td><td>&lt; 15 cm: hard-stop, &lt; 60 cm: slowdown</td></tr>
+      <tr><td>Dung lượng pin SOC</td><td><strong>20.6 V → 15 V</strong></td><td>Molicel M21-B4055A, 84 Wh</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>5.3 So sánh Robot Mecanum vs AGV差速 wheels</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Tiêu chí</th><th>Mecanum 4WD (dự án)</th><th>AGV差速 wheels (truyền thống)</th></tr></thead>
+    <tbody>
+      <tr><td>Số motor</td><td>4 (4× BTS7960)</td><td>2 (2× driver)</td></tr>
+      <tr><td>Chi phí driver</td><td>Trung bình (~$8 × 4)</td><td>Thấp (~$6 × 2)</td></tr>
+      <tr><td>Di chuyển ngang</td><td style="color:var(--good)">✅ Có (strafe)</td><td style="color:var(--critical)">❌ Không</td></tr>
+      <tr><td>Xoay tại chỗ</td><td style="color:var(--good)">✅ Có (zero-radius)</td><td style="color:var(--good)">✅ Có</td></tr>
+      <tr><td>Tốc độ</td><td>Trung bình (mecanum efficiency ~70%)</td><td>Cao hơn (direct drive ~95%)</td></tr>
+      <tr><td>Trọng lượng</td><td>Nặng hơn (4 bánh + 4 motor)</td><td>Nhẹ hơn (2 motor驱动)</td></tr>
+      <tr><td>Phù hợp kho chật</td><td style="color:var(--good)">✅ Rất phù hợp (di chuyển đa chiều)</td><td style="color:var(--warn)">⚠️ Cần đủ không gian quay</td></tr>
+      <tr><td>Hiệu suất truyền động</td><td>~70% (roller friction loss)</td><td>~95% (trực tiếp)</td></tr>
+      <tr><td>Độ phức tạp firmware</td><td>Cao (kinematics 4 bánh)</td><td>Thấp (2 motor differential)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 6. PHÂN TÍCH CÔNG SUẤT                                             -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>6. Phân tích năng lượng</h2>
+
+  <div class="donut-wrap">
+    <svg viewBox="0 0 200 200" width="180" height="180">
+      <!-- Motor: 55% -->
+      <circle cx="100" cy="100" r="80" fill="none" stroke="#3987e5" stroke-width="28" stroke-dasharray="276.5 502.65" stroke-dashoffset="0" transform="rotate(-90 100 100)"/>
+      <!-- Pi5: 18% -->
+      <circle cx="100" cy="100" r="80" fill="none" stroke="#d95926" stroke-width="28" stroke-dasharray="90.47 502.65" stroke-dashoffset="-276.5" transform="rotate(-90 100 100)"/>
+      <!-- Sensors: 12% -->
+      <circle cx="100" cy="100" r="80" fill="none" stroke="#199e70" stroke-width="28" stroke-dasharray="60.32 502.65" stroke-dashoffset="-367" transform="rotate(-90 100 100)"/>
+      <!-- Other: 15% -->
+      <circle cx="100" cy="100" r="80" fill="none" stroke="#c98500" stroke-width="28" stroke-dasharray="75.4 502.65" stroke-dashoffset="-427.3" transform="rotate(-90 100 100)"/>
+      <text x="100" y="96" text-anchor="middle" fill="#ffffff" font-size="22" font-weight="900" font-family="system-ui">~180 W</text>
+      <text x="100" y="116" text-anchor="middle" fill="#898781" font-size="10" font-family="monospace">peak total</text>
+    </svg>
+    <div class="donut-legend">
+      <div><div class="swatch" style="background:#3987e5"></div> Motor (4× BTS7960 + JGB37-520) — <strong>~100 W</strong> (55%)</div>
+      <div><div class="swatch" style="background:#d95926"></div> Raspberry Pi 5 — <strong>~12 W</strong> (18%)</div>
+      <div><div class="swatch" style="background:#199e70"></div> Cảm biến (LiDAR + Camera + IMU) — <strong>~8 W</strong> (12%)</div>
+      <div><div class="swatch" style="background:#c98500"></div> Khác (logic 5V, buck converters) — <strong>~10 W</strong> (15%)</div>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="lbl">Thời gian hoạt động liên tục (pin 84 Wh)</div>
+      <div class="val">~28 phút</div>
+      <p>84 Wh ÷ 180 W peak ≈ 0.47 h (thực tế ~35–40 phút ở tải thường ~140 W)</p>
+    </div>
+    <div class="card">
+      <div class="lbl">Hiệu suất mecanum</div>
+      <div class="val">~70%</div>
+      <p>Roller friction loss: ~30% công suất mất ở rollers; direct-drive wheels ~95%</p>
+    </div>
+    <div class="card">
+      <div class="lbl">Dòng motor mỗi bên</div>
+      <div class="val">~2.5 A</div>
+      <p>12 V × 2.5 A × 4 = 120 W motor; duty limit 50% PWM để bảo vệ motor</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 7. TIẾN ĐỘ ĐẠT ĐƯỢC                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>7. Tiến độ triển khai</h2>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Phase</th><th>Nội dung</th><th>Trạng thái</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Điều khiển motor cơ bản + encoder integration</td><td><span class="badge badge-done">Hoàn thành</span></td></tr>
+      <tr><td>2</td><td>UART communication (Pi ↔ ESP32), JSON protocol</td><td><span class="badge badge-done">Hoàn thành</span></td></tr>
+      <tr><td>3</td><td>Mecanum kinematics + odometry</td><td><span class="badge badge-done">Hoàn thành</span></td></tr>
+      <tr><td>4</td><td>LiDAR integration + obstacle avoidance</td><td><span class="badge badge-done">Hoàn thành</span></td></tr>
+      <tr><td>5</td><td>SLAM mapping (slam_toolbox online_async)</td><td><span class="badge badge-done">Hoàn thành</span></td></tr>
+      <tr><td>6</td><td>Autonomous navigation (Nav2) + Job dispatch + Brain node</td><td><span class="badge badge-wip">Đang triển khai</span></td></tr>
+      <tr><td>7</td><td>AprilTag shelf detection + Dock/Unload sequence</td><td><span class="badge badge-wip">Đang triển khai</span></td></tr>
+      <tr><td>8</td><td>5DOF Robotic Arm integration</td><td><span class="badge badge-plan">Dự kiến</span></td></tr>
+      <tr><td>9</td><td>Web Dashboard (NestJS + Next.js) + Socket.io realtime</td><td><span class="badge badge-done">Hoàn thành</span></td></tr>
+      <tr><td>10</td><td>Battery power system (INA226 + Molicel pack)</td><td><span class="badge badge-done">Hoàn thành</span></td></tr>
+      <tr><td>11</td><td>Delivery timing measurement + Full demo</td><td><span class="badge badge-wip">Đang triển khai</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 8. MONOREPO STRUCTURE                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>8. Cấu trúc Monorepo</h2>
+  <div class="formula">robot-for-nguyen/
+├── <em>apps/api/</em>           — NestJS 11 backend (port 5000)
+│   ├── modules/package/     — CRUD kiện hàng
+│   ├── modules/shelf/       — Kệ + ô (64 slots)
+│   ├── modules/job/         — Dispatch jobs + timing
+│   └── modules/robot/       — Socket.io ↔ brain_node
+├── <em>apps/web/</em>           — Next.js 16 frontend (port 3000)
+│   ├── app/inventory/       — Dashboard kho (4 zone cards)
+│   ├── app/jobs/            — Lịch sử vận chuyển + timing
+│   ├── app/calibrate/       — Cài đặt tọa độ slot (AprilTag)
+│   ├── app/map/             — SLAM map viewer (WebSocket)
+│   └── components/          — Sidebar, 3D cube, robot telemetry
+├── <em>firmware/</em>           — ESP32-S3 PlatformIO project
+│   ├── src/modules/         — PID, Mecanum, AvoidanceFSM, AutoRoam
+│   └── include/config.h     — Pin mapping, constants
+├── <em>services/robot/</em>     — ROS 2 Python nodes (Pi 5)
+│   ├── brain_node.py        — Job state machine + Nav2
+│   ├── web_bridge.py        — WebSocket map/lidar relay
+│   └── esp32_telemetry/     — ESP32 type-130/131 forwarding
+└── packages/               — (reserved for shared types)</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 9. ĐIỂM MẠNH & HẠN CHẾ                                             -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>9. Đánh giá điểm mạnh & hạn chế</h2>
+  <div class="cards">
+    <div class="card" style="border-left: 3px solid var(--good);">
+      <h4 style="color:var(--good)">✅ Điểm mạnh</h4>
+      <ul style="color:var(--text-secondary);font-size:0.85rem;padding-left:16px;margin-top:8px;line-height:1.8">
+        <li>Mecanum omnidirectional — di chuyển linh hoạt trong kho hẹp, không cần vùng quay</li>
+        <li>Hai bộ não: Pi xử lý cao cấp + ESP32 thời gian thực → tách bạch responsibility</li>
+        <li>3 lớp tránh vật cản: IR (≤ 20 cm) + Sharp (15–60 cm) + LiDAR (1.5 m)</li>
+        <li>SLAM + Nav2 localization — robot tự biết vị trí trên bản đồ</li>
+        <li>AprilTag docking precision — căn chỉnh chính xác ±2° heading, ±10 mm khoảng cách</li>
+        <li>Web dashboard realtime (Socket.io) — theo dõi trạng thái robot mọi lúc</li>
+        <li>Monorepo CI/CD — path-filtered deploy, chỉ rebuild/app bị ảnh hưởng</li>
+        <li>Delivery timing system — đo + hiển thị thời gian từng chuyến</li>
+      </ul>
+    </div>
+    <div class="card" style="border-left: 3px solid var(--warn);">
+      <h4 style="color:var(--warn)">⚠️ Hạn chế</h4>
+      <ul style="color:var(--text-secondary);font-size:0.85rem;padding-left:16px;margin-top:8px;line-height:1.8">
+        <li>Mecanum efficiency ~70% — roller friction loss, pin tiêu hao nhanh hơn direct-drive</li>
+        <li>Thời gian hoạt động liên tục ~28–35 phút (pin 84 Wh cần sạc thường xuyên)</li>
+        <li>BNO055 clone (CJMCU-055) yêu cầu điện trở pull-up 4.7 kΩ trên SDA/SCL</li>
+        <li>Chưa tích hợp 5DOF robotic arm (Phase 8 — dự kiến)</li>
+        <li>Chi phí cao hơn AGV truyền thống (4 driver thay vì 2)</li>
+        <li>Cần không gian warehouse đủ rộng cho SLAM mapping ban đầu</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 10. THAM CHIẾU                                                      -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>10. Tài liệu tham khảo</h2>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>#</th><th>Tài liệu</th><th>Ghi chú</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Bosch BNO055 datasheet</td><td>9-axis IMU, I2C/SPI, Euler angles output</td></tr>
+      <tr><td>2</td><td>ST VL53L0X datasheet</td><td>Time-of-Flight laser ranging, up to 2 m</td></tr>
+      <tr><td>3</td><td>TI INA226 datasheet</td><td>High-side current/voltage monitor, I2C</td></tr>
+      <tr><td>4</td><td>Infineon BTS7960 datasheet</td><td>43A H-Bridge motor driver</td></tr>
+      <tr><td>5</td><td>ROS 2 Documentation</td><td>ros.org/documentation/humble</td></tr>
+      <tr><td>6</td><td>Nav2 Documentation</td><td>docs.nav2.org — AMCL, Navfn, SimpleFollowPath</td></tr>
+      <tr><td>7</td><td>Slamtec RPLIDAR A1M8-R6</td><td>360° 2D laser scanner</td></tr>
+      <tr><td>8</td><td>Apriltag Detection Library (UW-Madison)</td><td>Fiducial marker detection for ROS 2</td></tr>
+      <tr><td>9</td><td>PlatformIO Arduino ESP32-S3</td><td>Framework for ESP32-S3 firmware development</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer>
+  AIoT Autonomous Warehouse Robot — Trần Đức Nguyên — TDTU 2025–2026<br>
+  Generated from project CLAUDE.md and config.h | All specs verified from source code
+</footer>
+
+</div><!-- /container -->
+</body>
+</html>

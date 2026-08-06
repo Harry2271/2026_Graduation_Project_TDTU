@@ -53,6 +53,8 @@ class Esp32TelemetryNode(Node):
         self._status_pub = self.create_publisher(String, '/esp32/status', 10)
         self._encoder_pub = self.create_publisher(String, '/esp32/encoder', 10)
         self._e_stop_pub = self.create_publisher(String, '/esp32/e_stop', 10)
+        self._imu_pub = self.create_publisher(String, '/esp32/imu', 10)
+        self._power_pub = self.create_publisher(String, '/esp32/power', 10)
         self.get_logger().info('esp32_telemetry_node ready')
 
     # ── Bridge callbacks (called from asyncio thread) ──────────────────────
@@ -68,6 +70,14 @@ class Esp32TelemetryNode(Node):
     def on_encoder_update(self, motors: list[dict]) -> None:
         """Forward type-130 encoder list to /esp32/encoder."""
         self._encoder_pub.publish(String(data=json.dumps(motors)))
+
+    def on_imu(self, data: dict) -> None:
+        """Forward type-134 BNO055 telemetry to /esp32/imu."""
+        self._imu_pub.publish(String(data=json.dumps(data)))
+
+    def on_power(self, data: dict) -> None:
+        """Forward type-133 INA226 telemetry to /esp32/power."""
+        self._power_pub.publish(String(data=json.dumps(data)))
 
     def on_error(self, msg: str) -> None:
         """Surface bridge-side errors to the ROS log."""
@@ -93,6 +103,8 @@ async def _run_bridge(node: Esp32TelemetryNode) -> None:
     bridge.on_status_update = node.on_status_update
     bridge.on_encoder_update = node.on_encoder_update
     bridge.on_error = node.on_error
+    bridge.on_imu = node.on_imu
+    bridge.on_power = node.on_power
 
     await bridge.connect()
     node.get_logger().info('ESP32 telemetry bridge connected')

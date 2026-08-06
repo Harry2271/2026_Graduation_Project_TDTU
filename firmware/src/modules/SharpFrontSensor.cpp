@@ -129,13 +129,15 @@ float SharpFrontSensor::getDistanceCm() const
 
 bool SharpFrontSensor::isTooClose() const
 {
-    if (!sensor_present_) return false;
+    // Trust the latest reading regardless of sensor_present_ flag.  When the
+    // sensor is saturated (raw >= 4090) the code in update() sets
+    // distance_cm_ = SHARP_CM_MIN, which is intentionally "too close" so a
+    // failed/saturated sensor triggers a hard stop rather than a free pass.
     return distance_cm_ < SHARP_FRONT_THRESHOLD_CM;
 }
 
 bool SharpFrontSensor::isSlowing() const
 {
-    if (!sensor_present_) return false;
     return distance_cm_ < SHARP_FRONT_SLOW_CM;
 }
 

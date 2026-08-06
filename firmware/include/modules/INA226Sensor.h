@@ -3,10 +3,11 @@
 #include <stdint.h>
 
 /**
- * INA226 — Current/Voltage/Power Monitor via LibDriver
+ * INA226 — Voltage/Current/Power Monitor via LibDriver
  *
- * Measures bus voltage and current through a shunt resistor.
- * Battery SOC is a simple linear mapping: 21 VDC = 100 %, 0 V = 0 %.
+ * Measures pack voltage directly from M21-B4055A pack (VIN+ → + pack, VIN- → GND).
+ * Battery SOC: 20.6V = 100%, 15.0V = 0% (pack under-load limit).
+ * Also reports current (A) and power (W) through the shunt resistor.
  */
 
 class INA226Sensor {

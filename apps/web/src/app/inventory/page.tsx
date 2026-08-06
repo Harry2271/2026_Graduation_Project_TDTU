@@ -29,6 +29,7 @@ import {
   useDeletePackageMutation,
   useAssignToZoneMutation,
 } from '@/store/services/inventoryApi';
+import SlotDispatchPanel from '@/components/SlotDispatchPanel';
 import type { Package, ZoneCode } from '@/types/inventory';
 
 /* ─── Constants ────────────────────────────────────────────────────── */
@@ -244,6 +245,7 @@ export default function InventoryPage() {
   const [listOpen, setListOpen] = useState(true);
   const [isFinishOpen, setIsFinishOpen] = useState(false);
   const [finishPkg, setFinishPkg] = useState<Package | null>(null);
+  const [viewMode, setViewMode] = useState<'zone' | 'slot'>('zone');
 
   // Data
   const { data: packages = [], isLoading: isPackagesLoading } = useGetPackagesQuery();
@@ -465,6 +467,34 @@ export default function InventoryPage() {
               <span className="badge badge-cyan" style={{ fontSize: 8, letterSpacing: '0.12em' }}>LIVE</span>
               <Badge count={activeCount} style={{ backgroundColor: 'rgba(0,212,255,0.15)', color: 'var(--accent)', border: '1px solid rgba(0,212,255,0.25)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, boxShadow: 'none' }} showZero />
             </div>
+            <div className="flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+              <button
+                type="button"
+                onClick={() => setViewMode('zone')}
+                className="px-3 py-1.5 rounded-lg text-[10px] font-bold"
+                style={{
+                  background: viewMode === 'zone' ? 'var(--accent)' : 'transparent',
+                  color: viewMode === 'zone' ? '#080b10' : 'var(--text-muted)',
+                  border: `1px solid ${viewMode === 'zone' ? 'var(--accent)' : 'var(--border-mid)'}`,
+                  cursor: 'pointer',
+                }}
+              >
+                Khu
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('slot')}
+                className="px-3 py-1.5 rounded-lg text-[10px] font-bold"
+                style={{
+                  background: viewMode === 'slot' ? 'var(--accent)' : 'transparent',
+                  color: viewMode === 'slot' ? '#080b10' : 'var(--text-muted)',
+                  border: `1px solid ${viewMode === 'slot' ? 'var(--accent)' : 'var(--border-mid)'}`,
+                  cursor: 'pointer',
+                }}
+              >
+                Điều xe
+              </button>
+            </div>
             {selectedPkg && (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px]"
                 style={{ background: 'var(--accent-dim)', border: '1px solid rgba(0,212,255,0.25)', color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
@@ -512,21 +542,27 @@ export default function InventoryPage() {
           )}
         </div>
 
-        {/* ── 4-Zone grid (2×2) ────────────────────────────────── */}
-        <div className="flex-1 p-4 md:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 overflow-auto" style={{ alignContent: 'start' }}>
-          {ZONE_CODES.map((z) => (
-            <ZoneCard
-              key={z}
-              zone={z}
-              count={zoneCounts[z]}
-              isActive={zoneFilter === z}
-              isHighlight={!!selectedPkg}
-              isTarget={!!selectedPkg && targetZone === z}
-              isSource={!!selectedPkg && selectedPkg.zoneCode === z}
-              onSelect={() => handleZoneSelect(z)}
-            />
-          ))}
-        </div>
+        {/* ── 4-Zone grid (2×2) or Slot dispatch panel ─────────────── */}
+        {viewMode === 'slot' ? (
+          <div className="flex-1 p-4 md:p-6 overflow-auto">
+            <SlotDispatchPanel />
+          </div>
+        ) : (
+          <>
+            <div className="flex-1 p-4 md:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 overflow-auto" style={{ alignContent: 'start' }}>
+              {ZONE_CODES.map((z) => (
+                <ZoneCard
+                  key={z}
+                  zone={z}
+                  count={zoneCounts[z]}
+                  isActive={zoneFilter === z}
+                  isHighlight={!!selectedPkg}
+                  isTarget={!!selectedPkg && targetZone === z}
+                  isSource={!!selectedPkg && selectedPkg.zoneCode === z}
+                  onSelect={() => handleZoneSelect(z)}
+                />
+              ))}
+            </div>
 
         {/* ── Package list toggle bar ──────────────────────────── */}
         <button
@@ -577,6 +613,8 @@ export default function InventoryPage() {
               </ConfigProvider>
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
 

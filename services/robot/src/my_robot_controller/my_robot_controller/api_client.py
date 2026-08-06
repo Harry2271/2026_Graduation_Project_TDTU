@@ -127,3 +127,35 @@ class BrainApiClient:
             {'jobId': job_id, 'status': status},
             namespace='/robot',
         )
+
+    async def emit_job_phase(self, job_id: str, phase: str) -> None:
+        """Emit a job phase checkpoint to the API (for UI progress display)."""
+        if not self._connected:
+            return
+        await self._sio.emit(
+            'job:phase',
+            {'jobId': job_id, 'phase': phase},
+            namespace='/robot',
+        )
+
+    async def emit_robot_health(self) -> None:
+        """Emit a keepalive health heartbeat to the API.
+
+        Called periodically from the brain's async loop to let the API
+        know the brain is alive and track last-seen timestamps.
+        """
+        if not self._connected:
+            return
+        await self._sio.emit('robot:health', {}, namespace='/robot')
+
+    async def emit_job_timing(self, job_id: str, timing: dict) -> None:
+        """Emit delivery timing data to the API.
+
+        Timing dict keys: startedAt, pickupAt, dropoffAt, unloadAt,
+        totalDurationMs, travelToPickupMs, travelToDropoffMs, unloadDurationMs.
+        All Date values should be ISO-format strings.
+        """
+        if not self._connected:
+            return
+        payload = {'jobId': job_id, **timing}
+        await self._sio.emit('job:timing', payload, namespace='/robot')

@@ -1,44 +1,65 @@
 #pragma once
 
 #include <stdint.h>
+#include <Arduino.h>
 
 // =====================================================================
-// I2CBus — central helper for I2C bus recovery.
+// I2CBus — central I2C bus recovery + safe transaction layer.
 //
-// Background:
-//   Arduino Wire.endTransmission() blocks indefinitely if a slave
-//   holds SDA low.  The only same-thread escape is to physically
-//   release the bus by toggling SCL 9 times (standard I2C recovery
-//   sequence), then re-init Wire.
+// The ESP32 Arduino core's Wire.endTransmission() does NOT honor
+// Wire.setTimeout() — it blocks forever if a slave holds SDA low.
 //
-// This helper centralizes the recovery and exposes:
-//   - busReset(sda, scl) — toggle SCL 9 times to release stuck slaves
-//   - reinitialize(sda, scl, freq) — Wire.end() + Wire.begin(sda, scl) + setClock()
-//   - isHung() — best-effort: digitalRead(SDA)==LOW for >100ms = hung
+// ALL callers must use these helpers instead of raw Wire calls when
+// bus health matters.  Every transaction goes through linesIdle()
+// guard + time-bounded loop + automatic bus reset on failure.
 //
-// Call sequence after a multi-module WARNING storm:
-//   1. I2CBus::busReset(sda, scl);
-//   2. I2CBus::reinitialize(sda, scl, 400000);
-//   3. module.begin() for each I2C sensor
-//
-// Limitation: if Wire is already mid-transaction when this is called,
-//   busReset may not take effect until the next loop().  Hardware
-//   watchdog (esp_task_wdt) is the ultimate fallback.
+// Hardware requirement for stable operation:
+//   External 2.2k-4.7kΩ pull-ups on SDA and SCL to 3.3V are mandatory.
+//   Internal pull-ups (~45kΩ) are too weak for 3-device I2C buses.
 // =====================================================================
 
 class I2CBus {
 public:
-    /// Toggle SCL 9 times while SDA is open-drain to release any slave
-    /// holding SDA low.  After this, SDA/SCL are back to idle HIGH.
+    /// Toggle SCL 9 times to release any slave holding SDA low.
     static void busReset(uint8_t sda_pin, uint8_t scl_pin);
 
-    /// Re-init the Wire peripheral on the given pins with the given clock.
+    /// Re-init Wire peripheral.  Calls busReset() first, then Wire.begin().
     /// Returns true on success.
     static bool reinitialize(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz);
 
-    /// Best-effort bus hang detection.  Reads SDA as input; if LOW
-    /// for >100ms after the check, declares the bus hung.
-    /// This is a heuristic — the ground-truth "Wire blocked indefinitely"
-    /// cannot be detected in software.
+    /// Best-effort: digitalRead(SDA)==LOW for >100ms = hung.
     static bool isHung(uint8_t sda_pin);
+
+    /// Verify SDA + SCL are HIGH before Wire.beginTransmission().
+    static bool linesIdle(uint8_t sda_pin, uint8_t scl_pin);
+
+    /// Single-address ACK probe. Does NOT reset the bus.
+    static bool probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr);
+
+    /// Probe + auto bus reset + retry on NACK.
+    static bool probeWithRecovery(uint8_t sda_pin, uint8_t scl_pin,
+                                   uint8_t addr, uint32_t freq_hz);
+
+    // ── Safe Wire wrappers ──
+    //
+    // These bypass the problematic Wire.endTransmission() by checking
+    // linesIdle() first and wrapping in a time-bounded loop.  On
+    // timeout, they do NOT call Wire.end() (which can crash ESP32-S3);
+    // instead they return false and let the caller use probeWithRecovery.
+
+    /// Safe single-byte read.  Returns true on successful read, false on failure.
+    static bool safeReadReg(uint8_t sda_pin, uint8_t scl_pin,
+                             uint32_t freq_hz,
+                             uint8_t addr, uint8_t reg, uint8_t* out_value);
+
+    /// Safe burst read (cnt bytes, auto-increment register address).
+    static bool safeReadBurst(uint8_t sda_pin, uint8_t scl_pin,
+                               uint32_t freq_hz,
+                               uint8_t addr, uint8_t start_reg,
+                               uint8_t* buf, uint8_t cnt);
+
+    /// Safe single-byte write.  Returns true on success.
+    static bool safeWriteReg(uint8_t sda_pin, uint8_t scl_pin,
+                              uint32_t freq_hz,
+                              uint8_t addr, uint8_t reg, uint8_t value);
 };

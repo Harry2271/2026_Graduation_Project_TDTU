@@ -132,9 +132,11 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
         // ---- Docking / unloading sequence (Pi brain) ----
         case CMD_BEGIN_DOCK:
             watchdog_.setMode(MODE_AUTO_ROAM);
-            auto_roam_.startDock(cmd.tag_id, cmd.target_distance_mm);
-            Serial.printf("[ModeManager] CMD_BEGIN_DOCK tag=%u target=%u\n",
-                cmd.tag_id, cmd.target_distance_mm);
+            auto_roam_.startDock(cmd.tag_id, cmd.target_distance_mm,
+                                 cmd.facing_theta_deg, cmd.operation_id);
+            Serial.printf("[ModeManager] CMD_BEGIN_DOCK tag=%u target=%u opId=%s\n",
+                cmd.tag_id, cmd.target_distance_mm,
+                cmd.operation_id[0] ? cmd.operation_id : "-");
             break;
 
         case CMD_BEGIN_LEAVE_DOCK:

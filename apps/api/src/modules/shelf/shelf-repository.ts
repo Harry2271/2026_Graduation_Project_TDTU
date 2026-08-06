@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 
 import { IShelfRepository } from './interfaces/shelf-repository.interface';
 import { Shelf, ShelfDocument } from './schemas/shelf.schema';
@@ -42,8 +42,10 @@ export class ShelfRepository implements IShelfRepository {
     await this.shelfSlotModel.insertMany(slots);
   }
 
-  async findSlotByCode(code: string): Promise<ShelfSlot | null> {
-    return this.shelfSlotModel.findOne({ code }).exec();
+  async findSlotByCode(code: string, session?: ClientSession): Promise<ShelfSlot | null> {
+    return session
+      ? this.shelfSlotModel.findOne({ code }).session(session).exec()
+      : this.shelfSlotModel.findOne({ code }).exec();
   }
 
   async findSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null> {
@@ -109,8 +111,10 @@ export class ShelfRepository implements IShelfRepository {
       .exec();
   }
 
-  async updateSlotStatus(slotCode: string, status: SlotStatus): Promise<void> {
-    await this.shelfSlotModel.updateOne({ code: slotCode }, { status }).exec();
+  async updateSlotStatus(slotCode: string, status: SlotStatus, session?: ClientSession): Promise<void> {
+    const query = this.shelfSlotModel.updateOne({ code: slotCode }, { status });
+    if (session) query.session(session);
+    await query.exec();
   }
 }
 

@@ -9,16 +9,6 @@ const uint8_t IRProximitySensor::PINS_[] = {
     IR_RIGHT_PIN,       // RIGHT
 };
 
-// After this many ms with the same digital reading, trust that the pin is
-// healthy.  Used to recover from a false "sensor absent" verdict on the
-// ESP32-S3 strapping pins (GPIO 45/46) which float LOW briefly during boot.
-static const uint32_t IR_TRUST_SETTLE_MS = 2000;
-
-// How long a pin must stay stuck LOW (or HIGH) with no transitions before we
-// decide the sensor is genuinely absent.  5 s is long enough to rule out a
-// persistent object in front of the sensor.
-static const uint32_t IR_ABSENT_TRIGGER_MS = 5000;
-
 IRProximitySensor::IRProximitySensor() : prev_any_(false)
 {
     for (int i = 0; i < 4; i++) {
@@ -73,16 +63,13 @@ bool IRProximitySensor::update(uint32_t now_ms)
             }
         } else {
             readings_[i].changed_ms = now_ms;
-            // Track how long this pin has held its current digital level.
-            // A real sensor on a moving robot sees many transitions per second.
-            // An absent or stuck sensor holds one level indefinitely.
-            if (now_ms - readings_[i].level_ms >= IR_ABSENT_TRIGGER_MS) {
-                if (sensor_present_[i]) {
-                    sensor_present_[i] = false;
-                    Serial.printf("  [WARN] IR[%d] (GPIO %d) stuck for %lu ms — marking absent\n",
-                                  i, PINS_[i], (unsigned long)(now_ms - readings_[i].level_ms));
-                }
-            }
+            // Do not infer that a sensor is absent from a stable reading.
+            // A stationary robot with no obstacle legitimately holds HIGH,
+            // while an obstacle can legitimately hold LOW for minutes.  The
+            // old timeout marked both cases absent and disabled hard-stop
+            // protection after five seconds.  Keep every configured input
+            // safety-active; wiring faults fail safe as an obstacle only when
+            // the input is actually LOW.
         }
     }
 
@@ -107,7 +94,11 @@ uint8_t IRProximitySensor::detectedMask() const
 {
     uint8_t mask = 0;
     for (int i = 0; i < 4; i++) {
-        if (!sensor_present_[i]) continue;  // treat absent sensor as "no obstacle"
+        // Always trust the configured GPIO.  The previous auto-disable
+        // marked healthy sensors as absent after five seconds of "no
+        // transition" — including a stationary robot with no obstacle —
+        // and disabled the hard-stop protection that this method exists
+        // to provide.
         if (readings_[i].detected) mask |= (1 << i);
     }
     return mask;

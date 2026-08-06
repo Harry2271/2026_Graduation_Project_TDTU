@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "AvoidanceFSM.h"
 
 // Forward declarations — avoid pulling all sensor headers into one place
 class BNO055Sensor;
@@ -68,8 +69,12 @@ public:
     /// @param facing_theta_deg target heading for the heading gate. Pass
     ///        -999.0f (or any value outside [0,360)) to use captured heading
     ///        (legacy behavior).
+    /// @param operation_id UUID string for idempotent docking. If the same
+    ///        operation_id is received while already unloading, the call is
+    ///        silently ignored (no double-unload).
     void startDock(uint16_t tag_id, uint16_t target_distance_mm,
-                   float facing_theta_deg = -999.0f);
+                   float facing_theta_deg = -999.0f,
+                   const char* operation_id = nullptr);
 
     /// Manually trigger the leave-dock reverse phase.
     void startLeaveDock();
@@ -111,6 +116,7 @@ private:
     uint32_t sharp_clear_ms_;
     bool     hard_stop_;
     uint8_t  last_ir_mask_;
+    int32_t  last_encoder_count_;   // for FSM reverse-distance tracking
 
     // Sensors
     BNO055Sensor*      imu_;
@@ -119,6 +125,9 @@ private:
     INA226Sensor*      power_;
     VL53L0XSensor*     tof_;
     CylinderActuator*  cylinder_;
+
+    // Multi-sensor obstacle avoidance FSM (replaces old heading-hold logic)
+    AvoidanceFSM      avoidance_fsm_;
 
     // Unloading state machine
     UnloadState unload_state_;
@@ -140,6 +149,9 @@ private:
 
     // Time the AUTO_ROAM driving loop first started (for Sharp boot-skip)
     uint32_t drive_start_ms_ = 0;
+
+    // Idempotency key — tracks current operationId to reject duplicate dock commands
+    char current_operation_id_[37] = "";
 
     // Tuning (compile-time defaults)
     static constexpr int16_t BASE_FWD_SPEED     = 70;

@@ -339,6 +339,10 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
         out.tag_id             = doc["tag_id"]             | 0;
         out.target_distance_mm = doc["target_distance_mm"] | VL53L0X_UNLOAD_DISTANCE_MM;
         out.facing_theta_deg   = doc["facing_theta"]       | -999.0f;
+        // Idempotency key from Pi brain (UUID string, empty if absent)
+        const char* oid = doc["operation_id"] | "";
+        strncpy(out.operation_id, oid, sizeof(out.operation_id) - 1);
+        out.operation_id[sizeof(out.operation_id) - 1] = '\0';
     }
     else if (strcmp(cmd, "begin_leave_dock") == 0) {
         out.type = CMD_BEGIN_LEAVE_DOCK;

@@ -81,10 +81,34 @@ def test_brain_can_transition_to_job_states(brain: BrainNode) -> None:
     assert brain.state == BrainState.JOB_NAV_TO_PICKUP
     brain.transition_to(BrainState.JOB_NAV_TO_DROPOFF, reason='pickup complete')
     assert brain.state == BrainState.JOB_NAV_TO_DROPOFF
-    brain.transition_to(BrainState.JOB_PLACE, reason='dropoff complete')
-    assert brain.state == BrainState.JOB_PLACE
+    brain.transition_to(BrainState.JOB_DOCK_UNLOAD, reason='dropoff complete')
+    assert brain.state == BrainState.JOB_DOCK_UNLOAD
+    brain.transition_to(BrainState.JOB_RETURN_HOME, reason='unload complete')
+    assert brain.state == BrainState.JOB_RETURN_HOME
     brain.transition_to(BrainState.IDLE, reason='job complete')
     assert brain.state == BrainState.IDLE
+
+
+def test_brain_has_return_home_state(brain: BrainNode) -> None:
+    """Verify the new RETURN_HOME state exists in the enum."""
+    assert hasattr(BrainState, 'JOB_RETURN_HOME')
+    assert hasattr(BrainState, 'JOB_DOCK_UNLOAD')
+
+
+def test_brain_has_home_pose_slot(brain: BrainNode) -> None:
+    """BrainNode should have a _home_pose attribute for the captured origin."""
+    assert hasattr(brain, '_home_pose')
+    assert brain._home_pose is None  # not captured until TF converges
+
+
+def test_brain_has_poll_unload_state_method(brain: BrainNode) -> None:
+    """BrainNode should expose a _poll_unload_state coroutine."""
+    assert callable(getattr(brain, '_poll_unload_state', None))
+
+
+def test_brain_has_return_home_method(brain: BrainNode) -> None:
+    """BrainNode should expose a _return_home coroutine."""
+    assert callable(getattr(brain, '_return_home', None))
 
 
 def test_brain_can_transition_to_e_stop(brain: BrainNode) -> None:
