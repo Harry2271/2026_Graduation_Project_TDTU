@@ -215,10 +215,12 @@ enum MotorState {
 
 // ============================================================
 // E18-D80NK IR Proximity Sensors (digital, active-LOW)
+// Range: ≤15cm (after potentiometer adjustment on each sensor)
 // ============================================================
 #define IR_SENSOR_COUNT       4
 #define IR_SENSOR_POLL_MS     20       // Read at 50 Hz (same as PID)
 #define IR_DEBOUNCE_MS        50       // Debounce filter
+#define IR_DETECTION_RANGE_CM 15       // Potentiometer-adjusted detection (cm)
 
 // ============================================================
 // AutoRoam — when Pi is disconnected, drive with sensors

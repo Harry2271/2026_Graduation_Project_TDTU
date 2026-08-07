@@ -796,15 +796,20 @@ class BrainNode(Node):
     def _esp32_obstacle_blocking(self) -> bool:
         """Return True if ESP32's local sensors (IR / Sharp) report an
         immediate obstacle.  Used as a fast e-stop layer before LiDAR.
+
+        IR detection range: 15 cm (E18-D80NK potentiometer-adjusted).
+        Sharp zones:
+          < 15cm  → hard stop (front too close)
+          < 60cm  → obstacle detected (slowing zone — must react)
         """
         if not self._esp32_status:
             return False
         st = self._esp32_status.get('st', {})
-        # Sharp < 15cm = hard stop
+        # Sharp: trigger at BOTH hard-stop AND slow-down zones
         sharp = st.get('sharp', 999)
-        if isinstance(sharp, (int, float)) and 0 < sharp < 15:
+        if isinstance(sharp, (int, float)) and 0 < sharp < 60:
             return True
-        # Any IR sensor detects obstacle
+        # Any IR sensor detects obstacle (15 cm detection range)
         ir = st.get('ir', [False, False, False, False])
         if isinstance(ir, list) and any(ir):
             return True
@@ -1120,11 +1125,13 @@ class BrainNode(Node):
         score_z = {n: self._score_zone(d, th) for n, d in zones.items()}
 
         # ── IR-driven override: IR forces the side to be hostile ──
+        # E18-D80NK is adjusted to 15cm.  A triggered side is therefore
+        # not merely a weak penalty: do not choose a path through it.
         for side in ('left', 'right'):
             if side in ir_pressed:
-                score_z[side] = min(score_z[side], -0.5)
+                score_z[side] = -1.0
         if sharp_close:
-            score_z['front'] = min(score_z['front'], -0.8)
+            score_z['front'] = -1.0
 
         # ── Build candidate escape directions (mechanum-friendly) ──
         # Each candidate: name → (vx, vy, omega) + a scoring function.

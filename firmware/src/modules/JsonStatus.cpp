@@ -177,7 +177,7 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     st["imu"] = imu->isOperational();
     st["pwr"] = power->isOperational();
     st["sharp"] = sharp->getDistanceCm();
-    st["obs"] = sharp->isTooClose() || (ir->detectedMask() != 0);
+    st["obs"] = sharp->isTooClose() || sharp->isSlowing() || (ir->detectedMask() != 0);
     st["tof_mm"] = tof->getDistanceMm();
     st["cyl"]    = CylinderActuator::stateName(cylinder->getState());
     st["cargo"]   = cargo && cargo->hasCargo();
