@@ -444,7 +444,7 @@ function SensorsTab() {
       {/* Distance */}
       <div className="grid grid-cols-2 gap-2">
         <DistanceCard label="SHARP" value={st.sharp} unit="cm" />
-        <DistanceCard label="TOF" value={st.tof_mm} unit="mm" big />
+        <DistanceCard label="LÙI (VL53L0X)" value={st.tof_mm} unit="mm" big />
       </div>
 
       {/* State chips */}
