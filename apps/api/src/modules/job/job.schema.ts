@@ -15,11 +15,8 @@ export enum JobStatus {
 
 export enum JobPhase {
   NONE = 'NONE',
-  NAVIGATE_PICKUP = 'NAVIGATE_PICKUP',
-  AT_PICKUP = 'AT_PICKUP',
-  CARRYING = 'CARRYING',
   NAVIGATE_DROPOFF = 'NAVIGATE_DROPOFF',
-  AT_DROPOFF = 'AT_DROPOFF',
+  AT_DOCK = 'AT_DOCK',
   UNLOADING = 'UNLOADING',
   RETURNING = 'RETURNING',
 }
@@ -28,11 +25,14 @@ export enum JobPhase {
 export class Job {
   _id!: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'Package', required: true })
-  packageId!: Types.ObjectId;
+  // ── Simplified AGV workflow: only destination slot matters. ─────────
+  // packageId and fromSlotCode remain optional in the schema so legacy jobs
+  // (pre-simplification) still hydrate and render on the Jobs page.
+  @Prop({ type: Types.ObjectId, ref: 'Package', required: false, default: null })
+  packageId?: Types.ObjectId | null;
 
-  @Prop({ required: true })
-  fromSlotCode!: string;
+  @Prop({ required: false, default: '' })
+  fromSlotCode?: string;
 
   @Prop({ required: true })
   toSlotCode!: string;

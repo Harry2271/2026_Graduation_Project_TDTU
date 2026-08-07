@@ -51,6 +51,7 @@ class Esp32Bridge(Protocol):
                          operation_id: str | None = None) -> None: ...
     async def cancel_dock(self) -> None: ...
     async def get_unload_state(self) -> dict: ...
+    async def get_cargo(self) -> dict: ...
     def battery_pct(self) -> Optional[float]: ...
     def battery_voltage(self) -> Optional[float]: ...
     def battery_current(self) -> Optional[float]: ...
@@ -138,6 +139,7 @@ class FakeEsp32Bridge:
         self.on_error: Callable[[str], None] = lambda _msg: None
         self.on_alive: Callable[[dict], None] = lambda _data: None
         self.on_unload_state: Callable[[dict], None] = lambda _data: None
+        self.on_cargo: Callable[[dict], None] = lambda _data: None
 
         # Cached unload state (type 140) so async callers can poll it
         # without going through the callback.  Updated from _handle_line().
@@ -215,6 +217,9 @@ class FakeEsp32Bridge:
         await self._send({'cmd': 'cancel_dock'})
 
     async def get_unload_state(self) -> dict:
+        return {}
+
+    async def get_cargo(self) -> dict:
         return {}
 
     def battery_pct(self) -> Optional[float]:
@@ -310,6 +315,7 @@ class RealEsp32Bridge:
     TYPE_TOF         = 138
     TYPE_UNLOAD_STATE = 140
     TYPE_ALIVE       = 141  # Always-fire 500 ms heartbeat from ESP32
+    TYPE_CARGO       = 145  # Cargo microswitch state (on-demand query)
 
     # Best-effort cap on a single JSON line — keeps memory bounded if ESP32
     # ever goes into a runaway write loop.  Status JSON is ~700 bytes; power
@@ -343,11 +349,17 @@ class RealEsp32Bridge:
         self.on_error: Callable[[str], None] = lambda _msg: None
         self.on_alive: Callable[[dict], None] = lambda _data: None
         self.on_unload_state: Callable[[dict], None] = lambda _data: None
+        self.on_cargo: Callable[[dict], None] = lambda _data: None
 
         # Cached unload state (type 140) so async callers can poll it
         # without going through the callback.  Updated from _handle_line().
         self._last_unload_state: dict = {}
         self._last_unload_state_ms: float = 0.0
+
+        # Cached cargo presence (type 145).  Used by brain to detect when
+        # a new package is placed on the bed after returning home.
+        self._last_cargo: dict = {}
+        self._last_cargo_ms: float = 0.0
 
         # Cached power telemetry (type 133) for battery health reporting.
         self._last_power: dict = {}
@@ -445,6 +457,30 @@ class RealEsp32Bridge:
     async def get_unload_state(self) -> dict:
         """Return the most recent type-140 unload state frame."""
         return dict(self._last_unload_state)
+
+    async def get_cargo(self) -> dict:
+        """Send `{"cmd":"get_cargo"}` and return the most recent type-145 frame.
+
+        The firmware replies on demand (within ~10 ms).  Callers can also
+        poll `last_cargo` for the cached value without sending the command.
+        """
+        await self._send_line({'cmd': 'get_cargo'})
+        return dict(self._last_cargo)
+
+    @property
+    def last_cargo(self) -> dict:
+        """Latest cargo presence dict (type 145), empty when none received."""
+        return dict(self._last_cargo)
+
+    @property
+    def cargo_present(self) -> Optional[bool]:
+        """Convenience: True/False from cached type 145, None when stale."""
+        if not self._last_cargo:
+            return None
+        import time as _t
+        if (_t.monotonic() - self._last_cargo_ms) > 5.0:
+            return None
+        return bool(self._last_cargo.get('present'))
 
     @property
     def last_unload_state(self) -> dict:
@@ -642,6 +678,13 @@ class RealEsp32Bridge:
             self._last_unload_state = data
             self._last_unload_state_ms = _t.monotonic()
             self._safe_call(self.on_unload_state, data)
+        elif msg_type == self.TYPE_CARGO:
+            # Cargo microswitch state (type 145).  Cache so the brain can
+            # detect "cargo arrived" rising edge without re-asking the ESP32.
+            import time as _t
+            self._last_cargo = data
+            self._last_cargo_ms = _t.monotonic()
+            self._safe_call(self.on_cargo, data)
         elif msg_type == self.TYPE_POWER:
             # INA226 battery telemetry (type 133). Cache for odom_node AND
             # notify any subscribers (e.g. web_bridge / telemetry node).

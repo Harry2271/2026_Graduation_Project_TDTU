@@ -148,6 +148,16 @@ class BrainApiClient:
             return
         await self._sio.emit('robot:health', {}, namespace='/robot')
 
+    async def emit_cargo_ready(self) -> None:
+        """Emit a cargo-ready event when a new package is detected on the bed.
+
+        The warehouse UI can use this to dispatch a delivery job to the
+        robot, or to show a 'cargo detected' indicator.
+        """
+        if not self._connected:
+            return
+        await self._sio.emit('robot:cargo_ready', {}, namespace='/robot')
+
     async def emit_job_timing(self, job_id: str, timing: dict) -> None:
         """Emit delivery timing data to the API.
 

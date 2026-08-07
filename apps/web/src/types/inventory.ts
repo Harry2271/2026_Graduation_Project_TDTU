@@ -86,18 +86,17 @@ export type JobStatus = 'QUEUED' | 'DISPATCHED' | 'IN_PROGRESS' | 'COMPLETED' | 
 
 export type JobPhase =
   | 'NONE'
-  | 'NAVIGATE_PICKUP'
-  | 'AT_PICKUP'
-  | 'CARRYING'
   | 'NAVIGATE_DROPOFF'
-  | 'AT_DROPOFF'
+  | 'AT_DOCK'
   | 'UNLOADING'
   | 'RETURNING';
 
 export interface Job {
   _id: string;
-  packageId: string;
-  fromSlotCode: string;
+  // Simplified workflow — only destination is required. Legacy fields stay
+  // optional so existing rows (pre-simplification) still hydrate.
+  packageId?: string | null;
+  fromSlotCode?: string;
   toSlotCode: string;
   status: JobStatus;
   phase?: JobPhase;
@@ -121,7 +120,6 @@ export interface DispatchMoveResponse {
 }
 
 export interface DispatchMovePayload {
-  fromSlotCode: string;
   toSlotCode: string;
   operationId?: string;
 }

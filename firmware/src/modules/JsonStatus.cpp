@@ -11,6 +11,7 @@
 #include "SharpFrontSensor.h"
 #include "VL53L0XSensor.h"
 #include "CylinderActuator.h"
+#include "CargoSensor.h"
 #include "Watchdog.h"
 #include "config.h"
 
@@ -132,6 +133,7 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     BNO055Sensor* imu, INA226Sensor* power,
     IRProximitySensor* ir, SharpFrontSensor* sharp,
     VL53L0XSensor* tof, CylinderActuator* cylinder,
+    CargoSensor* cargo,
     int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
     bool e_stop, uint8_t max_pct)
 {
@@ -173,6 +175,7 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     st["obs"] = sharp->isTooClose() || (ir->detectedMask() != 0);
     st["tof_mm"] = tof->getDistanceMm();
     st["cyl"]    = CylinderActuator::stateName(cylinder->getState());
+    st["cargo"]   = cargo && cargo->hasCargo();
 
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) {

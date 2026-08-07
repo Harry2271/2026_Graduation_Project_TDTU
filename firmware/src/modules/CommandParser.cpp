@@ -156,6 +156,10 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
             out.type = CMD_FORCE_AUTO_ROAM;
             break;
 
+        case 'U': case 'u': {
+            out.type = CMD_GET_CARGO;
+        } break;
+
         case 'T': case 't': {
             out.type = CMD_TEST;
         } break;
@@ -352,6 +356,9 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     }
     else if (strcmp(cmd, "get_unload_state") == 0) {
         out.type = CMD_GET_UNLOAD_STATE;
+    }
+    else if (strcmp(cmd, "get_cargo") == 0) {
+        out.type = CMD_GET_CARGO;
     }
     else if (strcmp(cmd, "restart") == 0) {
         out.type = CMD_RESTART;

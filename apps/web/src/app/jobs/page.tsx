@@ -30,11 +30,8 @@ const STATUS_CONFIG: Record<JobStatus, { label: string; color: string; bg: strin
 
 const PHASE_CONFIG: Record<JobPhase, { label: string; color: string }> = {
   NONE:              { label: '—',          color: '#888' },
-  NAVIGATE_PICKUP:   { label: 'Đến lấy',    color: '#00d4ff' },
-  AT_PICKUP:         { label: 'Tại lấy',    color: '#ffb800' },
-  CARRYING:          { label: 'Đang chở',   color: '#ffb800' },
   NAVIGATE_DROPOFF:  { label: 'Đến đổ',     color: '#00d4ff' },
-  AT_DROPOFF:        { label: 'Tại đổ',     color: '#ffb800' },
+  AT_DOCK:           { label: 'Căn AprilTag', color: '#ffb800' },
   UNLOADING:         { label: 'Đang đổ',    color: '#a855f7' },
   RETURNING:         { label: 'Về nhà',     color: '#00ff88' },
 };
@@ -81,8 +78,8 @@ export default function JobsPage() {
       render: (_: unknown, record: Job) => (
         <div className="flex items-center gap-2">
           <Truck size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
-            {record.fromSlotCode}
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+            Home
           </span>
           <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>→</span>
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
@@ -124,16 +121,6 @@ export default function JobsPage() {
           </span>
         );
       },
-    },
-    {
-      title: <div className="flex items-center gap-1"><Timer size={12} />Đến lấy hàng</div>,
-      key: 'travelToPickup',
-      width: 110,
-      render: (_: unknown, record: Job) => (
-        <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>
-          {formatMs(record.travelToPickupMs)}
-        </span>
-      ),
     },
     {
       title: <div className="flex items-center gap-1"><Timer size={12} />Đến đổ hàng</div>,

@@ -122,13 +122,9 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Resolve slot coordinates so brain can navigate to actual map poses
-    const fromSlot = await this.shelfService.findSlotByCode(job.fromSlotCode);
+    // Resolve destination slot coordinates so brain can navigate to the map pose
     const toSlot = await this.shelfService.findSlotByCode(job.toSlotCode);
 
-    const pickup = fromSlot && fromSlot.slotX !== undefined
-      ? { x: fromSlot.slotX, y: fromSlot.slotY ?? 0, theta: fromSlot.facingTheta ?? 0 }
-      : null;
     const dropoff = toSlot && toSlot.slotX !== undefined
       ? { x: toSlot.slotX, y: toSlot.slotY ?? 0, theta: toSlot.facingTheta ?? 0, tag_id: toSlot.aprilTagId ?? null }
       : null;
@@ -136,13 +132,10 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.server.emit('job:dispatch', {
       _id: job._id,
       operationId: job.operationId,
-      packageId: job.packageId,
-      fromSlotCode: job.fromSlotCode,
       toSlotCode: job.toSlotCode,
-      pickup,
       dropoff,
       dock_distance_mm: 40,
     });
-    this.logger.log(`Dispatch ${job._id}: ${job.fromSlotCode}→${job.toSlotCode} pickup=${pickup ? 'ok' : 'none'} dropoff=${dropoff ? 'ok' : 'none'}`);
+    this.logger.log(`Dispatch ${job._id}: → ${job.toSlotCode} dropoff=${dropoff ? 'ok' : 'none'}`);
   }
 }

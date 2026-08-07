@@ -27,6 +27,7 @@
 #include "SharpFrontSensor.h"
 #include "VL53L0XSensor.h"
 #include "CylinderActuator.h"
+#include "CargoSensor.h"
 #include "JsonStatus.h"
 #include "HealthMonitor.h"
 #include "I2CBus.h"

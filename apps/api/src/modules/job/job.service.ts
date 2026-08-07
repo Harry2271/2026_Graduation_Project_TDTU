@@ -29,8 +29,11 @@ export class JobService {
   // ── Dispatch (transactional) ─────────────────────────────────────────────
 
   /**
-   * Validate → reserve both slots inside a MongoDB transaction →
+   * Validate → reserve destination slot inside a MongoDB transaction →
    * create job (QUEUED or DISPATCHED) → attempt immediate dispatch.
+   *
+   * Simplified workflow: robot drives from home directly to the destination
+   * slot (AprilTag-calibrated) and unloads. There is no source-slot pickup.
    *
    * Idempotency: if `operationId` matches an existing non-terminal job
    * that job is returned as-is (no duplicate created).
@@ -49,19 +52,12 @@ export class JobService {
     }
 
     // ── pre-validation (outside tx — lightweight reads) ───────────────────
-    const fromSlot = await this.shelfService.findSlotByCode(dto.fromSlotCode);
-    if (!fromSlot) throw new NotFoundException(`Không tìm thấy vị trí "${dto.fromSlotCode}"`);
-    if (fromSlot.status === SlotStatus.AVAILABLE || !fromSlot.packageId)
-      throw new NotFoundException(`Vị trí "${dto.fromSlotCode}" không có hàng hóa`);
-
     const toSlot = await this.shelfService.findSlotByCode(dto.toSlotCode);
     if (!toSlot) throw new NotFoundException(`Không tìm thấy vị trí đích "${dto.toSlotCode}"`);
-    if (toSlot.status === SlotStatus.OCCUPIED || toSlot.status === SlotStatus.TRANSIT)
-      throw new NotFoundException(`Vị trí đích "${dto.toSlotCode}" đã có hàng hóa`);
+    if (toSlot.status !== SlotStatus.AVAILABLE)
+      throw new NotFoundException(`Vị trí đích "${dto.toSlotCode}" không khả dụng (status=${toSlot.status})`);
 
-    const packageId = fromSlot.packageId;
-
-    // ── transaction: reserve slots + create job atomically ────────────────
+    // ── transaction: reserve dest slot + create job atomically ────────────
     const session = await this.connection.startSession();
     session.startTransaction({
       readConcern: { level: 'snapshot' },
@@ -69,25 +65,19 @@ export class JobService {
     });
 
     try {
-      // Re-check slot statuses inside tx snapshot to prevent TOCTOU races.
-      const freshFrom = await this.shelfService.findSlotByCode(dto.fromSlotCode, session);
+      // Re-check slot status inside tx snapshot to prevent TOCTOU races.
       const freshTo = await this.shelfService.findSlotByCode(dto.toSlotCode, session);
-      if (!freshFrom || freshFrom.status !== SlotStatus.OCCUPIED)
-        throw new Error('SOURCE_SLOT_NOT_AVAILABLE');
-      if (!freshTo || (freshTo.status !== SlotStatus.AVAILABLE && freshTo.status !== SlotStatus.RESERVED))
+      if (!freshTo || freshTo.status !== SlotStatus.AVAILABLE)
         throw new Error('DEST_SLOT_NOT_AVAILABLE');
 
-      await this.shelfService.updateSlotStatus(dto.fromSlotCode, SlotStatus.RESERVED, session);
       await this.shelfService.updateSlotStatus(dto.toSlotCode, SlotStatus.RESERVED, session);
 
       const [job] = await this.jobModel.create([{
-        packageId,
-        fromSlotCode: dto.fromSlotCode,
-        toSlotCode: dto.toSlotCode,
+        toSlotCode:  dto.toSlotCode,
         operationId: dto.operationId ?? randomUUID(),
-        status: JobStatus.QUEUED,
-        queuedAt: new Date(),
-        phase: JobPhase.NONE,
+        status:      JobStatus.QUEUED,
+        queuedAt:    new Date(),
+        phase:       JobPhase.NONE,
       }], { session });
 
       await session.commitTransaction();
@@ -96,12 +86,12 @@ export class JobService {
       // Attempt immediate dispatch (if brain is free and online).
       await this.tryDispatchNext();
 
-      this.logger.log(`Job ${job._id} queued: ${dto.fromSlotCode} → ${dto.toSlotCode}`);
+      this.logger.log(`Job ${job._id} queued: → ${dto.toSlotCode}`);
       return { jobId: job._id };
     } catch (err) {
       await session.abortTransaction();
-      if (err instanceof Error && (err.message === 'SOURCE_SLOT_NOT_AVAILABLE' || err.message === 'DEST_SLOT_NOT_AVAILABLE')) {
-        throw new NotFoundException(`Slot không khả dụng (đã có job khác đang xử lý)`);
+      if (err instanceof Error && err.message === 'DEST_SLOT_NOT_AVAILABLE') {
+        throw new NotFoundException(`Slot đích không khả dụng (đã có job khác đang xử lý)`);
       }
       throw err;
     } finally {
@@ -139,7 +129,7 @@ export class JobService {
     await this.robotGateway.dispatchJob(nextJob);
     this.robotService.markJobRunning(nextJob._id);
     this.eventsGateway.emitJobUpdated(nextJob);
-    this.logger.log(`Dispatched queued job ${nextJob._id}: ${nextJob.fromSlotCode} → ${nextJob.toSlotCode}`);
+    this.logger.log(`Dispatched queued job ${nextJob._id}: → ${nextJob.toSlotCode}`);
   }
 
   // ── CRUD helpers ────────────────────────────────────────────────────────
@@ -171,12 +161,9 @@ export class JobService {
       this.eventsGateway.emitJobUpdated(job);
 
       if (status === JobStatus.COMPLETED || status === JobStatus.FAILED) {
-        await this.shelfService.updateSlotStatus(job.fromSlotCode, SlotStatus.AVAILABLE);
-        if (status === JobStatus.COMPLETED) {
-          await this.shelfService.assignPackageToSlot(job.toSlotCode, job.packageId);
-        } else {
-          await this.shelfService.updateSlotStatus(job.toSlotCode, SlotStatus.AVAILABLE);
-        }
+        // No package is tracked by this workflow. Release the destination for
+        // the next unload after both success and failure.
+        await this.shelfService.updateSlotStatus(job.toSlotCode, SlotStatus.AVAILABLE);
         // Attempt next queued job after this one finishes.
         await this.tryDispatchNext();
       }
@@ -215,8 +202,8 @@ export class JobService {
     if (job.status === JobStatus.COMPLETED || job.status === JobStatus.CANCELLED)
       throw new NotFoundException(`Job "${jobId}" đã kết thúc`);
 
-    // Release reserved slots.
-    await this.shelfService.updateSlotStatus(job.fromSlotCode, SlotStatus.AVAILABLE);
+    // Release the destination reservation. There is no source slot in this
+    // unload-only workflow.
     await this.shelfService.updateSlotStatus(job.toSlotCode, SlotStatus.AVAILABLE);
 
     await this.jobModel.findByIdAndUpdate(jobId, {
