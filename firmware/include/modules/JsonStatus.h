@@ -12,6 +12,7 @@ class IRProximitySensor;
 class SharpFrontSensor;
 class VL53L0XSensor;
 class CylinderActuator;
+class CargoSensor;
 class PIDController;
 class MecanumDrive;
 class ModeManager;
@@ -54,6 +55,7 @@ public:
         BNO055Sensor* imu, INA226Sensor* power,
         IRProximitySensor* ir, SharpFrontSensor* sharp,
         VL53L0XSensor* tof, CylinderActuator* cylinder,
+        CargoSensor* cargo,
         int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
         bool e_stop, uint8_t max_pct);
 

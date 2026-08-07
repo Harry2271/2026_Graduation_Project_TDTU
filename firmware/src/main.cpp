@@ -47,6 +47,7 @@ IRProximitySensor g_ir;
 SharpFrontSensor g_sharp;
 VL53L0XSensor   g_tof;
 CylinderActuator g_cylinder;
+CargoSensor      g_cargo;
 
 // Module health monitor — detects stuck I2C sensors, triggers recovery,
 // emits type 142 health report every 1s + on state change
@@ -272,6 +273,9 @@ void setupHardware()
     // ---- Cylinder actuator (12V lift cylinder via L298N) ----
     g_cylinder.begin();
     Serial.println("  [OK]   Cylinder actuator");
+
+    // ---- Cargo sensor (microswitch on cargo bed) ----
+    g_cargo.begin();
 
     Serial.printf("\n");
     Serial.printf("=====================================================\n");
@@ -749,6 +753,10 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             handleUnloadState();
             break;
 
+        case CMD_GET_CARGO:
+            g_cargo.emitStatusJson();
+            break;
+
         case CMD_RESTART:
             // Graceful reboot.  Send an ACK first so the host knows
             // the command was accepted, then call ESP.restart() to
@@ -811,46 +819,6 @@ void readSerial()
         if (byte == '\n' || byte == '\0') {
             if (pos > 0) {
                 linebuf[pos] = '\0';
-                // Runtime I2C scan: send 'U' + Enter
-                if (pos == 1 && linebuf[0] == 'U') {
-                    Serial.println("[SCAN] Runtime I2C scan on GPIO10/11:");
-                    int found = 0;
-                    for (uint8_t addr = 1; addr < 127; addr++) {
-                        Wire.beginTransmission(addr);
-                        if (Wire.endTransmission() == 0) {
-                            Serial.printf("  0x%02X", addr);
-                            if (addr == 0x28) Serial.print(" (BNO055?)");
-                            else if (addr == 0x29) Serial.print(" (VL53L0X)");
-                            else if (addr == 0x40) Serial.print(" (INA226)");
-                            Serial.println();
-                            found++;
-                        }
-                    }
-                    Serial.printf("  Total: %d device(s)\n", found);
-
-                    // Also scan Arduino default ESP32 I2C pins GPIO21/22.
-                    // The standalone Arduino sketch uses Wire.begin(), which
-                    // may have tested the module on this alternate bus.
-                    Serial.println("[SCAN] Alternate I2C scan on GPIO21/22:");
-                    Wire.begin(21, 22);
-                    Wire.setClock(100000);
-                    Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
-                    int alt_found = 0;
-                    for (uint8_t addr = 1; addr < 127; addr++) {
-                        Wire.beginTransmission(addr);
-                        if (Wire.endTransmission() == 0) {
-                            Serial.printf("  0x%02X\n", addr);
-                            alt_found++;
-                        }
-                    }
-                    Serial.printf("  Total alternate: %d device(s)\n", alt_found);
-                    // Restore the project bus for all other modules.
-                    Wire.begin(BNO055_SDA_PIN, BNO055_SCL_PIN);
-                    Wire.setClock(BNO055_I2C_FREQ_HZ);
-                    Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
-                    pos = 0;
-                    continue;
-                }
                 Command cmd;
                 CommandType type = g_parser.parse(linebuf, cmd);
                 if (type != CMD_UNKNOWN) {
@@ -979,6 +947,7 @@ static void publishTelemetry(uint32_t now_ms)
         &g_modeManager, g_encoders, g_motors,
         &g_imu, &g_power, &g_ir, &g_sharp,
         &g_tof, &g_cylinder,
+        &g_cargo,
         g_nav_vx, g_nav_vy, g_nav_omega,
         g_e_stop_active, g_max_speed_pct);
     PiSerial.write(g_json_buf, n);
@@ -1153,6 +1122,9 @@ void pollLocalSensors(uint32_t now)
         g_obstacle.onObstacleEvent(ObstacleDirection::FRONT, now);
         g_local_obstacle_stop = true;
     }
+
+    // ---- Cargo sensor (microswitch, polled every tick) ----
+    g_cargo.update(now);
 
     // ---- Battery safety monitoring ----
     // TEMPORARILY DISABLED for bench testing without INA226 wiring.

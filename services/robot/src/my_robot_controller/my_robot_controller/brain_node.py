@@ -32,13 +32,12 @@ from my_robot_controller.esp32_bridge import (
 class BrainState(str, Enum):
     BOOT = 'BOOT'
     EXPLORE = 'EXPLORE'
+    EXPLORE_SEARCH_TAG = 'EXPLORE_SEARCH_TAG'
+    EXPLORE_REVERSE = 'EXPLORE_REVERSE'
     MAPPING_DONE = 'MAPPING_DONE'
     IDLE = 'IDLE'
-    JOB_NAV_TO_PICKUP = 'JOB_NAV_TO_PICKUP'
-    JOB_WAIT_FOR_CLEAR = 'JOB_WAIT_FOR_CLEAR'
     JOB_NAV_TO_DROPOFF = 'JOB_NAV_TO_DROPOFF'
     JOB_DOCK_UNLOAD = 'JOB_DOCK_UNLOAD'
-    JOB_PLACE = 'JOB_PLACE'
     JOB_RETURN_HOME = 'JOB_RETURN_HOME'
     E_STOP = 'E_STOP'
     ERROR = 'ERROR'
@@ -69,6 +68,19 @@ _JOB_RETRY_BACKOFF_S = 3.0 # seconds between retries
 # Whether to instantiate the real hardware bridge or the fake test double.
 # Set USE_REAL_BRIDGE=0 in the PM2 environment to force the fake for tests.
 USE_REAL_BRIDGE = os.environ.get('USE_REAL_BRIDGE', '1') not in ('0', 'false', 'False')
+
+# Explorer parameters (Tag search phase)
+EXPLORE_FWD_SPEED     = 60     # PWM forward speed during tag search
+EXPLORE_FWD_TIMEOUT_S = 30.0   # Max time searching forward before giving up
+EXPLORE_REVERSE_SPEED = -60    # PWM reverse speed
+EXPLORE_REVERSE_DIST_M = 1.0   # Reverse distance (m) after detecting AprilTag
+
+# Cargo sensor polling interval (seconds) — IDLE checks this often
+CARGO_POLL_INTERVAL_S = 2.0
+# After the ben is lowered and the package falls out, the cargo microswitch
+# must be released continuously before the cycle is considered complete.
+CARGO_RELEASE_TIMEOUT_S = 15.0
+CARGO_RELEASE_STABLE_S = 0.8
 
 
 class BrainNode(Node):
@@ -126,6 +138,15 @@ class BrainNode(Node):
         self._home_pose: tuple[float, float, float] | None = None
         self._home_pose_timer = self.create_timer(1.0, self._try_capture_home_pose)
         self._home_pose_captured = False
+
+        # Autonomous cargo workflow state.  The robot stays at home until
+        # the microswitch reports a package, then drives forward looking for
+        # any fresh AprilTag, reverses, unloads, and returns home.
+        self._autonomous_task: asyncio.Task[None] | None = None
+        self._cargo_poll_task: asyncio.Task[None] | None = None
+        self._cargo_present = False
+        self._last_cargo_poll = 0.0
+        self._autonomous_cycle_count = 0
 
         self.get_logger().info(f'brain_node started in state {self._state}')
 
@@ -403,6 +424,232 @@ class BrainNode(Node):
         self._latest_tag = None
 
     # ─────────────────────────────────────────────────────────────────
+    #  Cargo sensor: detect new cargo and emit cargo_ready event
+    # ─────────────────────────────────────────────────────────────────
+
+    async def _poll_cargo_sensor(self) -> None:
+        """Periodically poll ESP32 cargo microswitch.  When cargo is first
+        detected after being absent, emit 'robot:cargo_ready' to the API
+        so the warehouse UI knows the robot can accept a delivery job.
+
+        Called from `_job_worker_loop` on every tick while state is IDLE.
+        """
+        now = time.time()
+        if (now - self._last_cargo_poll) < CARGO_POLL_INTERVAL_S:
+            return
+        self._last_cargo_poll = now
+
+        try:
+            cargo = await self._bridge.get_cargo()
+        except Exception:
+            cargo = {}
+
+        present = bool(cargo.get('present', False))
+        if present and not self._cargo_present:
+            # Rising edge: cargo just arrived
+            self.get_logger().info('Cargo detected — emitting cargo_ready')
+            await self._api_client.emit_cargo_ready()
+            # Auto-start the autonomous explore cycle
+            if self._state == BrainState.IDLE and self._autonomous_task is None:
+                self._autonomous_task = asyncio.create_task(self._autonomous_cycle())
+
+        elif not present and self._cargo_present:
+            self.get_logger().info('Cargo removed — returning to idle')
+
+        self._cargo_present = present
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Autonomous explore: drive forward → find any AprilTag → reverse
+    # ─────────────────────────────────────────────────────────────────
+
+    async def _autonomous_cycle(self) -> None:
+        """Full autonomous delivery cycle triggered by cargo sensor.
+
+        Flow:
+          1. Drive forward from home (EXPLORE_SEARCH_TAG) scanning camera
+          2. Detect any AprilTag → immediately stop (tag_id from detection)
+          3. Reverse ~1 m (EXPLORE_REVERSE) to get clear of the shelf
+          4. Use Nav2 to go back home (JOB_RETURN_HOME)
+          5. Wait for next cargo (IDLE)
+        """
+        cycle = self._autonomous_cycle_count
+        self._autonomous_cycle_count += 1
+        self.get_logger().info(f'Autonomous cycle #{self._autonomous_cycle_count} started')
+
+        try:
+            # Phase 1: drive forward to search for any AprilTag
+            self.transition_to(BrainState.EXPLORE_SEARCH_TAG, f'cycle {self._autonomous_cycle_count}')
+            tag = await self._drive_and_search_tag()
+
+            if tag is None:
+                self.get_logger().warn('No AprilTag found — returning home')
+                await self._stop()
+                await self._return_home()
+                self.transition_to(BrainState.IDLE, 'explore failed, no tag')
+                self._clear_tag()
+                return
+
+            tag_id = tag.get('tag_id', 0)
+            self.get_logger().info(f'Tag {tag_id} detected — reversing before return')
+
+            # Phase 2: reverse away from the shelf/dropoff point
+            self.transition_to(BrainState.EXPLORE_REVERSE, f'tag {tag_id}')
+            await self._drive_reverse_distance(EXPLORE_REVERSE_DIST_M, EXPLORE_REVERSE_SPEED)
+
+            # Phase 3: unload — brain-controlled sequence so we can verify cargo
+            # release via the microswitch before retracting the ben.
+            #
+            # The firmware begin_dock() runs its own extend→hold→retract→leave
+            # state machine.  We do NOT use it here because it doesn't know
+            # about the cargo sensor.  Instead we drive the cylinder directly:
+            #   1. Extend the ben (cylinder_extend)
+            #   2. Wait for the cargo microswitch to release (cargo dropped)
+            #   3. Retract the ben (cylinder_retract)
+            #   4. Reverse away from the dock area
+            self.transition_to(BrainState.JOB_DOCK_UNLOAD, f'tag {tag_id}')
+
+            self.get_logger().info('Lowering ben to dump cargo...')
+            await self._bridge.cylinder_extend()
+
+            # Wait for cargo to actually fall off the bed (switch releases)
+            cargo_released = await self._wait_cargo_released()
+            if not cargo_released:
+                self.get_logger().warn('Cargo may still be on bed — retracting anyway')
+
+            # Retract the ben back to stowed position
+            self.get_logger().info('Retracting ben...')
+            await self._bridge.cylinder_retract()
+            await asyncio.sleep(4.0)  # wait for cylinder to fully retract
+
+            # Reverse away from the dock point
+            self.transition_to(BrainState.EXPLORE_REVERSE, f'after unload tag {tag_id}')
+            await self._drive_reverse_distance(EXPLORE_REVERSE_DIST_M, EXPLORE_REVERSE_SPEED)
+
+            # Phase 4: return home to wait for the next cargo
+            self.transition_to(BrainState.JOB_RETURN_HOME, 'after unload')
+            await self._return_home()
+            self.transition_to(BrainState.IDLE, f'cycle {self._autonomous_cycle_count} complete')
+
+        except Exception as e:
+            self.get_logger().error(f'Autonomous cycle failed: {e}')
+            await self._stop()
+            await self._return_home()
+            self.transition_to(BrainState.ERROR, 'autonomous cycle exception')
+        finally:
+            self._clear_tag()
+            self._autonomous_task = None
+
+    async def _drive_and_search_tag(self) -> Optional[dict]:
+        """Drive forward at EXPLORE_FWD_SPEED until ANY AprilTag is detected
+        or timeout is reached.
+
+        Returns the first fresh tag dict, or None on timeout.
+        """
+        self.get_logger().info('Driving forward to search for AprilTag...')
+        loop = asyncio.get_event_loop()
+        t0 = loop.time()
+
+        while (loop.time() - t0) < EXPLORE_FWD_TIMEOUT_S:
+            # Check for obstacle
+            if self._obstacle_blocking():
+                self.get_logger().warn('Obstacle during explore — pausing 1s')
+                await self._stop()
+                await asyncio.sleep(1.0)
+                continue
+
+            # Drive forward
+            await self._drive(EXPLORE_FWD_SPEED, 0.0, 0.0)
+            await asyncio.sleep(0.1)
+
+            # Check for any tag (tag_id = -1 matches all tags)
+            tag = self._get_any_tag()
+            if tag is not None:
+                await self._stop()
+                self.get_logger().info(
+                    f'Tag found during explore: id={tag.get("tag_id")} '
+                    f'dist={tag.get("z", 0):.2f}m')
+                return tag
+
+        await self._stop()
+        self.get_logger().warn(f'No AprilTag found after {EXPLORE_FWD_TIMEOUT_S}s')
+        return None
+
+    def _get_any_tag(self, max_age_s: float = 1.0) -> Optional[dict]:
+        """Return latest tag detection for ANY tag_id (used during explore)."""
+        if self._latest_tag is None:
+            return None
+        if (time.time() - self._latest_tag.get('_age', 0)) > max_age_s:
+            return None
+        return self._latest_tag
+
+    async def _drive_reverse_distance(self, distance_m: float, speed: int,
+                                      timeout_s: float = 10.0) -> None:
+        """Drive backward for approximately distance_m, using encoder delta
+        to measure how far we've traveled.
+
+        If encoders are unavailable, use a simple timed drive at the given speed.
+        The Pi sends the command; the ESP32 handles the PID loop.
+        """
+        # Simple timed approach: estimate time from speed and target distance
+        # At PWM 60, approximate robot speed ≈ 0.15 m/s (calibrate on real robot)
+        speed_factor = abs(speed) / 100.0
+        approx_v_mps = 0.15 * speed_factor  # rough estimate
+        if approx_v_mps < 0.02:
+            approx_v_mps = 0.02
+        drive_time_s = distance_m / approx_v_mps
+        drive_time_s = min(drive_time_s, timeout_s)
+
+        self.get_logger().info(
+            f'Reversing {distance_m:.1f}m at speed={speed} (~{drive_time_s:.1f}s)')
+        await self._drive(speed, 0.0, 0.0)
+        await asyncio.sleep(drive_time_s)
+        await self._stop()
+
+    async def _wait_cargo_released(self, timeout_s: float = CARGO_RELEASE_TIMEOUT_S,
+                                   stable_s: float = CARGO_RELEASE_STABLE_S) -> bool:
+        """After the ben is lowered (cylinder extend), wait until the cargo
+        microswitch shows the bed is empty (package has fallen out).
+
+        The switch must read 'empty' for `stable_s` consecutive seconds to
+        avoid false triggers from vibration during lowering.
+
+        Returns True when confirmed empty, False on timeout.
+        """
+        self.get_logger().info('Waiting for cargo switch to release (package dropped)...')
+        loop = asyncio.get_event_loop()
+        t0 = loop.time()
+        released_since: float | None = None
+
+        while (loop.time() - t0) < timeout_s:
+            try:
+                cargo = await self._bridge.get_cargo()
+            except Exception:
+                await asyncio.sleep(0.3)
+                continue
+
+            present = bool(cargo.get('present', False))
+
+            if not present:
+                if released_since is None:
+                    released_since = loop.time()
+                    self.get_logger().info('Cargo switch released — waiting for stability...')
+                elif (loop.time() - released_since) >= stable_s:
+                    elapsed = loop.time() - t0
+                    self.get_logger().info(
+                        f'Cargo confirmed dropped ({elapsed:.1f}s after lower)')
+                    return True
+            else:
+                # Switch still pressed — cargo still on bed
+                if released_since is not None:
+                    self.get_logger().info('Cargo switch re-pressed — restarting stability check')
+                released_since = None
+
+            await asyncio.sleep(0.2)
+
+        self.get_logger().warn(f'Cargo release timed out after {timeout_s}s — assuming dropped')
+        return False
+
+    # ─────────────────────────────────────────────────────────────────
     #  Obstacle avoidance: LiDAR + IR + Sharp fusion
     # ─────────────────────────────────────────────────────────────────
 
@@ -555,6 +802,19 @@ class BrainNode(Node):
         self.get_logger().info(f'Enqueue job {job_id} (op={op_id})')
         await self._job_queue.put(payload)
 
+    async def _cargo_poll_loop(self) -> None:
+        """Poll cargo presence while idle and trigger autonomous delivery."""
+        while rclpy.ok():
+            try:
+                if self._state == BrainState.IDLE and self._autonomous_task is None:
+                    await self._poll_cargo_sensor()
+                await asyncio.sleep(CARGO_POLL_INTERVAL_S)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                self.get_logger().warning(f'cargo poll failed: {exc}')
+                await asyncio.sleep(CARGO_POLL_INTERVAL_S)
+
     async def _job_worker_loop(self) -> None:
         """Single-consumer job execution loop.
 
@@ -597,9 +857,8 @@ class BrainNode(Node):
     async def _execute_job(self, job: dict, *, attempt: int = 1) -> None:
         """Walk the state machine with real ESP32 + Nav2 movement.
 
-        Job payload may include:
-          pickup:  {x, y, theta} — map-frame pose to navigate to
-          dropoff: {x, y, theta, tag_id} — tag_id triggers Apriltag docking
+        Job payload includes:
+          dropoff: {x, y, theta, tag_id} — map-frame pose and Apriltag dock
           dock_distance_mm: target distance for VL53L0X alignment (default 40)
           operationId: idempotency key for firmware dock sequence
 
@@ -613,10 +872,8 @@ class BrainNode(Node):
         # ── Timing: start clock ──────────────────────────────────────────
         t_start = time.time()
         t_started = datetime.now(timezone.utc).isoformat()
-        t_pickup_at: str | None = None
         t_dropoff_at: str | None = None
         t_unload_at: str | None = None
-        travel_to_pickup_ms: int = 0
         travel_to_dropoff_ms: int = 0
         unload_duration_ms: int = 0
 
@@ -624,45 +881,23 @@ class BrainNode(Node):
         # and the brain can still come up cleanly without a wired ESP32.
         await self.connect_bridge()
 
-        # ── Phase 1: Navigate to pickup ──────────────────────────────────
-        self.transition_to(BrainState.JOB_NAV_TO_PICKUP, f'job {job_id}')
-        await self._api_client.emit_job_status(job_id, 'IN_PROGRESS')
-        await self._api_client.emit_job_phase(job_id, 'NAVIGATE_PICKUP')
-
-        pickup = job.get('pickup', {})
-        if pickup:
-            reached = await self._nav_to_pose(
-                pickup.get('x', 0.0),
-                pickup.get('y', 0.0),
-                pickup.get('theta', 0.0))
-            if not reached:
-                raise RuntimeError(f'Nav2 failed to reach pickup ({pickup.get("x", 0)}, {pickup.get("y", 0)})')
-        else:
-            self.get_logger().warn('job has no pickup coords — pausing 5s')
-            await asyncio.sleep(5)
-
-        # ── Timing: arrived at pickup ────────────────────────────────────
-        t_pickup_at = datetime.now(timezone.utc).isoformat()
-        travel_to_pickup_ms = int((time.time() - t_start) * 1000)
-        self.get_logger().info(f'Timing: arrived at pickup after {travel_to_pickup_ms}ms')
-
-        # ── Phase 2: Navigate to dropoff ─────────────────────────────────
+        # ── Phase 1: Navigate directly from home to destination ──────────
         self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, f'job {job_id}')
+        await self._api_client.emit_job_status(job_id, 'IN_PROGRESS')
         await self._api_client.emit_job_phase(job_id, 'NAVIGATE_DROPOFF')
         t_dropoff_start = time.time()
-        dropoff = job.get('dropoff', {})
-        tag_id = dropoff.get('tag_id')  # None if no Apriltag dock needed
+        dropoff = job.get('dropoff') or {}
+        tag_id = dropoff.get('tag_id')
         target_mm = job.get('dock_distance_mm', 40)
 
-        if dropoff:
-            reached = await self._nav_to_pose(
-                dropoff.get('x', 0.0),
-                dropoff.get('y', 0.0),
-                dropoff.get('theta', 0.0))
-            if not reached:
-                raise RuntimeError(f'Nav2 failed to reach dropoff ({dropoff.get("x", 0)}, {dropoff.get("y", 0)})')
-        else:
-            await asyncio.sleep(5)
+        if 'x' not in dropoff or 'y' not in dropoff:
+            raise RuntimeError(f'Job {job_id} has no calibrated dropoff coordinates')
+        reached = await self._nav_to_pose(
+            dropoff.get('x', 0.0),
+            dropoff.get('y', 0.0),
+            dropoff.get('theta', 0.0))
+        if not reached:
+            raise RuntimeError(f'Nav2 failed to reach dropoff ({dropoff.get("x", 0)}, {dropoff.get("y", 0)})')
 
         # ── Timing: arrived at dropoff ───────────────────────────────────
         t_dropoff_at = datetime.now(timezone.utc).isoformat()
@@ -675,7 +910,7 @@ class BrainNode(Node):
         # 3a: Camera-based AprilTag alignment
         if tag_id is not None:
             self.transition_to(BrainState.JOB_DOCK_UNLOAD, f'job {job_id}')
-            await self._api_client.emit_job_phase(job_id, 'AT_PICKUP')
+            await self._api_client.emit_job_phase(job_id, 'AT_DOCK')
             dock_ok = await self._dock_align(tag_id, target_mm)
             if not dock_ok:
                 raise RuntimeError('Dock align failed')
@@ -710,12 +945,10 @@ class BrainNode(Node):
         # ── Timing: compute totals + send to API ────────────────────────
         timing = {
             'startedAt': t_started,
-            'pickupAt': t_pickup_at,
             'dropoffAt': t_dropoff_at,
             'unloadAt': t_unload_at,
             'totalDurationMs': delivery_duration_ms,
             'fullCycleDurationMs': full_cycle_duration_ms,
-            'travelToPickupMs': travel_to_pickup_ms,
             'travelToDropoffMs': travel_to_dropoff_ms,
             'unloadDurationMs': unload_duration_ms,
         }
@@ -883,6 +1116,9 @@ async def _run_async(node: BrainNode) -> None:
     # Start the serialized job worker (one queue, one consumer).
     node._job_worker_task = asyncio.create_task(node._job_worker_loop())
 
+    # Start the autonomous cargo poll loop (IDLE → detect cargo → drive cycle).
+    node._cargo_poll_task = asyncio.create_task(node._cargo_poll_loop())
+
     # Periodic health heartbeat to the API so the UI can show "brain alive".
     node._health_task = asyncio.create_task(node._health_heartbeat_loop())
 
@@ -901,8 +1137,8 @@ async def _run_async(node: BrainNode) -> None:
 
         await asyncio.sleep(0.1)
 
-    # Shutdown — cancel worker + health heartbeat before tearing down.
-    for task in (node._job_worker_task, node._health_task):
+    # Shutdown — cancel worker + health heartbeat + cargo poll before tearing down.
+    for task in (node._job_worker_task, node._cargo_poll_task, node._health_task):
         if task is not None and not task.done():
             task.cancel()
             try:

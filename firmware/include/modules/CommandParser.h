@@ -56,6 +56,9 @@ enum CommandType {
     CMD_CANCEL_DOCK,         // JSON: cancel_dock
     CMD_GET_UNLOAD_STATE,    // JSON: get_unload_state (response type 140)
 
+    // Cargo sensor (microswitch on cargo bed)
+    CMD_GET_CARGO,           // U — query cargo presence (response type 145)
+
     // System commands
     CMD_RESTART,             // JSON: restart — soft reboot via ESP.restart()
 };
