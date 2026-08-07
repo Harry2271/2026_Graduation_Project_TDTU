@@ -116,6 +116,9 @@ class BrainNode(Node):
         #     3. LiDAR triggers replanning / zone detection (global, 2m range)
         #
         self._lidar_min_front = float('inf')  # min distance in forward cone (m)
+        self._lidar_min_front_left = float('inf')   # [-45°, -15°]
+        self._lidar_min_front_center = float('inf')  # [-15°, +15°]
+        self._lidar_min_front_right = float('inf')  # [+15°, +45°]
         self._lidar_min_left = float('inf')
         self._lidar_min_right = float('inf')
         self._lidar_min_rear = float('inf')
@@ -554,8 +557,11 @@ class BrainNode(Node):
     # Max seconds the active-dodge loop may spend on a single obstacle
     # before giving up and reversing as a fallback.
     _DODGE_TIMEOUT_S = 5.0
-    # How many obstacle-escape attempts before backing off entirely
-    _DODGE_MAX_ATTEMPTS = 6
+    # How many obstacle-escape attempts before E-STOP.  Reduced from 6 to 3
+    # so the robot cannot loop forward-dodge-reverse-fallback forever when
+    # surrounded.  Counter is NOT reset on reverse fallback; it persists
+    # until the path is genuinely clear (no blocking sensors).
+    _DODGE_MAX_ATTEMPTS = 3
 
     async def _drive_and_search_tag(self) -> Optional[dict]:
         """Drive forward at EXPLORE_FWD_SPEED until ANY AprilTag is detected
@@ -595,13 +601,13 @@ class BrainNode(Node):
             # ── Obstacle detected: active dodge ──
             dodge_attempts += 1
             if dodge_attempts > self._DODGE_MAX_ATTEMPTS:
-                self.get_logger().warn(
-                    f'Obstacle dodge failed {dodge_attempts}x — trying reverse fallback')
-                await self._drive(-EXPLORE_FWD_SPEED, 0.0, 0.0)
-                await asyncio.sleep(1.0)
-                await self._stop()
-                dodge_attempts = 0
-                continue
+                # Hard cap on retries.  Reverse fallback counts as one attempt,
+                # so do not reset the counter.  E-stop and abort exploration.
+                self.get_logger().error(
+                    f'Exploration stuck after {dodge_attempts} dodge attempts '
+                    f'(>{self._DODGE_MAX_ATTEMPTS}) → E-STOP, abort exploration')
+                await self._bridge.stop()
+                return None
 
             escaped = await self._active_dodge()
             if escaped:
@@ -759,24 +765,33 @@ class BrainNode(Node):
             return best
 
         # Sector bounds (radians, robot frame)
-        # 4 zones ±90° from forward, with a 5° gap on the seam to avoid wrap
-        # Front  [-π/4, +π/4]
-        # Left   [+π/4, +3π/4]
-        # Rear   [+3π/4, -3π/4]  (wraps through ±π)
-        # Right  [-3π/4, -π/4]
+        # Front is split into 3 sub-zones for directional awareness:
+        #   front_left:   [-45°, -15°]  — detects obstacles at FL corner
+        #   front_center: [-15°, +15°]  — detects obstacles directly ahead
+        #   front_right:  [+15°, +45°]  — detects obstacles at FR corner
+        # Left   [+45°, +135°]
+        # Rear   [+135°, -135°]  (wraps through ±π)
+        # Right  [-135°, -45°]
         import math as _m
-        q = _m.pi / 4.0
-        f = _min_in_sector(-q, +q)
-        l = _min_in_sector(+q, 3 * q)
-        r = _min_in_sector(-3 * q, -q)
+        q = _m.pi / 4.0          # 45°
+        q3 = q / 3.0             # 15°
+
+        # Front sub-zones (non-overlapping, contiguous from -45° to +45°)
+        fl  = _min_in_sector(-q,    -q3)    # front-left:  [-45°, -15°]
+        fc  = _min_in_sector(-q3,   +q3)    # front-center: [-15°, +15°]
+        fr  = _min_in_sector(+q3,   +q)     # front-right: [+15°, +45°]
+
+        l = _min_in_sector(+q, 3 * q)       # left:  [+45°, +135°]
+        r = _min_in_sector(-3 * q, -q)       # right: [-135°, -45°]
         # Rear zone wraps: handle by reading both halves
         rear_a = _min_in_sector(3 * q, 0)
-        # Note: angle_max - angle_min < 2π so rear can also include end of scan
-        # if it doesn't fully wrap.  Combine: take min of two sectors.
         rear_b = _min_in_sector(-_m.pi, -3 * q)
         rear = min(rear_a, rear_b)
 
-        self._lidar_min_front = f
+        self._lidar_min_front_left = fl
+        self._lidar_min_front_center = fc
+        self._lidar_min_front_right = fr
+        self._lidar_min_front = min(fl, fc, fr)  # backward compat aggregate
         self._lidar_min_left = l
         self._lidar_min_right = r
         self._lidar_min_rear = rear
@@ -1110,19 +1125,29 @@ class BrainNode(Node):
         # Stale LiDAR → just trust IR
         li_stale = (time.time() - self._lidar_last_update) > 0.5
 
-        # LiDAR zone scores (front, left, right, rear)
+        # LiDAR zone scores — now using 3 front sub-zones + left/right/rear
         # During forward drive, rear is ignored (robot is moving away).
-        zones = {
-            'front': self._lidar_min_front if not li_stale else 99.0,
-            'left':  self._lidar_min_left  if not li_stale else 99.0,
-            'right': self._lidar_min_right if not li_stale else 99.0,
-            'rear':  self._lidar_min_rear  if not li_stale else 99.0,
-        }
+        _safe = 99.0 if li_stale else None  # sentinel for stale data
+
+        # Per-zone minimum distances (3 directional front + left/right/rear)
+        fl_dist = self._lidar_min_front_left if not li_stale else 99.0
+        fc_dist = self._lidar_min_front_center if not li_stale else 99.0
+        fr_dist = self._lidar_min_front_right if not li_stale else 99.0
+        l_dist  = self._lidar_min_left  if not li_stale else 99.0
+        r_dist  = self._lidar_min_right if not li_stale else 99.0
+        rr_dist = self._lidar_min_rear  if not li_stale else 99.0
 
         th = self._AVOID_THRESHOLD_SLOW
 
         # ── Layered distance scoring ──
-        score_z = {n: self._score_zone(d, th) for n, d in zones.items()}
+        score_z = {
+            'front_left':   self._score_zone(fl_dist, th),
+            'front_center': self._score_zone(fc_dist, th),
+            'front_right':  self._score_zone(fr_dist, th),
+            'left':         self._score_zone(l_dist, th),
+            'right':        self._score_zone(r_dist, th),
+            'rear':         self._score_zone(rr_dist, th),
+        }
 
         # ── IR-driven override: IR forces the side to be hostile ──
         # E18-D80NK is adjusted to 15cm.  A triggered side is therefore
@@ -1131,22 +1156,23 @@ class BrainNode(Node):
             if side in ir_pressed:
                 score_z[side] = -1.0
         if sharp_close:
-            score_z['front'] = -1.0
+            score_z['front_center'] = -1.0
 
         # ── Build candidate escape directions (mechanum-friendly) ──
         # Each candidate: name → (vx, vy, omega) + a scoring function.
         # Score is derived from the zones the candidate will pass through.
+        # Front-LEFT/RIGHT sub-zones replace the old monolithic 'front'.
         candidates = {
             # Straight options
-            'forward':      (score_z['front'], (100,   0,  0)),
+            'forward':      (score_z['front_center'], (100,   0,  0)),
             'backward':     (score_z['rear'],  (-100,  0,  0)),
             # Pure strafe
             'strafe_left':  (score_z['left'],  (0,   -100, 0)),
             'strafe_right': (score_z['right'], (0,   +100, 0)),
             # Forward-diagonal strafe (mecanum narrow-space squeeze)
-            'forward_left': (min(score_z['front'], score_z['left']),
+            'forward_left': (min(score_z['front_left'], score_z['left']),
                              (60,  -60, 0)),
-            'forward_right':(min(score_z['front'], score_z['right']),
+            'forward_right':(min(score_z['front_right'], score_z['right']),
                              (60,  +60, 0)),
             # Reverse-diagonal (used when surrounded)
             'reverse_left': (min(score_z['rear'], score_z['left']),
@@ -1284,9 +1310,14 @@ class BrainNode(Node):
                 self.get_logger().info(f'Path clear after attempt {attempt+1}')
                 return True
 
-        # After 3 attempts, just continue — Nav2 will handle the rest
-        self.get_logger().warn('Escape attempts exhausted — handing back to Nav2')
-        return False
+        # After 3 attempts: E-STOP and keep stopped.  Do NOT hand back
+        # to Nav2 — that would let it send the original goal command and
+        # drive the robot into the same wall again.
+        self.get_logger().error(
+            'Escape attempts exhausted after 3 tries → E-STOP '
+            '(Nav2 must not resume)')
+        await self._bridge.stop()
+        return True
 
     async def _nav_to_pose(self, x: float, y: float, theta: float) -> bool:
         """Drive to a map-frame pose via Nav2.
@@ -1301,7 +1332,24 @@ class BrainNode(Node):
           - Then let Nav2 take over
         """
         # Pre-flight: check LiDAR + ESP32 sensors before Nav2
-        if await self._replan_escape_if_blocked():
+        replan = await self._replan_escape_if_blocked()
+        if replan:
+            # If escape exhausted (e-stop) the path is permanently blocked.
+            # Distinguish from a successful 0.5 s escape: only sleep + continue
+            # if no e-stop is pending.  Without this gate, Nav2 would push
+            # the robot back into the same wall.
+            if self._esp32_obstacle_blocking():
+                self.get_logger().error(
+                    f'Nav2 aborted: ESP32 sensors still blocked at ({x:.2f}, {y:.2f})')
+                return False
+            # Check if LiDAR zones are all clear enough to attempt navigation
+            min_clear = min(self._lidar_min_front, self._lidar_min_left,
+                            self._lidar_min_right, self._lidar_min_rear)
+            if min_clear < self._AVOID_THRESHOLD_SLOW:
+                self.get_logger().error(
+                    f'Nav2 aborted: LiDAR zones still too close '
+                    f'(min={min_clear:.2f}m at ({x:.2f}, {y:.2f}))')
+                return False
             await asyncio.sleep(0.5)  # brief escape duration
 
         loop = asyncio.get_event_loop()

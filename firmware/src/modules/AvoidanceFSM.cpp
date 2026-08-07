@@ -12,7 +12,8 @@
 static const uint32_t EVALUATE_DURATION_MS    = 60;    // scan + decide
 static const uint32_t STRAFE_DURATION_MS     = 1000;  // strafe 1s
 static const uint32_t FRONT_STOP_TIMEOUT_MS  = 2000;  // max wait for clear
-static const uint32_t E_STOPPED_TIMEOUT_MS   = 5000;  // 5s before requiring reset
+// E_STOPPED is now a latch: once entered, the FSM stays stopped forever
+// until an explicit reset() call from Pi.  No auto-clear timeout.
 static const uint32_t REVERSE_TIMEOUT_MS     = 4000;  // max reverse time
 static const uint32_t ROAM_RECHECK_MS        = 100;    // recheck sensors while roaming
 
@@ -458,19 +459,13 @@ AvoidanceAction AvoidanceFSM::tick(uint32_t now_ms,
         enterState(STATE_ROAMING, now_ms);
     }
 
-    // ── 4. Process E_STOPPED: wait for Pi reset ──
+    // ── 4. Process E_STOPPED: LATCH — stay stopped until explicit reset() ──
     if (state_ == STATE_E_STOPPED) {
-        if (getElapsed(now_ms) > E_STOPPED_TIMEOUT_MS) {
-            // Auto-clear after 5s (try to roam again)
-            Serial.println("[AVOID] E-STOP auto-clear after 5s — retry");
-            reverse_attempts_ = 0;
-            rotate_attempts_ = 0;
-            enterState(STATE_ROAMING, now_ms);
-        } else {
-            // Stay stopped
-            AvoidanceAction a = {0, 0, 0, true, "e_stopped"};
-            return a;
-        }
+        // No auto-clear: the robot is physically surrounded or exhausted
+        // all escape attempts.  Only an explicit reset() call from Pi
+        // (via UART command) can release this state.
+        AvoidanceAction a = {0, 0, 0, true, "e_stopped"};
+        return a;
     }
 
     // ── 5. State machine switch ──
