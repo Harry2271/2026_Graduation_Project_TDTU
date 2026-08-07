@@ -10,6 +10,11 @@
 #include "IRProximitySensor.h"
 #include "SharpFrontSensor.h"
 #include "VL53L0XSensor.h"
+
+#include <math.h>
+#ifndef DEG_TO_RAD
+#define DEG_TO_RAD (3.14159265358979323846f / 180.0f)
+#endif
 #include "CylinderActuator.h"
 #include "CargoSensor.h"
 #include "Watchdog.h"
@@ -234,6 +239,15 @@ size_t JsonStatus::emitObstacle(char* buf, size_t bufsize,
 
 // =======================================================================
 // Type 134 — IMU
+//
+// Payload (front-end contract — apps/web/src/app/trajectory/page.tsx):
+//   ts:     ms (ESP32 uptime)
+//   q:      [w, x, y, z]  unit quaternion
+//   accel:  [x, y, z]     m/s²  (gravity removed by BNO055 NDOF fusion)
+//   gyro:   [x, y, z]     deg/s
+//   heading: degrees
+//   temp_c: temperature
+//   cal:    {sys, gyro, accel, mag}  0–3 each
 // =======================================================================
 size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
 {
@@ -242,11 +256,34 @@ size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
     doc["ts"]   = millis();
     JsonObject data = doc["data"].to<JsonObject>();
     if (imu->isOperational()) {
+        // ── Euler → Quaternion (ZYX intrinsic rotation order) ──
+        float h = imu->getHeading() * DEG_TO_RAD;   // yaw  (around Z)
+        float p = imu->getPitch()  * DEG_TO_RAD;    // pitch (around Y)
+        float r = imu->getRoll()   * DEG_TO_RAD;    // roll  (around X)
+        float ch = cosf(h / 2.0f), sh = sinf(h / 2.0f);
+        float cp = cosf(p / 2.0f), sp = sinf(p / 2.0f);
+        float cr = cosf(r / 2.0f), sr = sinf(r / 2.0f);
+        // q = qZ * qY * qX  (ZYX intrinsic)
+        JsonArray qArr = data["q"].to<JsonArray>();
+        qArr.add(ch * cp * cr + sh * sp * sr);    // w
+        qArr.add(ch * cp * sr - sh * sp * cr);    // x
+        qArr.add(ch * sp * cr + sh * cp * sr);    // y
+        qArr.add(sh * cp * cr - ch * sp * sr);    // z
+
         data["heading"] = imu->getHeading();
         data["err"]     = imu->getHeadingError();
-        data["accel_x"] = imu->getLinearAccelX();
-        data["accel_y"] = imu->getLinearAccelY();
-        data["gyro_z"]  = imu->getGyroZ();
+
+        // ── 3-axis accel + gyro arrays (body frame) ──
+        JsonArray accelArr = data["accel"].to<JsonArray>();
+        accelArr.add(imu->getLinearAccelX());
+        accelArr.add(imu->getLinearAccelY());
+        accelArr.add(0.0f);                         // Z: flat-floor robot → ~0
+
+        JsonArray gyroArr = data["gyro"].to<JsonArray>();
+        gyroArr.add(imu->getGyroX());
+        gyroArr.add(imu->getGyroY());
+        gyroArr.add(imu->getGyroZ());
+
         data["temp_c"]  = imu->getTemperature();
         JsonObject cal = data["cal"].to<JsonObject>();
         cal["sys"]   = imu->getCalSys();
