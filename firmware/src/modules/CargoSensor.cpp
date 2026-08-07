@@ -9,7 +9,13 @@
 
 #define CARGO_SENSOR_PIN         36      // Free GPIO (BNO055 uses I2C, SPI MISO unused)
 #define CARGO_SENSOR_DEBOUNCE_MS 100     // 100 ms debounce for vibration rejection
-#define CARGO_PRESENT_LEVEL      LOW    // Microswitch: LOW = pressed (cargo on bed)
+// Limit switch wired as NO (normally open) + INPUT_PULLUP:
+//   NO connected between GPIO36 and GND.
+//   Switch open (no cargo) → pull-up → HIGH (logic 1)
+//   Switch pressed by cargo → shorted to GND → LOW  (logic 0)
+// User requires: HIGH = cargo present on bed.
+// Therefore cargo_present = (raw == HIGH).
+#define CARGO_PRESENT_LEVEL      HIGH
 
 CargoSensor::CargoSensor()
     : pin_(CARGO_SENSOR_PIN),
@@ -28,7 +34,7 @@ void CargoSensor::begin()
     present_ = raw_;
     last_change_ms_ = millis();
 
-    Serial.printf("  [OK]   Cargo sensor: microswitch on GPIO %d (%s)\n",
+    Serial.printf("  [OK]   Cargo limit switch: GPIO %d (%s)\n",
                   pin_, present_ ? "cargo detected at boot" : "bed empty at boot");
 }
 

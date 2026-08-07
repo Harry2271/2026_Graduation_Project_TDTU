@@ -77,8 +77,11 @@ EXPLORE_REVERSE_DIST_M = 1.0   # Reverse distance (m) after detecting AprilTag
 
 # Cargo sensor polling interval (seconds) — IDLE checks this often
 CARGO_POLL_INTERVAL_S = 2.0
-# After the ben is lowered and the package falls out, the cargo microswitch
-# must be released continuously before the cycle is considered complete.
+# After cargo is detected on the bed, wait this long before driving off.
+# Gives the operator time to step away / confirm placement.
+CARGO_STARTUP_DELAY_S = 20.0
+# After the ben is lowered and the package falls out, the cargo limit switch
+# must read LOW (empty) for this many seconds before we consider it dropped.
 CARGO_RELEASE_TIMEOUT_S = 15.0
 CARGO_RELEASE_STABLE_S = 0.8
 
@@ -428,11 +431,14 @@ class BrainNode(Node):
     # ─────────────────────────────────────────────────────────────────
 
     async def _poll_cargo_sensor(self) -> None:
-        """Periodically poll ESP32 cargo microswitch.  When cargo is first
-        detected after being absent, emit 'robot:cargo_ready' to the API
-        so the warehouse UI knows the robot can accept a delivery job.
+        """Periodically poll ESP32 cargo limit switch.  The switch wiring is:
+          - NO (normally open) between GPIO36 and GND
+          - INPUT_PULLUP, so HIGH = cargo on bed, LOW = empty
+        When cargo is first detected after being absent, emit
+        'robot:cargo_ready' to the API and start the autonomous cycle
+        (which includes a 20 s safety delay before driving off).
 
-        Called from `_job_worker_loop` on every tick while state is IDLE.
+        Called from `_cargo_poll_loop` while state is IDLE.
         """
         now = time.time()
         if (now - self._last_cargo_poll) < CARGO_POLL_INTERVAL_S:
@@ -466,17 +472,23 @@ class BrainNode(Node):
         """Full autonomous delivery cycle triggered by cargo sensor.
 
         Flow:
+          0. Wait 20 s after cargo is placed (safety delay)
           1. Drive forward from home (EXPLORE_SEARCH_TAG) scanning camera
-          2. Detect any AprilTag → immediately stop (tag_id from detection)
-          3. Reverse ~1 m (EXPLORE_REVERSE) to get clear of the shelf
-          4. Use Nav2 to go back home (JOB_RETURN_HOME)
-          5. Wait for next cargo (IDLE)
+          2. Detect any AprilTag → stop
+          3. Cylinder extend (lower ben) → wait for limit switch LOW (cargo gone)
+          4. Cylinder retract (raise ben) → reverse away
+          5. Return home (JOB_RETURN_HOME), wait for next cargo (IDLE)
         """
         cycle = self._autonomous_cycle_count
         self._autonomous_cycle_count += 1
         self.get_logger().info(f'Autonomous cycle #{self._autonomous_cycle_count} started')
 
         try:
+            # Phase 0: startup delay — give operator time to step away
+            self.get_logger().info(
+                f'Waiting {CARGO_STARTUP_DELAY_S}s before driving...')
+            await asyncio.sleep(CARGO_STARTUP_DELAY_S)
+
             # Phase 1: drive forward to search for any AprilTag
             self.transition_to(BrainState.EXPLORE_SEARCH_TAG, f'cycle {self._autonomous_cycle_count}')
             tag = await self._drive_and_search_tag()
