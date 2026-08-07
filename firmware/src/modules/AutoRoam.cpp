@@ -395,10 +395,17 @@ bool AutoRoam::compute(uint32_t now_ms,
     if (sharp_) sharp_->update(now_ms);
 
     // ----- Feed FSM with encoder delta + heading for state decisions -----
-    if (encoders && encoders[0].getCumulativeCount() != last_encoder_count_) {
-        int32_t delta = encoders[0].getCumulativeCount() - last_encoder_count_;
-        avoidance_fsm_.feedEncoderDelta(delta);
-        last_encoder_count_ = encoders[0].getCumulativeCount();
+    // Always read the FL encoder and feed the delta, even if unchanged
+    // (delta will be 0 and harmlessly ignored).  The old code only fed
+    // when the count changed, which missed intermediate pulses between
+    // compute() calls when multiple PID updates fire per tick.
+    if (encoders) {
+        int32_t cur = encoders[0].getCumulativeCount();
+        int32_t delta = cur - last_encoder_count_;
+        if (delta != 0) {
+            avoidance_fsm_.feedEncoderDelta(delta);
+            last_encoder_count_ = cur;
+        }
     }
     if (imu_ && imu_->isOperational()) {
         avoidance_fsm_.feedHeading(imu_->getHeading());
@@ -447,11 +454,12 @@ bool AutoRoam::compute(uint32_t now_ms,
         out_vx = 0;
         out_vy = 0;
         out_omega = 0;
-        // Track hard_stop_ for backward compatibility (Sharp hard-stop)
-        if (action.description && strstr(action.description, "front_stop")) {
-            hard_stop_ = true;
-            sharp_clear_ms_ = now_ms;
-        }
+        // Legacy hard_stop_ flag: set whenever the FSM latches (front_stop
+        // or e_stopped state).  The old code used strstr on the description
+        // string, which was fragile — any new state name would break the
+        // check.  Now we rely solely on the FSM's hard_stop field.
+        hard_stop_ = true;
+        sharp_clear_ms_ = now_ms;
         return false;
     }
 
