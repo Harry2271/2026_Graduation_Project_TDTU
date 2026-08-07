@@ -19,6 +19,8 @@ Messages (Robot → Frontend):
   mode         | machine state (idle / mapping_active / live / etc)| on change
   esp32_status | raw ESP32 type-131 status frame                   | ~2 Hz
   esp32_encoder| raw ESP32 type-130 encoder snapshot               | on event
+  esp32_imu    | BNO055 type-134 quaternion+accel+gyro+heading     |  20 Hz
+  esp32_power  | INA226 type-133 voltage/current/power             |  0.2 Hz
   info         | device availability + current mode                |  0.2 Hz
   ping         | keepalive                                         |  0.2 Hz
   ack          | acknowledgment for every received command         | on event
@@ -90,6 +92,7 @@ class WebBridge(Node):
         self.create_subscription(String, '/mapping_status', self._on_mapping_status, 10)
         self.create_subscription(String, '/esp32/status', self._on_esp32_status, 10)
         self.create_subscription(String, '/esp32/encoder', self._on_esp32_encoder, 10)
+        self.create_subscription(String, '/esp32/imu', self._on_esp32_imu, 10)
         self.create_subscription(String, '/esp32/power', self._on_esp32_power, 10)
 
         # ── Timers ──────────────────────────────────────────────────────
@@ -220,6 +223,19 @@ class WebBridge(Node):
         except json.JSONDecodeError:
             return
         self._emit({'type': 'esp32_encoder', 'data': data})
+
+    def _on_esp32_imu(self, msg: String) -> None:
+        """Forward BNO055 type-134 telemetry to all WebSocket clients.
+
+        The trajectory page consumes this as ``esp32_imu``.  Keep the
+        payload unchanged so quaternion, acceleration, gyro and calibration
+        fields remain available for the browser-side 3D integrator.
+        """
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        self._emit({'type': 'esp32_imu', 'data': data})
 
     def _on_esp32_power(self, msg: String) -> None:
         """Forward INA226 type-133 power telemetry to all WebSocket clients.
