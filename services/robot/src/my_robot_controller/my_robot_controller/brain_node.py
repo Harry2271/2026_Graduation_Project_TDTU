@@ -551,29 +551,32 @@ class BrainNode(Node):
             self._clear_tag()
             self._autonomous_task = None
 
+    # Max seconds the active-dodge loop may spend on a single obstacle
+    # before giving up and reversing as a fallback.
+    _DODGE_TIMEOUT_S = 5.0
+    # How many obstacle-escape attempts before backing off entirely
+    _DODGE_MAX_ATTEMPTS = 6
+
     async def _drive_and_search_tag(self) -> Optional[dict]:
         """Drive forward at EXPLORE_FWD_SPEED until ANY AprilTag is detected
         or timeout is reached.
 
+        When an obstacle is detected, uses active mecanum dodge:
+          Case 1 (single side blocked): strafe to other side + slow forward
+          Case 2 (front + 1 side):      reverse + strafe to open side
+          Case 3 (front + 2 sides):     reverse + strafe (prefer right first)
+          Case 4 (fully surrounded):    reverse hard, rotate, retry
+
+        The robot always tries the shortest clearance path back to the
+        forward line of travel, then resumes scanning for the tag.
         Returns the first fresh tag dict, or None on timeout.
         """
         self.get_logger().info('Driving forward to search for AprilTag...')
         loop = asyncio.get_event_loop()
         t0 = loop.time()
+        dodge_attempts = 0
 
         while (loop.time() - t0) < EXPLORE_FWD_TIMEOUT_S:
-            # Check for obstacle
-            if self._obstacle_blocking():
-                self.get_logger().warn('Obstacle during explore — pausing 1s')
-                await self._stop()
-                await asyncio.sleep(1.0)
-                continue
-
-            # Drive forward
-            await self._drive(EXPLORE_FWD_SPEED, 0.0, 0.0)
-            await asyncio.sleep(0.1)
-
-            # Check for any tag (tag_id = -1 matches all tags)
             tag = self._get_any_tag()
             if tag is not None:
                 await self._stop()
@@ -582,9 +585,69 @@ class BrainNode(Node):
                     f'dist={tag.get("z", 0):.2f}m')
                 return tag
 
+            # No obstacle → drive forward
+            if not self._obstacle_blocking():
+                await self._drive(EXPLORE_FWD_SPEED, 0.0, 0.0)
+                await asyncio.sleep(0.1)
+                dodge_attempts = 0  # reset on clear driving
+                continue
+
+            # ── Obstacle detected: active dodge ──
+            dodge_attempts += 1
+            if dodge_attempts > self._DODGE_MAX_ATTEMPTS:
+                self.get_logger().warn(
+                    f'Obstacle dodge failed {dodge_attempts}x — trying reverse fallback')
+                await self._drive(-EXPLORE_FWD_SPEED, 0.0, 0.0)
+                await asyncio.sleep(1.0)
+                await self._stop()
+                dodge_attempts = 0
+                continue
+
+            escaped = await self._active_dodge()
+            if escaped:
+                self.get_logger().info('Dodge succeeded — resuming forward')
+                dodge_attempts = 0
+            else:
+                self.get_logger().warn('Dodge did not clear path — retrying')
+
         await self._stop()
         self.get_logger().warn(f'No AprilTag found after {EXPLORE_FWD_TIMEOUT_S}s')
         return None
+
+    async def _active_dodge(self) -> bool:
+        """Execute an obstacle escape maneuver based on current sensor data.
+
+        Returns True if the path was cleared (caller can resume forward),
+        False if blocked.
+        """
+        direction, score = self._score_escape_directions()
+
+        if direction == 'e_stop':
+            self.get_logger().error('All directions blocked — e_stop')
+            await self._bridge.stop()
+            return False
+
+        vx, vy, omega = self._velocity_for_direction(direction)
+        self.get_logger().info(
+            f'Dodge: dir={direction} score={score:.2f} → '
+            f'vx={vx:.0f} vy={vy:.0f} omega={omega:.0f}')
+
+        # Apply the escape maneuver
+        await self._drive(vx, vy, omega)
+        await asyncio.sleep(0.5)
+
+        # Re-evaluate: is the path actually clear now?
+        cleared = not self._obstacle_blocking()
+        if cleared:
+            return True
+
+        # Still blocked — rotate toward the freeest LiDAR zone
+        _, post_score = self._score_escape_directions()
+        if post_score > score:
+            # Second iteration found a better path
+            return True
+
+        return False
 
     def _get_any_tag(self, max_age_s: float = 1.0) -> Optional[dict]:
         """Return latest tag detection for ANY tag_id (used during explore)."""
@@ -972,73 +1035,197 @@ class BrainNode(Node):
     #  LiDAR Direction Scoring (Layer 2 global path planning)
     # ─────────────────────────────────────────────────────────────────
 
-    def _score_escape_directions(self) -> tuple[str, float]:
-        """Evaluate all 4 LiDAR zones + 4 mecanum directions, return (best_dir, score).
+    # ─────────────────────────────────────────────────────────────────
+    #  Escape-direction scoring for layered mecanum avoidance
+    # ─────────────────────────────────────────────────────────────────
+    # Distance thresholds (meters).  Layered response:
+    #   >= THRESHOLD_CLEAR  → free, roam
+    #   >= THRESHOLD_SLOW   → slow + bias away
+    #   <  THRESHOLD_SLOW   → forced escape — strafe/reverse/rotate
+    _AVOID_THRESHOLD_CLEAR = 2.0   # free enough to keep heading
+    _AVOID_THRESHOLD_SLOW  = 1.2   # creep / bias away
+    _AVOID_THRESHOLD_HARD  = 0.6   # reverse + rotate
+    _PREFER_RIGHT          = True  # user bias for tie-break
 
-        Direction names → ESP32 velocity (vx, vy, omega):
-          'forward':   (100, 0, 0)   — advance ahead
-          'backward':  (-100, 0, 0)  — reverse away
-          'strafe_left': (0, -100, 0) — dodge left
-          'strafe_right':(0, +100, 0) — dodge right
-          'rotate_ccw': (0, 0, -100) — rotate counter-clockwise
-          'rotate_cw':  (0, 0, +100) — rotate clockwise
+    @staticmethod
+    def _score_zone(zone_min: float, threshold: float) -> float:
+        """Linear scoring: 0.0 at 0m, 1.0 at `threshold`, 2.0 at 2*threshold.
+
+        Negative for blocked zones (< threshold).
         """
-        # Zone clearance scores (meters)
+        if zone_min is None:
+            return 0.5  # unknown → mild positive (don't pick last)
+        if zone_min < 0.0:
+            return -1.0
+        if zone_min >= 2 * threshold:
+            return 2.0
+        if zone_min >= threshold:
+            return 1.0 + (zone_min - threshold) / threshold
+        # Below threshold: linear penalty as we approach 0
+        return zone_min / threshold - 1.0  # in [-1.0, 0.0)
+
+    def _score_escape_directions(self) -> tuple[str, float]:
+        """Evaluate LiDAR zones + IR-side hint, return (best_dir, score).
+
+        Cases covered (matching user spec):
+          Case 1 — Single side IR hit (forward drive): the OTHER side is
+                    always preferred (per user). Rear sensors during
+                    forward motion are ignored.
+          Case 2 — ≥ 2 zones blocked: escape to the freer side and resume
+                    forward in the cleared corridor.
+          Case 3 — Front + sides all blocked: reverse + strafe (PREFER
+                    RIGHT FIRST), then rotate to clear.
+          Plus: large obstacles (LiDAR-detected) trigger avoidance from
+                any of the 8 escape directions. We pick the one with
+                the highest clearance.
+
+        Returns ('e_stop', 0.0) only when ALL LiDAR zones AND IR sensors
+        are blocked.
+        """
+        # Read IR mask from ESP32 status (cached by _on_esp32_status).
+        ir_pressed: set[str] = set()
+        ir_count = 0
+        if self._esp32_status:
+            st = self._esp32_status.get('st', {})
+            ir = st.get('ir', [False, False, False, False])
+            if isinstance(ir, list) and len(ir) >= 4:
+                # ir layout (per ESP32 type-131): [rl, rr, l, r]
+                ir_count = sum(1 for hit in ir[:4] if bool(hit))
+                if ir[0]: ir_pressed.add('left')   # rear-left → "left" side
+                if ir[1]: ir_pressed.add('right')
+                if ir[2]: ir_pressed.add('left')
+                if ir[3]: ir_pressed.add('right')
+        # Sharp very close (<30cm) → treat as front-blocked
+        sharp_close = False
+        if self._esp32_status:
+            sharp = self._esp32_status.get('st', {}).get('sharp', 999)
+            if isinstance(sharp, (int, float)) and 0 < sharp < 30:
+                sharp_close = True
+
+        # Stale LiDAR → just trust IR
+        li_stale = (time.time() - self._lidar_last_update) > 0.5
+
+        # LiDAR zone scores (front, left, right, rear)
+        # During forward drive, rear is ignored (robot is moving away).
         zones = {
-            'front': max(self._lidar_min_front, 0.0),
-            'left':  max(self._lidar_min_left, 0.0),
-            'right': max(self._lidar_min_right, 0.0),
-            'rear':  max(self._lidar_min_rear, 0.0),
+            'front': self._lidar_min_front if not li_stale else 99.0,
+            'left':  self._lidar_min_left  if not li_stale else 99.0,
+            'right': self._lidar_min_right if not li_stale else 99.0,
+            'rear':  self._lidar_min_rear  if not li_stale else 99.0,
         }
 
-        # Check stale data (>500ms) → don't trust zones
-        if (time.time() - self._lidar_last_update) > 0.5:
-            return 'forward', 0.0
+        th = self._AVOID_THRESHOLD_SLOW
 
-        # Score each direction by: min_dist + bonus for free zones
-        THRESHOLD = 1.5  # meters — trigger avoidance distance
+        # ── Layered distance scoring ──
+        score_z = {n: self._score_zone(d, th) for n, d in zones.items()}
 
-        def blocked(z): return z < THRESHOLD
-        def free(z):    return z >= THRESHOLD
+        # ── IR-driven override: IR forces the side to be hostile ──
+        for side in ('left', 'right'):
+            if side in ir_pressed:
+                score_z[side] = min(score_z[side], -0.5)
+        if sharp_close:
+            score_z['front'] = min(score_z['front'], -0.8)
 
-        directions = {
-            'forward':    zones['front'],
-            'left':       zones['left'],
-            'right':      zones['right'],
-            'backward':   zones['rear'],
-            'rotate_cw':  min(zones['right'], zones['rear']) * 0.7,   # rotate CW → go right+rear
-            'rotate_ccw': min(zones['left'], zones['rear']) * 0.7,   # rotate CCW → go left+rear
+        # ── Build candidate escape directions (mechanum-friendly) ──
+        # Each candidate: name → (vx, vy, omega) + a scoring function.
+        # Score is derived from the zones the candidate will pass through.
+        candidates = {
+            # Straight options
+            'forward':      (score_z['front'], (100,   0,  0)),
+            'backward':     (score_z['rear'],  (-100,  0,  0)),
+            # Pure strafe
+            'strafe_left':  (score_z['left'],  (0,   -100, 0)),
+            'strafe_right': (score_z['right'], (0,   +100, 0)),
+            # Forward-diagonal strafe (mecanum narrow-space squeeze)
+            'forward_left': (min(score_z['front'], score_z['left']),
+                             (60,  -60, 0)),
+            'forward_right':(min(score_z['front'], score_z['right']),
+                             (60,  +60, 0)),
+            # Reverse-diagonal (used when surrounded)
+            'reverse_left': (min(score_z['rear'], score_z['left']),
+                             (-60, -60, 0)),
+            'reverse_right':(min(score_z['rear'], score_z['right']),
+                             (-60, +60, 0)),
+            # Rotate after escaping
+            'rotate_ccw':   (min(score_z['left'], score_z['rear']) * 0.7,
+                             (0,   0,   -60)),
+            'rotate_cw':    (min(score_z['right'], score_z['rear']) * 0.7,
+                             (0,   0,   +60)),
         }
 
-        # Score each direction
-        scores = {}
-        for name, clearance in directions.items():
-            if clearance >= THRESHOLD:
-                # Free direction — bonus for clearance
-                scores[name] = clearance + 1.0
+        # ─────────────────────────────────────────────────────────────
+        # Hard e-stop: ALL 4 IR sensors triggered simultaneously
+        # (robot physically surrounded by IR-detectable obstacles).
+        # This is a genuine safety stop — no maneuver is safe.
+        # ─────────────────────────────────────────────────────────────
+        all_ir_blocked = (len(ir_pressed) >= 2 and sharp_close)
+        if all_ir_blocked:
+            self.get_logger().warn(
+                'E-STOP: all 4 IR + Sharp sensors triggered — '
+                'robot surrounded, all motion halted')
+            return 'e_stop', -2.0
+
+        # ─────────────────────────────────────────────────────────────
+        # Hard e-stop: ALL 4 LiDAR zones < 0.6m (no IR info, but
+        # LiDAR confirms complete surround at very close range).
+        # ─────────────────────────────────────────────────────────────
+        if not li_stale and min(zones.values()) < 0.6:
+            self.get_logger().warn(
+                'E-STOP: all LiDAR zones < 0.6m — robot surrounded')
+            return 'e_stop', -2.0
+
+        # ─────────────────────────────────────────────────────────────
+        # Per-direction tuning per the user's 3 cases:
+        # ─────────────────────────────────────────────────────────────
+
+        # Case 1 (single-side IR, forward drive): use strafe to other
+        # side, RESUME FORWARD when corridor is clear.
+        if (('left' in ir_pressed) ^ ('right' in ir_pressed)) and not sharp_close:
+            # Only ONE side blocked by IR → strafe to the OTHER side
+            if 'left' in ir_pressed:
+                candidates['strafe_right'] = (1.5, (0, +100, 0))
             else:
-                # Blocked direction — negative score
-                scores[name] = -1.0
+                candidates['strafe_left']  = (1.5, (0, -100, 0))
 
-        # Pick best
-        best_dir = max(scores, key=scores.get)
-        best_score = scores[best_dir]
+        # Case 3 (front + sides all blocked by IR/LiDAR, robot surrounded
+        # but NOT all-sensors-blocked — some side is technically free).
+        # PREFER RIGHT FIRST per user — bump reverse_right above reverse_left.
+        all_sides_blocked = (
+            (score_z['front'] < 0) and
+            (score_z['left'] < 0) and
+            (score_z['right'] < 0)
+        )
+        if all_sides_blocked:
+            if self._PREFER_RIGHT:
+                candidates['reverse_right'] = (1.0, (-60, +60, 0))
+                candidates['reverse_left']  = (0.8, (-60, -60, 0))
+            else:
+                candidates['reverse_left']  = (1.0, (-60, -60, 0))
+                candidates['reverse_right'] = (0.8, (-60, +60, 0))
 
-        # If all blocked → return 'e_stop'
-        if all(s < 0 for s in scores.values()):
-            return 'e_stop', 0.0
+        # ── Pick the best ──
+        best_name = max(candidates, key=lambda n: candidates[n][0])
+        best_score = candidates[best_name][0]
 
-        return best_dir, best_score
+        # Truly nothing reachable at all?
+        if best_score < -0.5:
+            return 'e_stop', -1.0
+
+        return best_name, best_score
 
     def _velocity_for_direction(self, direction: str) -> tuple[float, float, float]:
-        """Convert direction name to (vx, vy, omega)."""
+        """Convert direction name to (vx, vy, omega) (PWM units)."""
         VELOCITY_MAP = {
-            'forward':      (100, 0, 0),
-            'backward':     (-100, 0, 0),
-            'strafe_left':  (0, -100, 0),
-            'strafe_right': (0, 100, 0),
-            'rotate_ccw':   (0, 0, -100),
-            'rotate_cw':    (0, 0, 100),
+            'forward':       (100,    0,    0),
+            'backward':      (-100,   0,    0),
+            'strafe_left':   (  0, -100,    0),
+            'strafe_right':  (  0, +100,    0),
+            'forward_left':  ( 60,  -60,    0),
+            'forward_right': ( 60,  +60,    0),
+            'reverse_left':  (-60,  -60,    0),
+            'reverse_right': (-60,  +60,    0),
+            'rotate_ccw':    (  0,    0,  -60),
+            'rotate_cw':     (  0,    0,  +60),
         }
         return VELOCITY_MAP.get(direction, (0, 0, 0))
 
@@ -1051,35 +1238,48 @@ class BrainNode(Node):
 
         Returns True if sent an escape velocity, False if path is clear.
         On "e_stop" all zones blocked → sends hard stop.
+
+        Uses the mecanum-aware scoring from `_score_escape_directions`
+        and tries up to 3 escape iterations before giving up.
         """
-        # Refresh sensors first
         esp32_blocked = self._esp32_obstacle_blocking()
         if esp32_blocked:
-            # ESP32 layer 1 already handles this — just send stop
             self.get_logger().warn('ESP32 sensors blocked → stop')
             await self._bridge.stop()
             return True
 
-        direction, score = self._score_escape_directions()
-        if direction == 'e_stop':
-            self.get_logger().error('ALL zones blocked → E-STOP')
-            await self._bridge.stop()
-            return True
-
-        # Only override if LiDAR sees something close
-        THRESHOLD = 1.5
+        # Quick check: is anything actually close?
         min_clear = min(self._lidar_min_front, self._lidar_min_left,
-                         self._lidar_min_right, self._lidar_min_rear)
-        if min_clear >= THRESHOLD:
-            # Path clear → no override needed
+                        self._lidar_min_right, self._lidar_min_rear)
+        if min_clear >= self._AVOID_THRESHOLD_SLOW:
             return False
 
-        vx, vy, omega = self._velocity_for_direction(direction)
-        self.get_logger().info(
-            f'LiDAR replan: dir={direction} score={score:.2f} → '
-            f'vx={vx:.0f} vy={vy:.0f} omega={omega:.0f}')
-        await self._bridge.move(vx, vy, omega)
-        return True
+        # Try up to 3 escape maneuvers
+        for attempt in range(3):
+            direction, score = self._score_escape_directions()
+
+            if direction == 'e_stop':
+                self.get_logger().error(f'ALL zones blocked (attempt {attempt+1}) → E-STOP')
+                await self._bridge.stop()
+                return True
+
+            vx, vy, omega = self._velocity_for_direction(direction)
+            self.get_logger().info(
+                f'LiDAR replan [{attempt+1}]: dir={direction} score={score:.2f} → '
+                f'vx={vx:.0f} vy={vy:.0f} omega={omega:.0f}')
+            await self._bridge.move(vx, vy, omega)
+            await asyncio.sleep(0.4)
+
+            # Check if clear now
+            min_clear = min(self._lidar_min_front, self._lidar_min_left,
+                            self._lidar_min_right, self._lidar_min_rear)
+            if min_clear >= self._AVOID_THRESHOLD_CLEAR:
+                self.get_logger().info(f'Path clear after attempt {attempt+1}')
+                return True
+
+        # After 3 attempts, just continue — Nav2 will handle the rest
+        self.get_logger().warn('Escape attempts exhausted — handing back to Nav2')
+        return False
 
     async def _nav_to_pose(self, x: float, y: float, theta: float) -> bool:
         """Drive to a map-frame pose via Nav2.

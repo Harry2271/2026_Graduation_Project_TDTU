@@ -175,47 +175,127 @@ AvoidanceAction AvoidanceFSM::doStrafing()
         return a;
     }
 
-    // Decide direction based on which side(s) blocked.
-    // Strategy:
-    //   - LEFT blocked alone → strafe RIGHT (+vy)
-    //   - RIGHT blocked alone → strafe LEFT (-vy)
-    //   - FRONT+LEFT blocked → reverse slightly + strafe right
-    //   - FRONT+RIGHT blocked → reverse slightly + strafe left
-    //   - All three (incl front) → reverse hard + strafe
+    // ── Decode ALL sensors ──
+    // IR mask bits: 0=RL, 1=RR, 2=LEFT, 3=RIGHT
+    bool rl   = (ir_mask_ & 0x01) != 0;
+    bool rr   = (ir_mask_ & 0x02) != 0;
+    bool left = (ir_mask_ & 0x04) != 0;
+    bool right= (ir_mask_ & 0x08) != 0;
+    bool front= sharp_slowing_;  // Sharp < 60cm
 
-    bool left_blocked = (ir_mask_ & 0x04) != 0;
-    bool right_blocked = (ir_mask_ & 0x08) != 0;
-    bool front_blocked = (ir_mask_ & 0x10) != 0;
+    // Rear sensors (RL, RR) matter when reversing.
+    // During forward dodge, rear is ignored — robot is moving forward.
 
-    if (front_blocked && left_blocked && !right_blocked) {
-        // FRONT + LEFT → reverse + strafe right
-        a.vx = -SPEED_REVERSE_FROM_FRONT;
-        a.vy = +SPEED_STRAFE_FULL;
-        a.description = "strafe: reverse + right (F+L)";
-    } else if (front_blocked && right_blocked && !left_blocked) {
-        // FRONT + RIGHT → reverse + strafe left
-        a.vx = -SPEED_REVERSE_FROM_FRONT;
-        a.vy = -SPEED_STRAFE_FULL;
-        a.description = "strafe: reverse + left (F+R)";
-    } else if (front_blocked && left_blocked && right_blocked) {
-        // FRONT + both sides → reverse hard
+    // ── Determine which side has more free space ──
+    bool prefer_right = !right;        // if right is free, prefer it
+    if (right && !left) prefer_right = false;  // left is free → go left
+    // if both free → prefer right (user preference)
+    // if both blocked → handled separately
+
+    // ── CASE: Front only (no side IR) ──
+    if (front && !left && !right) {
+        // Front clear sides → reverse slightly then strafe to open side
+        a.vx = -SPEED_REVERSE_SLOW;
+        a.vy = prefer_right ? +SPEED_STRAFE_FULL : -SPEED_STRAFE_FULL;
+        a.description = prefer_right ? "front: rev+strafe R" : "front: rev+strafe L";
+        return a;
+    }
+
+    // ── CASE: Front + one side blocked ──
+    if (front && left && !right) {
+        // FRONT+LEFT → reverse + strafe right (only open side).
+        // Safety: if rear also blocked, replace reverse with rotate only
+        // to avoid backing into a rear obstacle.
+        if (rl || rr) {
+            // Rear blocked → cannot reverse; strafe right in-place
+            a.vx = 0;
+            a.vy = +SPEED_STRAFE_FULL;
+            a.description = "F+L+rear → strafe R (no rev)";
+        } else {
+            a.vx = -SPEED_REVERSE_FROM_FRONT;
+            a.vy = +SPEED_STRAFE_FULL;
+            a.description = "F+L → reverse+strafe R";
+        }
+        return a;
+    }
+    if (front && right && !left) {
+        // FRONT+RIGHT → reverse + strafe left.
+        // Same rear-safety check.
+        if (rl || rr) {
+            a.vx = 0;
+            a.vy = -SPEED_STRAFE_FULL;
+            a.description = "F+R+rear → strafe L (no rev)";
+        } else {
+            a.vx = -SPEED_REVERSE_FROM_FRONT;
+            a.vy = -SPEED_STRAFE_FULL;
+            a.description = "F+R → reverse+strafe L";
+        }
+        return a;
+    }
+
+    // ── CASE: Front + BOTH sides blocked (corner trap) ──
+    if (front && left && right) {
+        // If rear is also blocked → TRUE corner trap: e-stop (hard_stop).
+        // Robot cannot move in any direction safely.
+        if (rl || rr) {
+            a.hard_stop = true;
+            a.vx = 0;
+            a.vy = 0;
+            a.omega = 0;
+            a.description = "F+L+R+rear → E_STOP trapped";
+            enterState(STATE_E_STOPPED, now_ms);
+            return a;
+        }
+        // Front + both sides, rear clear → reverse hard, then rotate
         a.vx = -SPEED_REVERSE_NORMAL;
         a.vy = 0;
-        a.description = "strafe: reverse (F+L+R)";
-    } else if (left_blocked && !right_blocked) {
-        // LEFT only → strafe right with slow forward
+        a.description = "F+L+R → reverse hard";
+        return a;
+    }
+
+    // ── CASE: Side only (no front) ──
+    if (left && !right && !front) {
+        // LEFT only → strafe RIGHT + slow forward (case 1)
         a.vx = SPEED_STRAFE_SLOW;
         a.vy = +SPEED_STRAFE_FULL;
-        a.description = "strafe: right (L)";
-    } else if (right_blocked && !left_blocked) {
-        // RIGHT only → strafe left with slow forward
+        a.description = "L only → strafe R+fwd";
+        return a;
+    }
+    if (right && !left && !front) {
+        // RIGHT only → strafe LEFT + slow forward (case 1)
         a.vx = SPEED_STRAFE_SLOW;
         a.vy = -SPEED_STRAFE_FULL;
-        a.description = "strafe: left (R)";
-    } else {
-        // No obstacles anymore → done
-        enterState(STATE_EVALUATING, now_ms);
+        a.description = "R only → strafe L+fwd";
+        return a;
     }
+
+    // ── CASE: Both sides blocked (no front) — corridor ──
+    if (left && right && !front) {
+        // If all 4 IR sensors are triggered → robot is fully surrounded
+        // at close range (IR ~20cm).  Hard stop — no maneuver is safe.
+        if (rl && rr) {
+            a.hard_stop = true;
+            a.description = "all-IR → E_STOP surrounded";
+            enterState(STATE_E_STOPPED, now_ms);
+            return a;
+        }
+        // Both sides only → slow forward (squeeze through if narrow) or reverse
+        a.vx = SPEED_SLOW_FORWARD;
+        a.vy = 0;
+        a.description = "L+R → slow fwd squeeze";
+        return a;
+    }
+
+    // ── CASE: No obstacles anymore → done ──
+    if (!front && !left && !right) {
+        enterState(STATE_EVALUATING, now_ms);
+        return a;
+    }
+
+    // ── Fallback: strafe toward open side ──
+    a.vx = SPEED_STRAFE_SLOW;
+    a.vy = prefer_right ? +SPEED_STRAFE_FULL : -SPEED_STRAFE_FULL;
+    a.description = "fallback: strafe";
     return a;
 }
 
@@ -310,59 +390,38 @@ AvoidanceAction AvoidanceFSM::evaluate(uint32_t now_ms)
 {
     AvoidanceAction a = {0, 0, 0, false, "evaluate"};
 
-    // Encode obstacles:
-    //   bit 0: any IR
-    //   bit 1: IR_LEFT
-    //   bit 2: IR_RIGHT
-    //   bit 3: any rear IR
-    //   bit 4: Sharp slowing (15-60cm)
-    //   bit 5: Sharp too close (<15cm) handled separately in tick()
-    bool left_blocked  = (ir_mask_ & 0x04) != 0;
-    bool right_blocked = (ir_mask_ & 0x08) != 0;
-    bool rear_blocked  = (ir_mask_ & 0x03) != 0;
+    // Decode ALL IR sensors from mask (4-bit: bit0=RL, bit1=RR, bit2=L, bit3=R)
+    bool rear_left  = (ir_mask_ & 0x01) != 0;
+    bool rear_right = (ir_mask_ & 0x02) != 0;
+    bool left       = (ir_mask_ & 0x04) != 0;
+    bool right      = (ir_mask_ & 0x08) != 0;
+    bool front      = sharp_slowing_;  // Sharp < 60cm = front obstacle
+    bool any_ir     = (ir_mask_ != 0);
+    bool any_rear   = (rear_left || rear_right);
 
-    // --- Decision tree ---
-    int ir_count = (left_blocked ? 1 : 0) + (right_blocked ? 1 : 0);
-    bool front_slow = sharp_slowing_;
+    // ── Count free sides ──
+    // During forward driving, rear sensors are ignored (behind us).
+    // We only consider front + left + right for dodge decisions.
+    int free_count = 0;
+    if (!left)  free_count++;
+    if (!right) free_count++;
 
-    if (ir_count == 0 && !front_slow) {
-        // No obstacles anywhere → resume roaming
+    // ── Decision matrix ──
+
+    // CASE 1: Nothing blocked → resume roaming
+    if (!any_ir && !front) {
         enterState(STATE_ROAMING, now_ms);
         return a;
     }
 
-    // Sharp slowing only (no IR) → advance slowly
-    if (front_slow && ir_count == 0) {
+    // CASE 2: Sharp slowing only (no IR) → strafe to the clearer side
+    if (front && !any_ir) {
         enterState(STATE_STRAFING, now_ms);
         return a;
     }
 
-    // Sharp too close handled in tick() — we shouldn't be here.
-    // If Sharp slowing AND IR blocked → strafe
-    if (front_slow && ir_count > 0) {
-        enterState(STATE_STRAFING, now_ms);
-        return a;
-    }
-
-    // IR blocked (no front Sharp): decide based on count
-    if (ir_count == 1) {
-        // Single side blocked → strafe away
-        enterState(STATE_STRAFING, now_ms);
-        return a;
-    }
-
-    if (ir_count == 2) {
-        // Both sides blocked → need to reverse + rotate
-        Serial.println("[AVOID] both sides blocked — reverse+rotate");
-        reverse_pulse_now_ = 0;
-        reverse_start_pulse_ = 0;
-        reverse_target_pulse_ = REVERSE_PULSE_TARGET;
-        enterState(STATE_REVERSING, now_ms);
-        return a;
-    }
-
-    // Fallback → roam
-    enterState(STATE_ROAMING, now_ms);
+    // ── Cases 3-9: sensor combinations → use doStrafing() direction logic ──
+    enterState(STATE_STRAFING, now_ms);
     return a;
 }
 
