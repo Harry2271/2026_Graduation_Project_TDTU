@@ -16,9 +16,12 @@ setup(
         # Include launch files from launch/ (relative to package root)
         (os.path.join('share', package_name, 'launch'),
             sorted(glob('launch/*.py'))),
-        # Include config files from config/
+        # Include config files from config/ (nav2, slam, demo zones, etc.)
         (os.path.join('share', package_name, 'config'),
             sorted(glob('config/*.yaml'))),
+        # Also install demo_zones.yaml into package root for easy Python access
+        (os.path.join('share', package_name, 'config'),
+            sorted(glob('config/demo_zones.yaml'))),
         # Include URDF/Xacro files
         (os.path.join('share', package_name, 'urdf'),
             sorted(glob('urdf/*.xacro') + glob('urdf/*.urdf'))),

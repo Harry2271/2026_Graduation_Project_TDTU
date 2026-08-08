@@ -46,6 +46,7 @@ from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
+from geometry_msgs.msg import Twist
 from tf2_ros import Buffer, TransformListener
 
 HOST = '0.0.0.0'
@@ -66,15 +67,27 @@ STATE_LABELS = {
 
 
 class WebBridge(Node):
-    def __init__(self, msg_q: queue.Queue, cmd_q: queue.Queue) -> None:
+    def __init__(self, msg_q: queue.Queue, cmd_q: queue.Queue,
+                 teleop_q: queue.Queue, cylinder_q: queue.Queue,
+                 demo_q: queue.Queue, esp32_cmd_q: queue.Queue,
+                 navigate_q: queue.Queue) -> None:
         super().__init__('web_bridge')
         self.msg_q = msg_q
         self.cmd_q = cmd_q
+        self.teleop_q = teleop_q
+        self.cylinder_q = cylinder_q
+        self.demo_q = demo_q
+        self.esp32_cmd_q = esp32_cmd_q
+        self.navigate_q = navigate_q
 
         self.lidar_seen = False
         self.map_seen = False
         self.pose_seen = False
         self.mode = 'idle'
+        self._control_mode = 'MANUAL'
+        self._control_mode_pub = self.create_publisher(String, '/control/mode', 10)
+        self._control_mode_status_pub = self.create_publisher(String, '/control/mode_status', 10)
+        self.create_subscription(String, '/control/mode_status', self._on_control_mode_status, 10)
 
         # ── TF2 for pose extraction (replaces /odom subscription) ──────
         self.tf_buffer = Buffer()
@@ -85,6 +98,19 @@ class WebBridge(Node):
 
         # ── Subscriptions ───────────────────────────────────────────────
         self.cmd_pub = self.create_publisher(String, '/mapping/control', 10)
+        # Keyboard teleop from map page: web_bridge Twists → teleop_node → ESP32
+        self.teleop_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        # Cylinder commands: web_bridge → teleop_node (which owns serial port)
+        self.cylinder_pub = self.create_publisher(String, '/cylinder_cmd', 10)
+        # Direct ESP32 commands from web/desktop clients (stop, e_stop).
+        self.esp32_cmd_pub = self.create_publisher(String, '/esp32/cmd', 10)
+        # Demo commands/status for the four delivery zones.
+        self.demo_cmd_pub = self.create_publisher(String, '/demo/cmd', 10)
+        self.create_subscription(String, '/demo/status', self._on_demo_status, 10)
+        # Navigate commands: web_bridge → brain_node, and brain_node → results back.
+        self._navigate_cmd_pub = self.create_publisher(String, '/brain/navigate_cmd', 10)
+        self.create_subscription(String, '/brain/navigate_status', self._on_navigate_status, 10)
+        self.create_subscription(String, '/brain/navigate_result', self._on_navigate_result, 10)
         self.create_subscription(LaserScan, '/scan', self._on_scan, 10)
         self.create_subscription(OccupancyGrid, '/map_combined', self._on_map_layer, 10)
         self.create_subscription(OccupancyGrid, '/obstacle_layer', self._on_obstacle_layer, 10)
@@ -98,11 +124,44 @@ class WebBridge(Node):
         # ── Timers ──────────────────────────────────────────────────────
         self.create_timer(5.0, self._broadcast_info)
         self.create_timer(0.1, self._poll_commands)
+        self.create_timer(0.05, self._poll_teleop)
+        self.create_timer(0.05, self._poll_cylinder)
+        self.create_timer(0.1, self._poll_demo)
+        self.create_timer(0.05, self._poll_esp32_cmd)
+        self.create_timer(0.1, self._poll_navigate)
         self.create_timer(0.1, self._extract_and_emit_pose)  # 10 Hz pose from TF
 
         self.get_logger().info(f'WebBridge listening on ws://{HOST}:{PORT}')
         self._emit({'type': 'info', 'data': {
             'lidar': False, 'map': False, 'pose': False, 'mode': 'idle'}})
+
+    def _poll_navigate(self) -> None:
+        """Publish the newest operator navigation goal to brain_node."""
+        command = None
+        while True:
+            try:
+                command = self.navigate_q.get_nowait()
+            except queue.Empty:
+                break
+        if command is not None:
+            self._navigate_cmd_pub.publish(String(data=json.dumps(command)))
+            self.get_logger().info(f'Navigate command → /brain/navigate_cmd: {command}')
+
+    def _on_navigate_status(self, msg: String) -> None:
+        """Forward navigation progress from brain_node to WebSocket clients."""
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            data = {'state': msg.data}
+        self._emit({'type': 'navigate_status', 'data': data})
+
+    def _on_navigate_result(self, msg: String) -> None:
+        """Forward the terminal navigation result from brain_node."""
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            data = {'success': False, 'error': msg.data}
+        self._emit({'type': 'navigate_result', 'data': data})
 
     # ── Emit helpers ───────────────────────────────────────────────────────────
 
@@ -111,6 +170,17 @@ class WebBridge(Node):
             self.msg_q.put(msg, block=False)
         except queue.Full:
             pass
+
+    def _on_control_mode_status(self, msg: String) -> None:
+        """Forward mode status from brain/teleop to WebSocket clients."""
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            data = {'mode': msg.data}
+        mode = data.get('mode') if isinstance(data, dict) else None
+        if isinstance(mode, str):
+            self._control_mode = mode.upper()
+        self._emit({'type': 'control_mode_status', 'data': data})
 
     # ── Pose extraction from TF (replaces /odom subscription) ─────────────────
 
@@ -272,11 +342,79 @@ class WebBridge(Node):
             except Exception as e:
                 self.get_logger().error(f'Failed to publish command {cmd!r}: {e}')
 
+    def _poll_teleop(self) -> None:
+        """Drain teleop queue (latest-wins) and publish a single Twist on /cmd_vel."""
+        vx = vy = omega = 0
+        has_frame = False
+        while True:
+            try:
+                vx, vy, omega = self.teleop_q.get_nowait()
+                has_frame = True
+            except queue.Empty:
+                break
+        if has_frame:
+            t = Twist()
+            t.linear.x = float(vx) / 200.0   # teleop_node scales: vx = msg.linear.x * max_vx(200)
+            t.linear.y = float(vy) / 200.0
+            t.angular.z = float(omega) * math.pi / 200.0
+            self.teleop_pub.publish(t)
+
+    def _poll_cylinder(self) -> None:
+        """Drain cylinder queue (latest-wins) and publish String on /cylinder_cmd."""
+        action = None
+        while True:
+            try:
+                action = self.cylinder_q.get_nowait()
+            except queue.Empty:
+                break
+        if action is not None:
+            self.cylinder_pub.publish(String(data=action))
+            self.get_logger().info(f'Cylinder command → /cylinder_cmd: {action}')
+
+    def _on_demo_status(self, msg: String) -> None:
+        """Forward brain demo status to WebSocket clients."""
+        try:
+            self._emit({'type': 'demo_status', 'data': json.loads(msg.data)})
+        except json.JSONDecodeError:
+            self._emit({'type': 'demo_status', 'data': {'state': msg.data}})
+
+    def _poll_demo(self) -> None:
+        """Publish the latest demo command to brain_node."""
+        command = None
+        while True:
+            try:
+                command = self.demo_q.get_nowait()
+            except queue.Empty:
+                break
+        if command is not None:
+            self.demo_cmd_pub.publish(String(data=command))
+            self.get_logger().info(f'Demo command → /demo/cmd: {command}')
+
+    def _poll_esp32_cmd(self) -> None:
+        """Drain esp32 command queue and publish to /esp32/cmd."""
+        cmd = None
+        while True:
+            try:
+                cmd = self.esp32_cmd_q.get_nowait()
+            except queue.Empty:
+                break
+        if cmd is not None:
+            self.esp32_cmd_pub.publish(String(data=cmd))
+            self.get_logger().info(f'ESP32 command → /esp32/cmd: {cmd}')
+
 
 class WSServer:
-    def __init__(self, msg_q: queue.Queue, cmd_q: queue.Queue) -> None:
+    def __init__(self, msg_q: queue.Queue, cmd_q: queue.Queue,
+                 teleop_q: queue.Queue, cylinder_q: queue.Queue,
+                 demo_q: queue.Queue, esp32_cmd_q: queue.Queue,
+                 navigate_q: queue.Queue) -> None:
         self.msg_q = msg_q
         self.cmd_q = cmd_q
+        self.teleop_q = teleop_q      # (vx, vy, omega) tuples from browser keyboard
+        self.cylinder_q = cylinder_q   # 'extend'|'retract'|'stop' strings
+        self.demo_q = demo_q            # 'A'|'B'|'C'|'D'|'full'|'stop' strings
+        self.esp32_cmd_q = esp32_cmd_q  # direct ESP32 commands (JSON strings)
+        self.navigate_q = navigate_q    # {'x': float, 'y': float, 'theta': float}
         self.clients: set = set()
         self.running = True
 
@@ -321,10 +459,217 @@ class WSServer:
                         except Exception as send_err:
                             print(f'[WS] ack send failed: {send_err}')
 
+                    elif msg_type == 'teleop':
+                        # Keyboard teleop from /map page.
+                        # Only accepted in MANUAL mode.
+                        if self._control_mode != 'MANUAL':
+                            continue
+                        # Expect: { type: "teleop", vx, vy, omega }  (all numbers, may be floats)
+                        # We coerce to ints in [-255, 255] and queue them.
+                        # Latest-wins semantics: pollers drain the queue once per
+                        # tick, so a backlog of stale keyframes is dropped.
+                        try:
+                            vx = int(msg.get('vx', 0))
+                            vy = int(msg.get('vy', 0))
+                            omega = int(msg.get('omega', 0))
+                        except (TypeError, ValueError):
+                            vx, vy, omega = 0, 0, 0
+                        vx = max(-255, min(255, vx))
+                        vy = max(-255, min(255, vy))
+                        omega = max(-255, min(255, omega))
+                        # Drop everything except the freshest frame
+                        while True:
+                            try:
+                                self.teleop_q.get_nowait()
+                            except queue.Empty:
+                                break
+                        try:
+                            self.teleop_q.put_nowait((vx, vy, omega))
+                        except queue.Full:
+                            pass
+                        # No ack — keyboard teleop is fire-and-forget
+
+                    elif msg_type == 'cylinder':
+                        # Cylinder keyboard control from /map page.
+                        # Expect: { type: "cylinder", action: "extend"|"retract"|"stop" }
+                        action = msg.get('action', '')
+                        if action in ('extend', 'retract', 'stop'):
+                            # Drop stale frames; only keep the latest
+                            while True:
+                                try:
+                                    self.cylinder_q.get_nowait()
+                                except queue.Empty:
+                                    break
+                            try:
+                                self.cylinder_q.put_nowait(action)
+                            except queue.Full:
+                                pass
+                        else:
+                            print(f'[WS] cylinder: unknown action {action!r}')
+
+                    elif msg_type == 'control_mode':
+                        # Auto/Manual switch from /map page.
+                        # Payload: { type: 'control_mode', mode: 'AUTO'|'MANUAL' }
+                        requested = str(msg.get('mode', '')).strip().upper()
+                        if requested in ('AUTO', 'MANUAL'):
+                            self._control_mode = requested
+                            self._control_mode_pub.publish(String(data=requested))
+                            ack = {'type': 'ack', 'data': {
+                                'command': f'mode:{requested}', 'accepted': True}}
+                        else:
+                            ack = {'type': 'ack', 'data': {
+                                'command': f'mode:{requested}', 'accepted': False,
+                                'error': 'invalid mode'}}
+                        try:
+                            await connection.send(json.dumps(ack))
+                        except Exception as send_err:
+                            print(f'[WS] control_mode ack send failed: {send_err}')
+
+                    elif msg_type == 'demo':
+                        # Four-zone delivery demo commands.
+                        # Only accepted in AUTO mode.
+                        # Payload: { type: 'demo', action: 'A'|'B'|'C'|'D'|'full'|'stop' }
+                        if self._control_mode != 'AUTO':
+                            ack = {'type': 'ack', 'data': {
+                                'command': 'demo', 'accepted': False,
+                                'error': f'mode is {self._control_mode}, not AUTO'}}
+                            try:
+                                await connection.send(json.dumps(ack))
+                            except Exception:
+                                pass
+                            continue
+                        action = str(msg.get('action', '')).strip()
+                        valid_demo = {'A', 'B', 'C', 'D', 'full', 'stop'}
+                        if action in valid_demo:
+                            while True:
+                                try:
+                                    self.demo_q.get_nowait()
+                                except queue.Empty:
+                                    break
+                            try:
+                                self.demo_q.put_nowait(action)
+                                ack = {'type': 'ack', 'data': {
+                                    'command': f'demo:{action}', 'accepted': True}}
+                            except queue.Full:
+                                ack = {'type': 'ack', 'data': {
+                                    'command': f'demo:{action}', 'accepted': False,
+                                    'error': 'queue full'}}
+                        else:
+                            ack = {'type': 'ack', 'data': {
+                                'command': f'demo:{action}', 'accepted': False,
+                                'error': f'invalid demo action {action!r}'}}
+                        try:
+                            await connection.send(json.dumps(ack))
+                        except Exception as send_err:
+                            print(f'[WS] demo ack send failed: {send_err}')
+
+                    elif msg_type == 'esp32':
+                        # Direct ESP32 command from operator (desktop app or web).
+                        # Payload: { type: 'esp32', cmd: {cmd: 'stop'|'e_stop'|...} }
+                        # Always accepted regardless of mode (safety override).
+                        allowed = {'stop', 'e_stop', 'e_stop_clear',
+                                   'heartbeat', 'get_encoder'}
+                        cmd_obj = msg.get('cmd')
+                        if not isinstance(cmd_obj, dict):
+                            ack = {'type': 'ack', 'data': {
+                                'command': 'esp32', 'accepted': False,
+                                'error': 'cmd must be a JSON object'}}
+                        elif cmd_obj.get('cmd') not in allowed:
+                            ack = {'type': 'ack', 'data': {
+                                'command': 'esp32', 'accepted': False,
+                                'error': f'cmd not allow-listed: {cmd_obj.get("cmd")!r}'}}
+                        else:
+                            # Drop stale frames; only keep the latest
+                            while True:
+                                try:
+                                    self.esp32_cmd_q.get_nowait()
+                                except queue.Empty:
+                                    break
+                            try:
+                                self.esp32_cmd_q.put_nowait(
+                                    json.dumps(cmd_obj))
+                                ack = {'type': 'ack', 'data': {
+                                    'command': f'esp32:{cmd_obj.get("cmd")}',
+                                    'accepted': True}}
+                            except queue.Full:
+                                ack = {'type': 'ack', 'data': {
+                                    'command': f'esp32:{cmd_obj.get("cmd")}',
+                                    'accepted': False,
+                                    'error': 'queue full'}}
+                        try:
+                            await connection.send(json.dumps(ack))
+                        except Exception as send_err:
+                            print(f'[WS] esp32 ack send failed: {send_err}')
+
                     elif msg_type == 'ping':
                         pong = {'type': 'pong', 'data': {'ts': time.time()}}
                         try:
                             await connection.send(json.dumps(pong))
+                        except Exception:
+                            pass
+
+                    elif msg_type in ('navigate', 'navigate_home'):
+                        # Operator-initiated Nav2 goal from desktop / browser.
+                        # Only accepted in AUTO mode.
+                        # Payload (navigate): { x, y, theta }
+                        # Payload (navigate_home): { } — brain_node uses its captured home pose
+                        if self._control_mode != 'AUTO':
+                            ack = {'type': 'ack', 'data': {
+                                'command': msg_type, 'accepted': False,
+                                'error': f'mode is {self._control_mode}, not AUTO'}}
+                            try:
+                                await connection.send(json.dumps(ack))
+                            except Exception:
+                                pass
+                            continue
+
+                        if msg_type == 'navigate':
+                            try:
+                                x = float(msg.get('x', 0.0))
+                                y = float(msg.get('y', 0.0))
+                                theta = float(msg.get('theta', 0.0))
+                            except (TypeError, ValueError):
+                                x, y, theta = 0.0, 0.0, 0.0
+                            command = {'action': 'navigate',
+                                       'x': x, 'y': y, 'theta': theta}
+                        else:
+                            command = {'action': 'navigate_home'}
+
+                        # Drop stale frames so latest-wins applies
+                        while True:
+                            try:
+                                self.navigate_q.get_nowait()
+                            except queue.Empty:
+                                break
+                        try:
+                            self.navigate_q.put_nowait(command)
+                            ack = {'type': 'ack', 'data': {
+                                'command': msg_type, 'accepted': True,
+                                'queued': True,
+                                'goal': command}}
+                        except queue.Full:
+                            ack = {'type': 'ack', 'data': {
+                                'command': msg_type, 'accepted': False,
+                                'error': 'navigate queue full'}}
+                        try:
+                            await connection.send(json.dumps(ack))
+                        except Exception as send_err:
+                            print(f'[WS] {msg_type} ack send failed: {send_err}')
+
+                    elif msg_type == 'custom_map':
+                        # Client-side visualisation map: lines + grid.
+                        # Stored by web_bridge as a forward to subscribers
+                        # (e.g. brain_node could choose to display it on a
+                        # debug topic). We accept and ack — data is preserved
+                        # locally by the desktop app.
+                        data = msg.get('data', {}) if isinstance(msg, dict) else {}
+                        if not isinstance(data, dict):
+                            data = {}
+                        ack = {'type': 'ack', 'data': {
+                            'command': 'custom_map', 'accepted': True,
+                            'lines': len(data.get('lines', []))}}
+                        try:
+                            await connection.send(json.dumps(ack))
                         except Exception:
                             pass
 
@@ -372,13 +717,18 @@ class WSServer:
 def main() -> None:
     msg_q: queue.Queue = queue.Queue(maxsize=500)
     cmd_q: queue.Queue = queue.Queue(maxsize=20)
+    teleop_q: queue.Queue = queue.Queue(maxsize=4)
+    cylinder_q: queue.Queue = queue.Queue(maxsize=4)
+    demo_q: queue.Queue = queue.Queue(maxsize=4)
+    esp32_cmd_q: queue.Queue = queue.Queue(maxsize=4)
+    navigate_q: queue.Queue = queue.Queue(maxsize=4)
 
     def ros_spin() -> None:
         if rclpy.ok():
             rclpy.try_shutdown()
             time.sleep(0.5)
         rclpy.init()
-        node = WebBridge(msg_q, cmd_q)
+        node = WebBridge(msg_q, cmd_q, teleop_q, cylinder_q, demo_q, esp32_cmd_q, navigate_q)
         executor = rclpy.executors.MultiThreadedExecutor()
         executor.add_node(node)
         try:
@@ -394,7 +744,21 @@ def main() -> None:
     t.start()
     time.sleep(2)
 
-    srv = WSServer(msg_q, cmd_q)
+    srv = WSServer(msg_q, cmd_q, teleop_q, cylinder_q, demo_q, esp32_cmd_q, navigate_q)
+
+    # UDP discovery beacon — replies to desktop apps asking "find_pi" on port 9090.
+    async def _run_beacon() -> None:
+        try:
+            from .udp_beacon import DiscoveryBeacon
+            async def _info() -> dict:
+                return {'ws_port': 9091}
+            beacon = DiscoveryBeacon(get_info=_info)
+            await beacon.start()
+        except Exception as exc:
+            print(f'[UDP beacon] skipped: {exc}')
+
+    asyncio.create_task(_run_beacon())
+
     try:
         asyncio.run(srv.run())
     except KeyboardInterrupt:

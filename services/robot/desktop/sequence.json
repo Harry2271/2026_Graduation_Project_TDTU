@@ -1,0 +1,12 @@
+[
+  {
+    "type": "navigate_home"
+  },
+  {
+    "type": "navigate",
+    "waypoint_id": 1
+  },
+  {
+    "type": "navigate_home"
+  }
+]

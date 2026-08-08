@@ -25,7 +25,7 @@ from tf2_ros import Buffer, TransformListener
 
 from my_robot_controller.api_client import BrainApiClient
 from my_robot_controller.esp32_bridge import (
-    Esp32Bridge, FakeEsp32Bridge, open_esp32_bridge,
+    Esp32Bridge, FakeEsp32Bridge, MirrorBridge,
 )
 
 
@@ -69,6 +69,11 @@ _JOB_RETRY_BACKOFF_S = 3.0 # seconds between retries
 # Set USE_REAL_BRIDGE=0 in the PM2 environment to force the fake for tests.
 USE_REAL_BRIDGE = os.environ.get('USE_REAL_BRIDGE', '1') not in ('0', 'false', 'False')
 
+# Direction-A mirror mode: brain uses ROS /esp32/cmd topic to send commands,
+# telemetry_node owns serial and mirrors telemetry back.
+# Set USE_MIRROR_BRIDGE=1 in PM2 env for production (Pi 5).
+USE_MIRROR_BRIDGE = os.environ.get('USE_MIRROR_BRIDGE', '1') not in ('0', 'false', 'False')
+
 # Explorer parameters (Tag search phase)
 EXPLORE_FWD_SPEED     = 60     # PWM forward speed during tag search
 EXPLORE_FWD_TIMEOUT_S = 30.0   # Max time searching forward before giving up
@@ -85,12 +90,32 @@ CARGO_STARTUP_DELAY_S = 20.0
 CARGO_RELEASE_TIMEOUT_S = 15.0
 CARGO_RELEASE_STABLE_S = 0.8
 
+# ── Demo delivery zones (4 zones A/B/C/D for capstone demo) ─────────────────
+# Hard-coded coordinates suitable for the demo mat.  Each zone is 0.9×1.1 m
+# with a 15×15 cm AprilTag at the centre of its approach face.  The robot
+# navigates to the centroid, then uses AprilTag + VL53L0X to dock to the
+# precise ±3 cm unload position.
+#
+# Coordinates are in the map frame — they become valid once SLAM has built
+# a map in MAPPING mode and lifecycle has shifted to LIVE (AMCL).
+DEMO_ZONES: dict[str, dict] = {
+    'A': {'x': 1.00, 'y': 0.90, 'theta': 0.0, 'tag_id': 0, 'label': 'Khu A'},
+    'B': {'x': 2.40, 'y': 0.90, 'theta': 0.0, 'tag_id': 1, 'label': 'Khu B'},
+    'C': {'x': 1.00, 'y': 2.20, 'theta': 0.0, 'tag_id': 2, 'label': 'Khu C'},
+    'D': {'x': 2.40, 'y': 2.20, 'theta': 0.0, 'tag_id': 3, 'label': 'Khu D'},
+}
+DEMO_DOCK_DISTANCE_MM = 300   # VL53L0X target distance to dock body
+DEMO_DEMO_SEQUENCE = ['A', 'B', 'D', 'C']  # route that minimises total travel
+
 
 class BrainNode(Node):
     def __init__(self) -> None:
         super().__init__('brain')
         self._state: BrainState = BrainState.BOOT
-        self._bridge: Esp32Bridge = FakeEsp32Bridge()
+        # Direction-A production path: MirrorBridge publishes ROS commands;
+        # esp32_telemetry_node is the sole serial owner.
+        self._bridge: Esp32Bridge = (
+            MirrorBridge(self) if USE_MIRROR_BRIDGE else FakeEsp32Bridge())
         self._bridge_connected: bool = False
         self._api_client = BrainApiClient()
         self._api_client.on_job_dispatch(self._handle_job_dispatch)
@@ -105,6 +130,31 @@ class BrainNode(Node):
         self._latest_tag: Optional[dict] = None
         self._tag_sub = self.create_subscription(
             String, '/detected_tags', self._on_tag_detected, 10)
+
+        # ── Demo control: web_bridge → /demo/cmd (trigger zone or full run) ──
+        # Payload: 'A'|'B'|'C'|'D' → run deliver_to_zone once
+        # Payload: 'full'           → run_demo (S→A→B→D→C→S)
+        # Payload: 'stop'           → request cancel of current demo step
+        self._demo_pub = self.create_publisher(String, '/demo/status', 10)
+        self._demo_cmd_sub = self.create_subscription(
+            String, '/demo/cmd', self._on_demo_cmd, 10)
+        self._demo_task: asyncio.Task[None] | None = None
+        self._demo_cancel = False
+
+        # ── Operator navigation: web_bridge → /brain/navigate_cmd ──────────
+        # Payload JSON: {"action":"navigate","x":1.5,"y":2.0,"theta":0.0}
+        #         or : {"action":"navigate_home"}
+        # brain_node dispatches the goal to Nav2, publishes progress to
+        # /brain/navigate_status, and emits a terminal result on
+        # /brain/navigate_result.
+        self._navigate_status_pub = self.create_publisher(
+            String, '/brain/navigate_status', 10)
+        self._navigate_result_pub = self.create_publisher(
+            String, '/brain/navigate_result', 10)
+        self._navigate_cmd_sub = self.create_subscription(
+            String, '/brain/navigate_cmd', self._on_navigate_cmd, 10)
+        self._navigate_task: asyncio.Task[None] | None = None
+        self._navigate_cancel = False
 
         # ── Obstacle avoidance: LiDAR + ESP32 local sensors ──────────────
         #   LiDAR: /scan (LaserScan ~10 Hz) — global view
@@ -166,16 +216,34 @@ class BrainNode(Node):
         return self._state
 
     async def connect_bridge(self) -> None:
-        """Open the real ESP32 serial bridge. Safe to call repeatedly."""
+        """Open the real ESP32 serial bridge. Safe to call repeatedly.
+
+        Direction-A architecture: when USE_MIRROR_BRIDGE=1 (production),
+        brain_node does NOT open the serial device directly — it relies on
+        esp32_telemetry_node (started via PM2) being the sole serial owner
+        and forwarding commands via /esp32/cmd, returning telemetry via
+        /esp32/status and friends.  This call only marks the bridge ready.
+        """
         if self._bridge_connected:
             return
+
+        if USE_MIRROR_BRIDGE:
+            await self._bridge.connect()
+            self._bridge_connected = True
+            self.get_logger().info(
+                'Mirror bridge ready — using /esp32/cmd + /esp32/status topics '
+                '(serial owned by esp32_telemetry_node)')
+            return
+
         if not USE_REAL_BRIDGE:
             self.get_logger().info('USE_REAL_BRIDGE=0 — keeping FakeEsp32Bridge')
             self._bridge_connected = True
             return
 
+        # Legacy direct-serial path — kept only for dev/test
+        from my_robot_controller.esp32_bridge import open_esp32_bridge
         port = os.environ.get('ESP32_PORT', '/dev/robot-esp32')
-        self.get_logger().info(f'Connecting to ESP32 on {port}...')
+        self.get_logger().info(f'Connecting to ESP32 directly on {port}...')
         try:
             self._bridge = await open_esp32_bridge(port=port, baudrate=115200)
             await self._bridge.connect()
@@ -428,6 +496,239 @@ class BrainNode(Node):
     def _clear_tag(self) -> None:
         """Invalidate cached tag so a fresh scan is needed for the next dock."""
         self._latest_tag = None
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Four-zone delivery demo
+    # ─────────────────────────────────────────────────────────────────
+
+    def _publish_demo_status(self, state: str, zone: str = '',
+                             message: str = '') -> None:
+        """Publish a small JSON status frame for the map-page demo panel."""
+        payload = json.dumps({
+            'state': state,
+            'zone': zone,
+            'message': message,
+            'ts': time.time(),
+        })
+        self._demo_pub.publish(String(data=payload))
+
+    def _on_demo_cmd(self, msg: String) -> None:
+        """Start/cancel demo tasks from a ROS String command."""
+        command = msg.data.strip().upper()
+        if command == 'STOP':
+            self._demo_cancel = True
+            if self._demo_task is not None and not self._demo_task.done():
+                self._demo_task.cancel()
+            self.get_logger().warn('Demo stop requested')
+            self._publish_demo_status('STOPPED', message='Demo đã dừng')
+            return
+        if command == 'FULL':
+            if self._demo_task is not None and not self._demo_task.done():
+                self.get_logger().warn('Demo already running — ignoring FULL')
+                return
+            self._demo_cancel = False
+            self._demo_task = asyncio.create_task(self.run_demo())
+            return
+        if command in DEMO_ZONES:
+            if self._demo_task is not None and not self._demo_task.done():
+                self.get_logger().warn('Demo already running — ignoring zone command')
+                return
+            self._demo_cancel = False
+            self._demo_task = asyncio.create_task(self.deliver_to_zone(command))
+            return
+        self.get_logger().warn(f'Unknown demo command: {msg.data!r}')
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Operator navigation (WebSocket → Nav2)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _on_navigate_cmd(self, msg: String) -> None:
+        """Accept operator navigation commands via ROS from web_bridge.
+
+        Two accepted payloads:
+          {"action":"navigate", "x":float, "y":float, "theta":float}
+          {"action":"navigate_home"}
+        """
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().warn(f'navigate_cmd: bad JSON: {msg.data!r}')
+            return
+
+        action = payload.get('action', '')
+
+        if self._navigate_task is not None and not self._navigate_task.done():
+            self._navigate_cancel = True
+            self._navigate_task.cancel()
+            self.get_logger().warn('Previous operator navigation cancelled')
+
+        if action == 'navigate':
+            x = float(payload.get('x', 0.0))
+            y = float(payload.get('y', 0.0))
+            theta = float(payload.get('theta', 0.0))
+            self._navigate_cancel = False
+            self._navigate_task = asyncio.create_task(
+                self._operator_navigate(x, y, theta))
+        elif action == 'navigate_home':
+            self._navigate_cancel = False
+            self._navigate_task = asyncio.create_task(
+                self._operator_navigate_home())
+        else:
+            self.get_logger().warn(f'navigate_cmd: unknown action {action!r}')
+
+    def _publish_navigate_status(self, state: str, goal: dict | None = None) -> None:
+        payload = json.dumps({
+            'state': state,
+            'goal': goal,
+            'ts': time.time(),
+        })
+        self._navigate_status_pub.publish(String(data=payload))
+
+    def _publish_navigate_result(self, success: bool, duration_s: float = 0.0,
+                                 error: str = '') -> None:
+        payload = json.dumps({
+            'success': success,
+            'duration_s': round(duration_s, 2),
+            'error': error,
+            'ts': time.time(),
+        })
+        self._navigate_result_pub.publish(String(data=payload))
+
+    async def _operator_navigate(self, x: float, y: float, theta: float) -> None:
+        goal = {'x': round(x, 4), 'y': round(y, 4), 'theta': round(theta, 4)}
+        self.get_logger().info(f'Operator navigate → ({x:.2f}, {y:.2f}, θ={math.degrees(theta):.1f}°)')
+        self._publish_navigate_status('navigating', goal=goal)
+        t0 = time.time()
+
+        try:
+            self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, 'operator nav')
+            ok = await self._nav_to_pose(x, y, theta)
+            if self._navigate_cancel:
+                self.get_logger().info('Operator navigation was cancelled')
+                return
+            elapsed = time.time() - t0
+            if ok:
+                self.transition_to(BrainState.IDLE, 'operator nav complete')
+                self._publish_navigate_result(True, duration_s=elapsed)
+            else:
+                self.transition_to(BrainState.IDLE, 'operator nav failed')
+                self._publish_navigate_result(False, duration_s=elapsed,
+                                               error='nav failed or aborted')
+        except asyncio.CancelledError:
+            self.get_logger().info('Operator navigate task cancelled')
+            return
+        except Exception as exc:
+            elapsed = time.time() - t0
+            self.transition_to(BrainState.ERROR, 'operator nav exception')
+            self._publish_navigate_result(False, duration_s=elapsed, error=str(exc))
+            self.get_logger().error(f'Operator navigate failed: {exc}')
+
+    async def _operator_navigate_home(self) -> None:
+        self.get_logger().info('Operator navigate_home')
+        if self._home_pose is None:
+            self._publish_navigate_result(False, error='home pose not captured')
+            self.get_logger().warn('navigate_home: home pose not yet available')
+            return
+        hx, hy, ht = self._home_pose
+        await self._operator_navigate(hx, hy, ht)
+
+    async def deliver_to_zone(self, zone_id: str,
+                              return_home: bool = True) -> bool:
+        """Navigate to one configured zone, dock with its tag, and unload.
+
+        Nav2 handles the coarse map-frame trip.  AprilTag + VL53L0X provide
+        the final alignment, then the ESP32 firmware executes the guarded
+        cylinder unload sequence.  All failures stop the robot and are
+        reported on /demo/status; no stale Nav2 goal is allowed to continue.
+        """
+        zone_id = zone_id.upper()
+        zone = DEMO_ZONES.get(zone_id)
+        if zone is None:
+            self.get_logger().error(f'Unknown delivery zone {zone_id!r}')
+            return False
+
+        self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, f'demo zone {zone_id}')
+        self._publish_demo_status('NAVIGATING', zone_id,
+                                  f'Đang đi đến {zone["label"]}')
+        try:
+            await self.connect_bridge()
+            if self._demo_cancel:
+                return False
+
+            reached = await self._nav_to_pose(
+                zone['x'], zone['y'], zone['theta'])
+            if not reached:
+                raise RuntimeError('Nav2 không đến được tọa độ khu đổ hàng')
+
+            self._publish_demo_status('SEARCHING_TAG', zone_id,
+                                      f'Tìm AprilTag ID {zone["tag_id"]}')
+            self.transition_to(BrainState.JOB_DOCK_UNLOAD,
+                               f'demo zone {zone_id} tag')
+            self._clear_tag()
+            dock_ok = await self._dock_align(
+                zone['tag_id'], DEMO_DOCK_DISTANCE_MM, timeout_s=20.0)
+            if not dock_ok:
+                raise RuntimeError(f'Không căn được AprilTag ID {zone["tag_id"]}')
+
+            if self._demo_cancel:
+                return False
+            self._publish_demo_status('UNLOADING', zone_id,
+                                      'Đang đổ hàng bằng xy lanh')
+            await self._bridge.begin_dock(
+                zone['tag_id'], DEMO_DOCK_DISTANCE_MM,
+                facing_theta_deg=math.degrees(zone['theta']),
+                operation_id=f'demo-{zone_id}-{int(time.time())}')
+            if not await self._poll_unload_state():
+                raise RuntimeError('Firmware unload timeout')
+
+            self._clear_tag()
+            self.transition_to(BrainState.IDLE, f'demo zone {zone_id} complete')
+            self._publish_demo_status('COMPLETED', zone_id,
+                                      f'Đã đổ hàng tại {zone["label"]}')
+            if return_home:
+                self._publish_demo_status('RETURNING', zone_id, 'Đang về điểm S')
+                if not await self._return_home():
+                    raise RuntimeError('Không thể quay về điểm xuất phát')
+            await self._stop()
+            return True
+        except asyncio.CancelledError:
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'demo cancelled')
+            raise
+        except Exception as exc:
+            self.get_logger().error(f'Demo zone {zone_id} failed: {exc}')
+            await self._stop()
+            self.transition_to(BrainState.ERROR, f'demo zone {zone_id} failed')
+            self._publish_demo_status('FAILED', zone_id, str(exc))
+            return False
+
+    async def run_demo(self) -> bool:
+        """Run the short capstone route S→A→B→D→C→S."""
+        self._publish_demo_status('RUNNING', message='Bắt đầu demo A→B→D→C')
+        try:
+            for zone_id in DEMO_DEMO_SEQUENCE:
+                if self._demo_cancel:
+                    return False
+                if not await self.deliver_to_zone(zone_id, return_home=False):
+                    return False
+                await asyncio.sleep(1.0)
+            self._publish_demo_status('RETURNING', message='Đang về điểm xuất phát S')
+            returned = await self._return_home()
+            await self._stop()
+            if returned:
+                self.transition_to(BrainState.IDLE, 'full demo complete')
+                self._publish_demo_status('COMPLETED', message='Hoàn tất demo A→B→D→C')
+            return returned
+        except asyncio.CancelledError:
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'full demo cancelled')
+            raise
+        except Exception as exc:
+            self.get_logger().error(f'Full demo failed: {exc}')
+            await self._stop()
+            self.transition_to(BrainState.ERROR, 'full demo failed')
+            self._publish_demo_status('FAILED', message=str(exc))
+            return False
 
     # ─────────────────────────────────────────────────────────────────
     #  Cargo sensor: detect new cargo and emit cargo_ready event
@@ -1202,7 +1503,7 @@ class BrainNode(Node):
         # Hard e-stop: ALL 4 LiDAR zones < 0.6m (no IR info, but
         # LiDAR confirms complete surround at very close range).
         # ─────────────────────────────────────────────────────────────
-        if not li_stale and min(zones.values()) < 0.6:
+        if not li_stale and max(fl_dist, fc_dist, fr_dist, l_dist, r_dist, rr_dist) < 0.6:
             self.get_logger().warn(
                 'E-STOP: all LiDAR zones < 0.6m — robot surrounded')
             return 'e_stop', -2.0
@@ -1224,7 +1525,7 @@ class BrainNode(Node):
         # but NOT all-sensors-blocked — some side is technically free).
         # PREFER RIGHT FIRST per user — bump reverse_right above reverse_left.
         all_sides_blocked = (
-            (score_z['front'] < 0) and
+            (score_z['front_center'] < 0) and
             (score_z['left'] < 0) and
             (score_z['right'] < 0)
         )
