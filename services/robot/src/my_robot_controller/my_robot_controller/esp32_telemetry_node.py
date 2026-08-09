@@ -115,6 +115,15 @@ class Esp32TelemetryNode(Node):
         self._last_pending_move: dict | None = None
         self._bridge = None  # set later by _run_bridge
 
+        # ── CPS watchdog (on-robot) ───────────────────────────────────────
+        # Publishes /esp32/bridge_health periodically so consumers can react
+        # without parsing /esp32/status themselves.  Requires field validation
+        # by timing real serial drops / reconnects on the Pi.
+        self._last_alive_time: float = 0.0
+        self._last_status_time: float = 0.0
+        self._health_pub = self.create_publisher(String, '/esp32/bridge_health', 10)
+        self._health_timer = self.create_timer(0.5, self._publish_health_status)
+
         self.get_logger().info('esp32_telemetry_node ready (serial gateway)')
 
     # ── Bridge callbacks (called from asyncio thread) ──────────────────────
@@ -122,10 +131,17 @@ class Esp32TelemetryNode(Node):
     def on_status_update(self, data: dict) -> None:
         """Forward type-131 status JSON to /esp32/status."""
         self._status_pub.publish(String(data=json.dumps(data)))
+        # CPS freshness heartbeat: update last-seen timestamp.
+        now = time.time()
+        self._last_status_time = now
+        # Edge event retained for backward compatibility.  Consumers should
+        # now prefer /esp32/bridge_health for lifecycle monitoring, but keep
+        # publishing e_stop edge for legacy subscribers.
         if data.get('e_stop'):
-            # Fire a separate lightweight event so consumers don't have to
-            # parse the full status payload to detect e-stop edges.
-            self._e_stop_pub.publish(String(data=json.dumps({'ts': data.get('ts')})))
+            self._e_stop_pub.publish(String(data=json.dumps({
+                'ts': data.get('ts'),
+                'now': now,
+            })))
 
     def on_encoder_update(self, motors: list[dict]) -> None:
         """Forward type-130 encoder list to /esp32/encoder."""
@@ -150,10 +166,45 @@ class Esp32TelemetryNode(Node):
     def on_alive(self, data: dict) -> None:
         """Forward type-141 alive heartbeat to /esp32/alive."""
         self._alive_pub.publish(String(data=json.dumps(data)))
+        # CPS freshness heartbeat: alive message from firmware means serial
+        # link is still up.  This is the canonical "CPS alive" indicator
+        # used by the health watchdog below.
+        self._last_alive_time = time.time()
 
     def on_error(self, msg: str) -> None:
         """Surface bridge-side errors to the ROS log."""
         self.get_logger().warning(f'esp32 bridge: {msg}')
+
+    # ── CPS watchdog timer (on-robot health) ───────────────────────────────────
+
+    def _publish_health_status(self) -> None:
+        """Publish periodic bridge health snapshot.
+
+        Health semantics (on-robot tuned, NOT code-tunable):
+          HEALTHY  — alive message OR fresh status frame within last 2.0 s
+          STALE    — firmware link appears down (timeout reached)
+
+        Timeout value MUST be set from real robot telemetry:
+          - Alive messages: typically 2 Hz from firmware (500 ms).
+          - Status messages: type-131 @ ~2 Hz.
+          - Serial reconnect attempts: measure actual drop/recovery latency.
+
+        On field test:
+          1. Capture healthy baseline: `ros2 topic echo /esp32/bridge_health`
+          2. Unplug ESP32 USB for 3 s, confirm STALE published within 2.5 s.
+          3. Re-plug USB, confirm HEALTHY re-published within 5 s.
+        """
+        now = time.time()
+        freshness_window_s = 2.0  # @field-tune: set from alive/status publish rate
+        alive_age = now - self._last_alive_time if self._last_alive_time else float('inf')
+        status_age = now - self._last_status_time if self._last_status_time else float('inf')
+        health = 'HEALTHY' if (alive_age < freshness_window_s or status_age < freshness_window_s) else 'STALE'
+        self._health_pub.publish(String(data=json.dumps({
+            'health': health,
+            'last_alive_age_s': round(alive_age, 2),
+            'last_status_age_s': round(status_age, 2),
+            'ts': now,
+        })))
 
     # ── Command gateway (ROS → ESP32) ──────────────────────────────────────
 

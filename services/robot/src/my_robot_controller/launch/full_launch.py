@@ -31,9 +31,10 @@ from launch.actions import (
 )
 from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch.conditions import IfCondition
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 ROBOT_PKG = 'my_robot_controller'
@@ -76,6 +77,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(LAUNCH_DIR, 'slam_only_launch.py')
         ),
+        condition=IfCondition(PythonExpression(["'", mode, "' == 'slam'"])),
     )
 
     # ── 2b. Nav mode (Nav2) ────────────────────────────────────────────────────
@@ -83,6 +85,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(LAUNCH_DIR, 'nav2_launch.py')
         ),
+        condition=IfCondition(PythonExpression(["'", mode, "' == 'nav'"])),
     )
 
     # ── 3. Map manager (relay + 5-state FSM) ───────────────────────────────────
@@ -196,10 +199,13 @@ def generate_launch_description():
         lidar_node,
         camera_stream,
 
-        # Phase 2: SLAM or Nav2 (mutually exclusive)
+        # Phase 2: SLAM or Nav2 (mutually exclusive, controlled by `mode`)
         slam_node,
-        # NOTE: Nav2 is NOT auto-started. Switch manually with:
-        #   pm2 stop nexus-robot-slam && pm2 start nexus-robot-nav2
+        nav2_node,
+        # Default = slam.  Switch to nav by passing mode:=nav:
+        #   ros2 launch my_robot_controller full_launch.py mode:=nav
+        # Map Manager and Brain adapt: brain_node only drives Nav2 in nav
+        # mode; in slam mode it uses Auto-Explore to build the map.
 
         # Phase 3: Infrastructure
         odom_node,

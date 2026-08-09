@@ -1,6 +1,23 @@
 # Nav2 parameters for the single-robot mecanum AGV.
 # Frames are supplied by slam_toolbox/AMCL, odom_node, and agv.urdf.xacro.
-# Tune footprint, velocities, and sensor mounting after hardware tests.
+#
+# ── Code-fixed (do not touch without retuning the full stack) ──────────────
+#   - frames (base_footprint / odom / map)
+#   - use_sim_time: false
+#   - transform_tolerance: 0.25 (tightened for live TF)
+#   - controller_frequency: 12 (CPU-safe on Pi 5 with SLAM + nav)
+#   - controller yaw toleranced 0.12 rad
+#
+# ── On-robot tuning required (marked with @field-tune) ─────────────────────
+#   - robot_radius / footprint (chassis + arm extension)
+#   - inflation_radius / cost_scaling_factor (depends on shelf corridor width)
+#   - min/max velocities and acc_lim (depends on motor + payload + floor)
+#   - AMCL alpha1..5 (depends on encoder drift + IMU noise + floor slip)
+#   - min_particles / max_particles (depends on warehouse area)
+#   - local_costmap.width / height (depends on speed and sensor range)
+#   - map_server.yaml_filename is overridden by nav2_launch.py; leave as
+#     placeholder to keep the file valid when launched directly.
+# See docs/ON_ROBOT_TUNING_CHECKLIST.md for the runbook.
 
 amcl:
   ros__parameters:
@@ -23,7 +40,8 @@ amcl:
     update_min_d: 0.05
     update_min_a: 0.087
     resample_interval: 1
-    transform_tolerance: 0.5
+    # Tightened from 0.5 to 0.25 for live TF on Pi 5.
+    transform_tolerance: 0.25
     recovery_alpha_slow: 0.001
     recovery_alpha_fast: 0.1
     tf_broadcast: true
@@ -50,7 +68,9 @@ planner_server:
 controller_server:
   ros__parameters:
     use_sim_time: false
-    controller_frequency: 20.0
+    # Reduced from 20 Hz to 12 Hz to avoid CPU overload with SLAM + rplidar.
+    # @field-tune: increase after confirming CPU headroom with `top`/`htop`.
+    controller_frequency: 12.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
@@ -69,6 +89,9 @@ controller_server:
       yaw_goal_tolerance: 0.12
     FollowPath:
       plugin: "nav2_controller::SimpleFollowPath"
+      # @field-tune: keep these aligned with the firmware PID saturation.
+      # Hardware spec: max useful chassis velocity ≈ 0.30 m/s.
+      # If robot is unstable, lower max_vel_x from 0.30 to 0.20.
       min_vel_x: -0.10
       max_vel_x: 0.30
       min_vel_y: -0.20
@@ -83,7 +106,8 @@ controller_server:
       decel_lim_x: -0.30
       decel_lim_y: -0.30
       decel_lim_theta: -0.50
-      transform_tolerance: 0.3
+      # Mirrors AMCL transform_tolerance to keep local planning consistent.
+      transform_tolerance: 0.25
 
 # Global map + static obstacles. The robot footprint is intentionally larger
 # than the nominal 30 cm chassis to leave clearance for shelves and the arm.
@@ -122,8 +146,11 @@ global_costmap:
           min_obstacle_height: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
+        # Must match local_costmap inflation_radius — if global > local,
+        # the global planner finds paths that the local controller then
+        # refuses.  Align both to the tighter corridor-clearance value.
         cost_scaling_factor: 4.0
-        inflation_radius: 0.35
+        inflation_radius: 0.32
       always_send_full_costmap: false
 
 local_costmap:
@@ -138,6 +165,8 @@ local_costmap:
       width: 4.0
       height: 4.0
       resolution: 0.05
+      # @field-tune: keep footprint consistent with global_costmap.
+      # robot_radius and footprint here MUST match the values above.
       robot_radius: 0.22
       footprint: "[[0.20, 0.20], [0.20, -0.20], [-0.20, -0.20], [-0.20, 0.20]]"
       footprint_padding: 0.03
@@ -159,8 +188,14 @@ local_costmap:
           min_obstacle_height: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
+        # @field-tune:
+        #   cost_scaling_factor ↓  → sharper obstacle boundary, less buffer
+        #   cost_scaling_factor ↑  → softer gradient, smoother avoidance
+        #   inflation_radius  ↓    → robot can squeeze through tighter gaps
+        #   inflation_radius  ↑    → larger keep-out zone around obstacles
+        # Default tuned for warehouse aisles ~80 cm wide.
         cost_scaling_factor: 4.0
-        inflation_radius: 0.35
+        inflation_radius: 0.32
       always_send_full_costmap: false
 
 behavior_server:
@@ -178,7 +213,7 @@ behavior_server:
       plugin: "nav2_behaviors::Wait"
     global_frame: odom
     robot_base_frame: base_footprint
-    transform_tolerance: 0.3
+    transform_tolerance: 0.25
     simulate_ahead_time: 2.0
 
 bt_navigator:

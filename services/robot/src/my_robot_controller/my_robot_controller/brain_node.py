@@ -12,7 +12,7 @@ import os
 import time
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -69,6 +69,7 @@ DOCK_SEQUENCE_TIMEOUT_S = 90.0
 # Serialized job execution: only 1 job runs at a time; retries on failure.
 _JOB_MAX_ATTEMPTS = 3      # 1 original + 2 retries
 _JOB_RETRY_BACKOFF_S = 3.0 # seconds between retries
+_BRIDGE_STALE_ERROR_MIN_GAP_S = 5.0
 
 
 # Whether to instantiate the real hardware bridge or the fake test double.
@@ -115,6 +116,12 @@ DEMO_DEMO_SEQUENCE = ['A', 'B', 'D', 'C']  # route that minimises total travel
 
 
 class BrainNode(Node):
+    # Shared asyncio loop reference — set once in _run_async() and read
+    # from any ROS subscription callback that needs to schedule async work.
+    # This avoids the unsafe asyncio.get_event_loop() call from callback
+    # threads, which can return the wrong loop or raise in Python 3.10+.
+    _loop: asyncio.AbstractEventLoop | None = None
+
     def __init__(self) -> None:
         super().__init__('brain')
         self._state: BrainState = BrainState.BOOT
@@ -197,6 +204,26 @@ class BrainNode(Node):
         self._esp32_sub = self.create_subscription(
             String, '/esp32/status', self._on_esp32_status, 10)
 
+        # ── CPS watchdog + E-stop edge subscribers (on-robot hardening) ────
+        # These MUST be validated on the real robot.  Code implements the
+        # subscription paths; timing thresholds require field measurement.
+        self._esp32_e_stop_sub = self.create_subscription(
+            String, '/esp32/e_stop', self._on_esp32_e_stop, 10)
+        self._esp32_health_sub = self.create_subscription(
+            String, '/esp32/bridge_health', self._on_esp32_health, 10)
+
+        # Latched flags — used to deduplicate repeat events fired every
+        # tick by esp32_telemetry_node (e.g. STALE publishes every 0.5 s).
+        # Without these, _handle_e_stop / _handle_bridge_stale would fire
+        # repeatedly and spam the API.
+        self._e_stop_latched: bool = False
+        self._bridge_stale_latched: bool = False
+
+        # Minimum gap between two ERROR emissions for the same stale-bridge
+        # condition.  Bridge health fires every 0.5 s; we throttle errors
+        # so the API log does not fill up.  Tune on the real robot.
+        self._last_bridge_stale_error_s: float = 0.0
+
         # TF for home pose capture + navigation goal poses
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -244,6 +271,29 @@ class BrainNode(Node):
         old = self._state
         self._state = new_state
         self.get_logger().info(f'state: {old} -> {new_state} ({reason})')
+
+    def _schedule_async(self, coro: Any) -> bool:
+        """Schedule a coroutine on the loop owned by _run_async().
+
+        ROS callbacks may run outside the asyncio thread.  Scheduling through
+        the stored loop is thread-safe and avoids silently creating a second
+        event loop for safety-critical stop handling.
+        """
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self.get_logger().error('Cannot schedule async safety action: loop unavailable')
+            coro.close()
+            return False
+        try:
+            loop.call_soon_threadsafe(asyncio.create_task, coro)
+            return True
+        except RuntimeError as exc:
+            self.get_logger().error(f'Cannot schedule async safety action: {exc}')
+            coro.close()
+            return False
+
+    def _is_motion_locked(self) -> bool:
+        return self._e_stop_latched or self._bridge_stale_latched
 
     def _is_cancelled(self, job_id: str) -> bool:
         """Return True if this job was cancelled by the API."""
@@ -418,7 +468,16 @@ class BrainNode(Node):
         The ESP32 has its own 50 Hz PID control loop — we just send the
         desired (vx, vy, omega) and it keeps the motors running until the
         next command or e-stop.
+
+        When the motion lock is active (E_STOP or bridge stale) the
+        command is silently dropped to prevent the robot from moving
+        after a safety event.
         """
+        if self._is_motion_locked():
+            self.get_logger().warn(
+                f'drive({vx:.0f},{vy:.0f},{omega:.0f}) BLOCKED — '
+                f'motion locked (e_stop={self._e_stop_latched}, stale={self._bridge_stale_latched})')
+            return
         await self._bridge.move(vx, vy, omega)
 
     async def _stop(self) -> None:
@@ -1460,6 +1519,107 @@ class BrainNode(Node):
         except Exception:
             pass
 
+    def _on_esp32_e_stop(self, msg: String) -> None:
+        """Handle ESP32 e-stop edge event from /esp32/e_stop.
+
+        Latched: once fired, motion stays locked until the operator
+        sends an explicit e_stop_clear flow.  Subsequent edge events
+        are ignored until the latch is cleared.
+
+        This code requires field validation:
+          - Press K (e-stop) on the ESP32 ASCII console.
+          - Confirm `brain_node` logs "ESP32 e-stop" and enters E_STOP.
+          - Verify `brain._drive()` is blocked in E_STOP state.
+          - Verify an explicit e_stop_clear resets the latch.
+        """
+        if self._e_stop_latched:
+            return  # already handled — debounce
+        self._e_stop_latched = True
+        self.get_logger().error(
+            'ESP32 e-stop edge event received — locking to E_STOP')
+        self._schedule_async(self._handle_e_stop())
+
+    async def _handle_e_stop(self) -> None:
+        """Async side of e-stop edge handling."""
+        try:
+            await self._bridge.stop()
+        except Exception as e:
+            self.get_logger().warn(f'_bridge.stop() during e-stop failed: {e}')
+        self.transition_to(BrainState.E_STOP, 'esp32 e_stop edge')
+        try:
+            await self._emit_error('critical', 'ESP32_ESTOP',
+                                   'ESP32 raised e-stop — robot locked to E_STOP')
+        except Exception:
+            pass
+
+    def _on_esp32_health(self, msg: String) -> None:
+        """React to bridge health snapshot.
+
+        HEALTHY → clear stale latch (recovery path).
+        STALE   → latched; stop motors and force ERROR once.
+
+        Without latching, every 0.5 s STALE tick would re-schedule
+        ``_handle_bridge_stale``, creating duplicate error emissions
+        and repeated ``stop()`` calls.
+
+        Field validation:
+          - Unplug ESP32 USB for ≥3 s → STALE + ERROR once.
+          - Re-plug USB → HEALTHY clears the latch, robot can resume.
+        """
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        health = payload.get('health', 'HEALTHY')
+        if health == 'HEALTHY':
+            if self._bridge_stale_latched:
+                self.get_logger().info('ESP32 bridge recovered — clearing stale latch')
+                self._bridge_stale_latched = False
+            return
+        # health == 'STALE'
+        if self._bridge_stale_latched:
+            return  # already handled — debounce
+        self._bridge_stale_latched = True
+        self.get_logger().warn(
+            f'ESP32 bridge STALE (alive_age={payload.get("last_alive_age_s")}s, '
+            f'status_age={payload.get("last_status_age_s")}s) — stopping')
+        self._schedule_async(self._handle_bridge_stale())
+
+    async def _handle_bridge_stale(self) -> None:
+        """Stop motors and warn when the ESP32 bridge is STALE."""
+        try:
+            await self._bridge.stop()
+        except Exception as e:
+            self.get_logger().warn(f'_bridge.stop() during stale failed: {e}')
+        if self._state not in (BrainState.IDLE, BrainState.E_STOP, BrainState.BOOT):
+            self.transition_to(BrainState.ERROR, 'esp32 bridge stale')
+        try:
+            await self._emit_error('error', 'ESP32_BRIDGE_STALE',
+                                   'ESP32 bridge stopped reporting — robot stopped')
+        except Exception:
+            pass
+
+    async def clear_safety_latch(self) -> bool:
+        """Explicitly clear the brain safety latch after operator reset.
+
+        The firmware e-stop must be cleared first.  This method then sends
+        ``e_stop_clear`` and returns the brain to IDLE only when the bridge
+        is healthy.  It is intentionally never called automatically.
+        """
+        if self._bridge_stale_latched:
+            self.get_logger().warn('Cannot clear E_STOP while ESP32 bridge is STALE')
+            return False
+        try:
+            await self._bridge.clear_e_stop()
+        except Exception as exc:
+            self.get_logger().error(f'ESP32 e_stop_clear failed: {exc}')
+            return False
+        self._e_stop_latched = False
+        if self._state == BrainState.E_STOP:
+            self.transition_to(BrainState.IDLE, 'operator cleared ESP32 e-stop')
+        self.get_logger().info('Safety latch cleared by operator')
+        return True
+
     def _esp32_obstacle_blocking(self) -> bool:
         """Return True if ESP32's local sensors (IR / Sharp) report an
         immediate obstacle.  Used as a fast e-stop layer before LiDAR.
@@ -2090,6 +2250,11 @@ async def _run_async(node: BrainNode) -> None:
     Also starts the single ``_job_worker_loop`` task that consumes jobs off
     the asyncio queue — exactly one motor sequence at a time.
     """
+    # Store the running loop once so ROS subscription callbacks
+    # (_on_esp32_e_stop, _on_esp32_health) can schedule async work
+    # via BrainNode._schedule_async() without calling get_event_loop().
+    BrainNode._loop = asyncio.get_running_loop()
+
     node.get_logger().info('Attempting initial API connection...')
     await node._api_client.connect()
 
@@ -2102,14 +2267,14 @@ async def _run_async(node: BrainNode) -> None:
     # Periodic health heartbeat to the API so the UI can show "brain alive".
     node._health_task = asyncio.create_task(node._health_heartbeat_loop())
 
-    last_reconnect = asyncio.get_event_loop().time()
+    last_reconnect = BrainNode._loop.time()
 
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.1)
 
         # If disconnected, try to reconnect periodically
         if not node._api_client.connected:
-            now = asyncio.get_event_loop().time()
+            now = BrainNode._loop.time()
             if now - last_reconnect >= _RECONNECT_INTERVAL:
                 node.get_logger().info('Attempting to reconnect to API...')
                 last_reconnect = now
