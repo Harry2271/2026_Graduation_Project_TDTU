@@ -351,8 +351,10 @@ bool AutoRoam::compute(uint32_t now_ms,
                 if (encoders) {
                     int32_t current = encoders[0].getCumulativeCount();
                     int32_t delta   = current - leave_start_count_;
-                    // ticks → cm:  wheel_circum = π × 6.0 cm, CPR = MOTOR_ENCODER_CPR
-                    float dist_cm = fabs(delta) * (3.14159f * 6.0f) / (float)MOTOR_ENCODER_CPR;
+                    // ticks → cm:  wheel_circum = π × 6.0 cm,
+                    // OUTPUT_CPR = MOTOR_ENCODER_CPR * MOTOR_GEAR_RATIO = 660
+                    constexpr float OUTPUT_CPR = (float)MOTOR_ENCODER_CPR * MOTOR_GEAR_RATIO;
+                    float dist_cm = fabs(delta) * (3.14159f * 6.0f) / OUTPUT_CPR;
                     if (dist_cm >= LEAVE_DOCK_DISTANCE_CM) {
                         Serial.printf("[UNLOAD] Leave-dock %.1f cm reached → complete\n", dist_cm);
                         out_vx = out_vy = out_omega = 0;

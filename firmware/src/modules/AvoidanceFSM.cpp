@@ -28,13 +28,13 @@ static const int16_t SPEED_REVERSE_FROM_FRONT = 80;    // reverse when front hit
 static const int16_t SPEED_ROTATE_NORMAL      = 70;    // rotate CW/CCW
 
 // Reverse distance target (in encoder pulses).
-// At 11 PPR motor + 30:1 gear + 60mm wheel:
-//   pulses_per_rev = 11 * 30 = 330 PPR
+// At 11 PPR motor + 30:1 gear + 60mm wheel, x2 quadrature decode:
+//   pulses_per_output_rev = 11 * 2 * 30 = 660
 //   wheel_circumference = π * 60mm ≈ 188mm
-//   mm_per_pulse = 188/330 ≈ 0.57 mm/pulse
-//   30cm = 300mm / 0.57 ≈ 525 pulses
-// We use a conservative 500 pulses as target.
-static const int32_t REVERSE_PULSE_TARGET     = 500;
+//   mm_per_pulse = 188/660 ≈ 0.285 mm/pulse
+//   30cm = 300mm / 0.285 ≈ 1053 pulses
+// We use a conservative 1000 pulses as target.
+static const int32_t REVERSE_PULSE_TARGET     = 1000;
 
 // Rotation angle targets (degrees)
 static const float   ROTATE_TARGET_DEG_90     = 90.0f;

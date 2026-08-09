@@ -132,13 +132,28 @@ class OdomNode(Node):
     # ── Subscription callbacks (called from rclpy thread) ───────────────────
 
     def _on_encoder_msg(self, msg: String) -> None:
-        """Parse type-130 ``data.motors`` and integrate counts by motor id."""
+        """Parse type-130 encoder frame.
+
+        The telemetry bridge publishes two compatible shapes:
+        1. ``{"type":130,"data":{"motors":[{id,name,tgt,rpm,cnt}, ...]}}`` — direct
+        2. ``[{"id":..,"cnt":..}, ...]`` — the on-wire array form (what
+           esp32_telemetry_node forwards via `json.dumps(motors)`).
+
+        Both shapes are accepted and unified into ``counts`` for integration.
+        """
         try:
             frame = json.loads(msg.data)
-            if not isinstance(frame, dict):
-                return
-            payload = frame.get('data', frame)
-            motors = payload.get('motors') if isinstance(payload, dict) else None
+
+            motors = None
+            if isinstance(frame, dict):
+                payload = frame.get('data', frame)
+                if isinstance(payload, dict):
+                    motors = payload.get('motors')
+                elif isinstance(payload, list):
+                    motors = payload
+            elif isinstance(frame, list):
+                motors = frame
+
             if not isinstance(motors, list):
                 return
 
