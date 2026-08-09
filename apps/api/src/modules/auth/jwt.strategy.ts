@@ -18,15 +18,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     configService: ConfigService,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {
+    const secret = configService.get<string>('JWT_SIGN_SECRET');
+    if (!secret || secret.length < 32) {
+      throw new Error(
+        'JWT_SIGN_SECRET is required (>=32 chars). ' +
+        'Generate with: openssl rand -hex 32',
+      );
+    }
+
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      ignoreExpiration: true, // permanent tokens
-      secretOrKey: configService.get<string>('JWT_SIGN_SECRET') ?? '',
+      ignoreExpiration: false, // tokens expire; enforce exp claim
+      secretOrKey: secret,
     });
   }
 
   async validate(payload: JwtPayload): Promise<UserDocument> {
-    const user = await this.userModel.findById(payload.sub);
+    const user = await this.userModel.findById(payload.sub).select('_id email approved');
     if (!user?.approved) {
       throw new UnauthorizedException();
     }

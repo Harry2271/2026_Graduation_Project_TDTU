@@ -19,6 +19,7 @@ services:
       dockerfile: apps/api/Dockerfile
     container_name: nguyen-api
     restart: unless-stopped
+    user: "1001:1001"
     ports:
       - "${API_PORT:-5000}:5000"
     env_file:
@@ -44,6 +45,7 @@ services:
         NEXT_PUBLIC_CAMERA_STREAM_URL: ${NEXT_PUBLIC_CAMERA_STREAM_URL:-https://cam.nguyen-robot.io.vn/stream}
     container_name: nguyen-web
     restart: unless-stopped
+    user: "1001:1001"
     ports:
       - "${WEB_PORT:-3000}:3000"
     environment:

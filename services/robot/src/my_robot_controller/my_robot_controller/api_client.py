@@ -36,11 +36,18 @@ class BrainApiClient:
         self._sio = socketio.AsyncClient()
         self._connected = False
         self._dispatch_handlers: list[DispatchCallback] = []
+        self._cancel_handlers: list[DispatchCallback] = []
 
         @self._sio.on('job:dispatch', namespace='/robot')
         async def _on_job_dispatch(data: dict[str, Any]) -> None:
             logger.info('Received job:dispatch: %s', data.get('_id', 'unknown'))
             for handler in self._dispatch_handlers:
+                await handler(data)
+
+        @self._sio.on('job:cancel', namespace='/robot')
+        async def _on_job_cancel(data: dict[str, Any]) -> None:
+            logger.info('Received job:cancel: %s', data.get('jobId', 'unknown'))
+            for handler in self._cancel_handlers:
                 await handler(data)
 
         @self._sio.on('connect', namespace='/robot')
@@ -112,6 +119,18 @@ class BrainApiClient:
         """Register a handler for job:dispatch events from the API."""
         self._dispatch_handlers.append(callback)
 
+    def on_job_cancel(self, callback: DispatchCallback) -> None:
+        """Register a handler for job:cancel events from the API."""
+        self._cancel_handlers.append(callback)
+
+    async def emit_job_cancel_ack(self, job_id: str) -> None:
+        """Acknowledge a job:cancel so the API can release the slot safely."""
+        if not self._connected:
+            return
+        await self._sio.emit(
+            'job:cancel:ack', {'jobId': job_id}, namespace='/robot',
+        )
+
     async def emit_state(self, state: str) -> None:
         """Emit the robot's current state to the API."""
         if not self._connected:
@@ -169,3 +188,18 @@ class BrainApiClient:
             return
         payload = {'jobId': job_id, **timing}
         await self._sio.emit('job:timing', payload, namespace='/robot')
+
+    async def emit_robot_error(self, severity: str, code: str, message: str) -> None:
+        """Emit a robot error/warning event to the API for real-time alerting.
+
+        severity: 'warning' | 'error' | 'critical'
+        code: machine-readable error code (e.g. 'NAV_FAILED', 'DOCK_TIMEOUT')
+        message: human-readable description
+        """
+        if not self._connected:
+            return
+        await self._sio.emit('robot:error', {
+            'severity': severity,
+            'code': code,
+            'message': message,
+        }, namespace='/robot')

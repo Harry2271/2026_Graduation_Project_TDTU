@@ -14,10 +14,19 @@ import { JwtStrategy } from './jwt.strategy';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SIGN_SECRET'),
-        signOptions: { noTimestamp: true }, // permanent token
-      }),
+      useFactory: (config: ConfigService) => {
+        const secret = config.get<string>('JWT_SIGN_SECRET');
+        if (!secret || secret.length < 32) {
+          throw new Error(
+            'JWT_SIGN_SECRET is required (>=32 chars). ' +
+            'Generate with: openssl rand -hex 32',
+          );
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: '7d' },
+        };
+      },
     }),
   ],
   controllers: [AuthController],

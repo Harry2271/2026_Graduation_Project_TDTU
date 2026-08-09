@@ -159,6 +159,7 @@ export default function MapPage() {
   const [demoStatus, setDemoStatus] = useState<DemoStatus>({});
   const [esp32Status, setEsp32Status] = useState<Esp32Status | null>(null);
   const [ackLog, setAckLog] = useState<{ ts: number; type: string; data: unknown }[]>([]);
+  const [robotErrors, setRobotErrors] = useState<Array<{ ts: number; severity: string; code: string; message: string }>>([]);
 
   // Keyboard state for teleop
   const keysPressed = useRef<Set<string>>(new Set());
@@ -624,6 +625,17 @@ export default function MapPage() {
             case 'demo_status': { const ds = msg.data as DemoStatus; setDemoStatus(ds); break; }
             case 'control_mode_status': { const cms = msg.data as ControlModeStatus; setControlModeStatus(cms); const m = cms.mode ?? cms.active_mode; if (m === 'AUTO' || m === 'MANUAL') setControlMode(m); break; }
             case 'ack': { const entry = { ts: Date.now(), type: msg.type, data: msg.data }; setAckLog(prev => [entry, ...prev].slice(0, 20)); break; }
+            case 'robot_error': {
+              const ed = (msg.data ?? {}) as { severity?: string; code?: string; message?: string; ts?: string };
+              const entry = {
+                ts: Date.now(),
+                severity: ed.severity ?? 'error',
+                code: ed.code ?? 'UNKNOWN',
+                message: ed.message ?? 'Robot reported an error',
+              };
+              setRobotErrors(prev => [entry, ...prev].slice(0, 50));
+              break;
+            }
           }
         }
         async function parse(data: ArrayBuffer | Blob | string) {
@@ -672,6 +684,39 @@ export default function MapPage() {
       if (pingRef.current) clearInterval(pingRef.current);
     };
   }, []);
+
+  // Surface robot errors as toasts the first time they arrive (notification API is one-shot per call).
+  const notifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (robotErrors.length === 0) return;
+    const newest = robotErrors[0];
+    const key = `${newest.ts}-${newest.code}-${newest.message}`;
+    if (notifiedRef.current.has(key)) return;
+    notifiedRef.current.add(key);
+    // Cap the dedupe set so it doesn't grow unbounded.
+    if (notifiedRef.current.size > 200) {
+      const arr = Array.from(notifiedRef.current);
+      notifiedRef.current = new Set(arr.slice(arr.length - 200));
+    }
+    const sev = newest.severity.toLowerCase();
+    const titleBySeverity: Record<string, string> = {
+      critical: '⛔ LỖI NGHIÊM TRỌNG',
+      error: '❌ LỖI ROBOT',
+      warning: '⚠️ CẢNH BÁO',
+    };
+    const title = titleBySeverity[sev] ?? '🤖 ROBOT';
+    const cfg: { message: string; description: string; type: 'error' | 'warning' | 'info' } =
+      sev === 'critical'
+        ? { message: title, description: `${newest.code}: ${newest.message}`, type: 'error' }
+        : sev === 'warning'
+        ? { message: title, description: `${newest.code}: ${newest.message}`, type: 'warning' }
+        : { message: title, description: `${newest.code}: ${newest.message}`, type: 'error' };
+    notification.open({
+      ...cfg,
+      placement: 'topRight',
+      duration: sev === 'critical' ? 0 : 8,
+    });
+  }, [robotErrors, notification]);
 
   const handleZoomIn = () => setZoom(v => Math.min(8, +(v + 0.5).toFixed(2)));
   const handleZoomOut = () => setZoom(v => Math.max(0.1, +(v - 0.5).toFixed(2)));
@@ -1325,6 +1370,67 @@ export default function MapPage() {
           )}
         </div>
       </div>
+
+      {/* ─── Robot error banner ──────────────────────────────────────────────── */}
+      {robotErrors.length > 0 && (() => {
+        const top = robotErrors[0];
+        const sev = top.severity.toLowerCase();
+        const cfgBySev: Record<string, { bg: string; border: string; icon: string; label: string }> = {
+          critical: { bg: 'rgba(220,30,60,0.18)', border: 'rgba(255,59,92,0.7)', icon: '⛔', label: 'LỖI NGHIÊM TRỌNG' },
+          error:    { bg: 'rgba(255,59,92,0.10)',  border: 'rgba(255,59,92,0.45)', icon: '❌', label: 'LỖI ROBOT' },
+          warning:  { bg: 'rgba(255,184,0,0.12)',  border: 'rgba(255,184,0,0.5)',  icon: '⚠️', label: 'CẢNH BÁO' },
+        };
+        const cfg = cfgBySev[sev] ?? cfgBySev.error;
+        const hidden = robotErrors.length - 1;
+        return (
+          <div
+            data-testid="robot-error-banner"
+            className="px-4 md:px-8 py-2 flex flex-wrap items-center justify-between gap-2 relative z-10"
+            style={{
+              background: cfg.bg,
+              borderTop: `1px solid ${cfg.border}`,
+              borderBottom: `1px solid ${cfg.border}`,
+              boxShadow: sev === 'critical' ? '0 0 24px rgba(255,59,92,0.35), inset 0 0 12px rgba(255,59,92,0.1)' : 'inset 0 0 8px rgba(0,0,0,0.2)',
+              animation: sev === 'critical' ? 'pulse-glow 1.4s ease-in-out infinite' : undefined,
+            }}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-base leading-none">{cfg.icon}</span>
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold tracking-widest" style={{ color: cfg.border, fontFamily: "'JetBrains Mono', monospace" }}>
+                    {cfg.label}
+                  </span>
+                  <span className="text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+                    {top.code}
+                  </span>
+                  {hidden > 0 && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md" style={{ background: cfg.border, color: '#060910', fontWeight: 700, letterSpacing: '0.06em' }}>
+                      +{hidden}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
+                  {top.message}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setRobotErrors([])}
+              className="px-2 py-1 rounded-md text-[10px] font-bold cursor-pointer transition-all"
+              style={{
+                background: 'rgba(8,11,16,0.6)',
+                border: `1px solid ${cfg.border}`,
+                color: cfg.border,
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.08em',
+              }}
+            >
+              ✕ XÓA
+            </button>
+          </div>
+        );
+      })()}
 
       {/* ─── Canvas viewer ───────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 p-2 md:p-5">

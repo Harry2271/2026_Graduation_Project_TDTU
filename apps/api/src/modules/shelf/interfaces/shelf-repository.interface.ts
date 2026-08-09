@@ -19,4 +19,6 @@ export interface IShelfRepository {
   updateCoordinates(slotCode: string, slotX: number, slotY: number, facingTheta: number | null): Promise<ShelfSlot | null>;
   assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null>;
   updateSlotStatus(slotCode: string, status: SlotStatus, session?: ClientSession): Promise<void>;
+  updateCoordinatesMany(entries: { slotCode: string; slotX: number; slotY: number; facingTheta: number | null }[]): Promise<void>;
+  reserveSlotIfAvailable(slotCode: string): Promise<ShelfSlot | null>;
 }

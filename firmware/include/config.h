@@ -179,13 +179,16 @@ enum MotorState {
 #define BNO055_SCL_PIN         11       // I2C SCL (shared with VL53L0X, INA226)
 #define BNO055_I2C_FREQ_HZ     100000   // I2C fallback mode (100 kHz for CJMCU-055 clones)
 
-// BNO055 SPI mode (Software SPI on non-conflicting GPIOs)
-// Hardware: PS0=HIGH, PS1=LOW on CJMCU-055 module (solder bridge PS0 to 3.3V)
-#define BNO055_SPI_SCK_PIN     15       // GPIO 15 — Software SPI clock (shared w/ FR LPWM, but SPI uses it only during transactions)
-#define BNO055_SPI_MISO_PIN    36       // GPIO 36 — Software SPI data out (BNO055 → ESP32)
-#define BNO055_SPI_MOSI_PIN    4        // GPIO 4  — Software SPI data in (ESP32 → BNO055)
-#define BNO055_SPI_CS_PIN      21       // GPIO 21 — Chip select (active LOW)
-#define BNO055_SPI_SPEED_HZ    1000000  // 1 MHz max for BNO055 SPI mode
+// BNO055 SPI mode - UNUSED / DEPRECATED
+// These SPI pins conflict with motor PWM and encoder hardware:
+// GPIO 15 = FR LPWM, GPIO 4 = RL encoder CHA, GPIO 21 = RR encoder CHB.
+// I2C mode (GPIO 10/11) is the only supported interface for BNO055.
+// Do not enable SPI mode; it will corrupt encoder reads and motor output.
+#define BNO055_SPI_SCK_PIN     15       // CONFLICTS with FR LPWM - DO NOT USE
+#define BNO055_SPI_MISO_PIN    36       // CONFLICTS with CargoSensor - DO NOT USE
+#define BNO055_SPI_MOSI_PIN    4        // CONFLICTS with RL encoder CHA - DO NOT USE
+#define BNO055_SPI_CS_PIN      21       // CONFLICTS with RR encoder CHB - DO NOT USE
+#define BNO055_SPI_SPEED_HZ    1000000  // UNUSED - I2C mode only
 #define I2C_TRANSACTION_TIMEOUT_MS  50   // ms — keep a failing optional bus from stalling control
 #define I2C_DEVICE_RETRY_COUNT      3
 #define I2C_DEVICE_RETRY_DELAY_MS  100

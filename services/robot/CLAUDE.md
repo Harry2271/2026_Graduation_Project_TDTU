@@ -1,6 +1,12 @@
-# robot-controller — Web Bridge API Reference
+# services/robot — ROS 2 Brain, Bridge & Telemetry (Pi 5)
 
-> **Purpose:** This document describes the WebSocket JSON API that the frontend can use to receive live robot data for map visualization.
+> **Purpose:** This document describes the ROS 2 Python nodes running on the Raspberry Pi 5. They bridge the web dashboard (WebSocket), the NestJS API (Socket.io), the ESP32 motor controller (USB CDC serial), and the SLAM/navigation stack (Nav2 + slam_toolbox).
+
+---
+
+## ROS 2 Distro
+
+**Jazzy Jalisco** (not Humble). All launch files source `/opt/ros/jazzy/setup.bash`.
 
 ---
 
@@ -32,8 +38,11 @@
 1. `rplidar_ros2` — RPLidar driver (apt package `ros-jazzy-rplidar-ros2`), publishes `/scan`
 2. `slam_toolbox` (online_async) — scan-matching, TF, map building
 3. `my_robot_controller/map_manager` — state machine, obstacle awareness zone
-4. `my_robot_controller/esp32_telemetry_node` — opens `/dev/ttyACM0`, forwards ESP32 type-130/131 frames to `/esp32/encoder` and `/esp32/status`
-5. `my_robot_controller/web_bridge` — WebSocket server on port 9091
+4. `my_robot_controller/esp32_telemetry_node` — opens `/dev/ttyACM0`, forwards ESP32 type-130/131/133/134/140/141 frames to ROS topics
+5. `my_robot_controller/web_bridge` — WebSocket server on port 9091 (token auth required)
+6. `my_robot_controller/brain_node` — high-level state machine (EXPLORE, MAPPING_DONE, IDLE, JOB_*, WAREHOUSE_*, E_STOP), drives ESP32 via `esp32_telemetry_node`
+7. `my_robot_controller/odom_node` — odometry fusion (encoders + IMU) published on `/odom`
+8. `my_robot_controller/teleop_node` — keyboard/remote teleop via `/cmd_vel`
                                                 ↓
                                               Browser
 ```
@@ -134,10 +143,33 @@ ros2 run tf2_ros tf2_echo map base_footprint
 
 | Parameter | Value |
 |---|---|
-| Protocol | WebSocket (plain) |
+| Protocol | WebSocket (requires token) |
 | Host | `<robot-ip>` |
 | Port | `9091` |
-| URL | `ws://<robot-ip>:9091` |
+| URL | `ws://<robot-ip>:9091?token=<token>` |
+| Auth | `WS_AUTH_TOKEN` env var (falls back to `ROBOT_BRAIN_TOKEN`) |
+
+**Authentication:** The WebSocket server requires a token. Provide it via one of:
+1. Query string: `?token=<token>`
+2. Header: `Authorization: Bearer <token>`
+3. Subprotocol: `bearer, <token>`
+
+Connections without a valid token are rejected with HTTP 401.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `API_SOCKET_URL` | `https://api.nguyen-robot.io.vn` | NestJS Socket.io URL used by `BrainApiClient` |
+| `ROBOT_BRAIN_TOKEN` | none | Required shared secret for API `/robot` namespace auth |
+| `WS_AUTH_TOKEN` | falls back to `ROBOT_BRAIN_TOKEN` | Required token for raw WebSocket clients on port 9091 |
+| `ESP32_PORT` | `/dev/robot-esp32` | USB CDC serial device |
+| `ESP32_BAUD` | `115200` | Serial baud (ignored for USB CDC) |
+| `CAMERA_DEVICE` | `/dev/video0` | V4L2 camera device |
+| `CAMERA_PORT` | `9092` | MJPEG camera HTTP port |
+| `LIDAR_MODEL` | `a1` | RPLidar model selected by launch/deploy scripts |
+
+Never commit any token or secret. The API and raw WebSocket bridges use constant-time token comparisons.
 
 ---
 
@@ -217,6 +249,46 @@ Values: `idle` | `mapping_idle` | `mapping_active` | `scan_obstacle` | `live`
 { "type": "info", "data": { "lidar": true, "map": true, "pose": false, "mode": "live" } }
 ```
 
+### `esp32_imu` — BNO055 IMU Telemetry (~20 Hz)
+
+Forwarded from `/esp32/imu`. Used by the brain for heading correction and the right-side IMU tab in the UI.
+
+```json
+{
+  "type": "esp32_imu",
+  "data": {
+    "ts": 1053920, "type": 134,
+    "yaw": 1.57, "pitch": 0.02, "roll": 0.01,
+    "quat": [0.707, 0.0, 0.707, 0.0],
+    "accel": [0.0, 0.0, 9.81],
+    "gyro": [0.0, 0.0, 0.0],
+    "temp_c": 28,
+    "cal": {"sys": 3, "gyr": 3, "acc": 3, "mag": 0}
+  }
+}
+```
+
+### `esp32_power` — INA226 Battery/Power Telemetry (0.2 Hz)
+
+Forwarded from `/esp32/power`. Battery state-of-charge is derived from bus voltage (3S Li-ion lookup).
+
+```json
+{
+  "type": "esp32_power",
+  "data": {
+    "ts": 1053920, "type": 133,
+    "bus_v": 12.34, "shunt_mv": 1.5, "current_a": 0.45, "power_w": 5.6,
+    "soc_pct": 78
+  }
+}
+```
+
+### `ack` — Command Acknowledgement (per command)
+
+```json
+{ "type": "ack", "data": { "command": "start", "ok": true, "ts": 1053920 } }
+```
+
 ### `esp32_status` — Raw ESP32 Type-131 Frame (as emitted by firmware)
 
 Forwarded verbatim from `/esp32/status`, which `esp32_telemetry_node.py`
@@ -285,6 +357,79 @@ ws.send(JSON.stringify({ type: 'cmd', command: 'reset' }));
 | map_manager | `/mapping_status` | String | on change | `status.*`, `mode.*` |
 | ESP32 (`/dev/ttyACM0`) | `/esp32/status`, `/esp32/encoder` | std_msgs/String | ~2 Hz (status), on event (encoder) | `esp32_status.*`, `esp32_encoder.*` |
 | web_bridge | — | — | 5s | `info.*` |
+
+---
+
+## Brain Node State Machine
+
+`brain_node.py` implements the high-level warehouse workflow:
+
+```text
+BOOT → EXPLORE → EXPLORE_SEARCH_TAG → EXPLORE_REVERSE → MAPPING_DONE → IDLE
+  ↓ (job received)
+JOB_NAV_TO_DROPOFF → JOB_DOCK_UNLOAD → JOB_RETURN_HOME → IDLE
+```
+
+States:
+- `BOOT` — Waits for initial sensor/esp32 ready
+- `EXPLORE` — Autonomous SLAM exploration; robot drives forward and builds map
+- `EXPLORE_SEARCH_TAG` — Looking for an AprilTag to anchor the mapping coordinate frame
+- `EXPLORE_REVERSE` — Backing up to avoid obstacles during exploration
+- `MAPPING_DONE` — Map saved; brain publishes `map_saved` and transitions to IDLE
+- `IDLE` — Waiting for a job from the API (`job:dispatch` via Socket.io)
+- `JOB_NAV_TO_DROPOFF` — Nav2 navigating to the destination slot
+- `JOB_DOCK_UNLOAD` — Robot at dock; firmware controls cylinder extend/retract
+- `JOB_RETURN_HOME` — Navigating back to the home pose after dropoff
+- `WAREHOUSE_SCAN`, `WAREHOUSE_NAV_TAG`, `WAREHOUSE_DOCK`, `WAREHOUSE_UNLOAD`, `WAREHOUSE_LEAVE_DOCK`, `WAREHOUSE_RETURN_HOME` — Extended warehouse workflow states (firmware-assisted)
+
+The brain sends `move` JSON to the ESP32 via `esp32_telemetry_node`'s `/esp32/cmd` topic. Nav2 commands are issued through `BasicNavigator` (nav2_simple_commander).
+
+---
+
+## ESP32 Telemetry Node
+
+`esp32_telemetry_node.py` is the **sole owner** of the ESP32 USB CDC serial link (`/dev/ttyACM0`). All other nodes interact with the ESP32 exclusively through this node's ROS topics.
+
+### ROS topics
+
+| Topic | Direction | Content |
+|---|---|---|
+| `/esp32/cmd` | ROS → serial | JSON command (move, stop, e_stop, heartbeat, set_speed, cylinder_extend, begin_dock, cancel_dock, etc.) |
+| `/esp32/status` | serial → ROS | ESP32 type-131 status frame (~2 Hz) |
+| `/esp32/encoder` | serial → ROS | ESP32 type-130 encoder snapshot |
+| `/esp32/imu` | serial → ROS | ESP32 type-134 BNO055 IMU data (20 Hz) |
+| `/esp32/power` | serial → ROS | ESP32 type-133 INA226 power telemetry (0.2 Hz) |
+| `/esp32/unload_state` | serial → ROS | ESP32 type-140 unload sequence state |
+| `/esp32/cargo` | serial → ROS | ESP32 type-141 cargo sensor status |
+| `/esp32/alive` | serial → ROS | ESP32 heartbeat liveness flag |
+| `/esp32/cmd_status` | ROS | Command accepted/rejected/queue-overflow status |
+
+---
+
+## Cylinder / Dock Commands
+
+The firmware supports an L298N-driven electric cylinder for warehouse dock/unload operations:
+
+```json
+{"cmd":"cylinder_extend"}    // Extend cylinder (lower robot onto dock)
+{"cmd":"cylinder_retract"}   // Retract cylinder (lift robot off dock)
+{"cmd":"cylinder_stop"}      // Stop cylinder immediately
+{"cmd":"begin_dock"}         // Start full docking sequence (firmware state machine)
+{"cmd":"cancel_dock"}        // Cancel docking sequence mid-operation
+```
+
+The brain orchestrates cylinder timing via `job:phase` updates (`NAVIGATE_DROPOFF` → `AT_DOCK` → `UNLOADING` → `RETURNING`).
+
+---
+
+## Cancel Job Handshake
+
+When an operator cancels a job via `DELETE /jobs/:id`:
+
+1. API emits `job:cancel` to the brain via the `/robot` namespace
+2. API starts a 500 ms timeout waiting for `job:cancel:ack`
+3. Brain acknowledges via `job:cancel:ack` → API releases the destination slot
+4. If the brain doesn't respond in time, the slot is released with a warning
 
 ---
 

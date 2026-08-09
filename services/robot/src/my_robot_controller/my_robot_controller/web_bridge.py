@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hmac
 import json
 import math
+import os
 import queue
 import sys
 import time
@@ -121,6 +123,7 @@ class WebBridge(Node):
         self.create_subscription(String, '/esp32/imu', self._on_esp32_imu, 10)
         self.create_subscription(String, '/esp32/power', self._on_esp32_power, 10)
         self.create_subscription(String, '/detected_tags', self._on_detected_tags, 10)
+        self.create_subscription(String, '/robot/errors', self._on_robot_errors, 10)
 
         # ── Timers ──────────────────────────────────────────────────────
         self.create_timer(5.0, self._broadcast_info)
@@ -194,8 +197,10 @@ class WebBridge(Node):
             x = tf.transform.translation.x
             y = tf.transform.translation.y
             q = tf.transform.rotation
-            theta = math.atan2(2.0 * (q.w * q.z + q.x * q.x),
-                               1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+            # Correct yaw formula: siny_cosp = 2*(qw*qz + qx*qy)
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            theta = math.atan2(siny_cosp, cosy_cosp)
             self._emit({'type': 'pose', 'data': {
                 'x': round(x, 4),
                 'y': round(y, 4),
@@ -228,8 +233,10 @@ class WebBridge(Node):
     def _on_map_layer(self, msg: OccupancyGrid) -> None:
         self.map_seen = True
         q = msg.info.origin.orientation
-        origin_theta = math.atan2(2 * (q.w * q.z + q.x * q.x),
-                                  1 - 2 * (q.y * q.y + q.z * q.z))
+        # Correct yaw formula: siny_cosp = 2*(qw*qz + qx*qy)
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        origin_theta = math.atan2(siny_cosp, cosy_cosp)
         data_list = list(msg.data)
         self.get_logger().debug(
             f'map_layer: {msg.info.width}x{msg.info.height} '
@@ -334,6 +341,14 @@ class WebBridge(Node):
             return
         self._emit({'type': 'detected_tags', 'data': data})
 
+    def _on_robot_errors(self, msg: String) -> None:
+        """Forward brain error/warning events to all WebSocket clients."""
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            data = {'severity': 'error', 'code': 'UNKNOWN', 'message': msg.data}
+        self._emit({'type': 'robot_error', 'data': data})
+
     # ── Info ───────────────────────────────────────────────────────────────────
 
     def _broadcast_info(self) -> None:
@@ -416,6 +431,18 @@ class WebBridge(Node):
         if cmd is not None:
             self.esp32_cmd_pub.publish(String(data=cmd))
             self.get_logger().info(f'ESP32 command → /esp32/cmd: {cmd}')
+
+
+def _unauthorized(reason: str = 'Unauthorized'):
+    """Return a websockets 13+ HTTP response object rejecting the handshake."""
+    from websockets.datastructures import Headers
+    from websockets.http11 import Response
+    return Response(
+        status_code=401,
+        reason_phrase='Unauthorized',
+        headers=Headers(),
+        body=reason.encode('utf-8'),
+    )
 
 
 class WSServer:
@@ -730,9 +757,101 @@ class WSServer:
 
     async def run(self) -> None:
         import websockets
-        async with websockets.serve(self.handler, HOST, PORT) as srv:
-            print(f'[WS] Server on ws://{HOST}:{PORT}')
+
+        expected_token = os.environ.get('WS_AUTH_TOKEN') \
+            or os.environ.get('ROBOT_BRAIN_TOKEN', '')
+
+        if not expected_token:
+            print(
+                '[WS] FATAL: WS_AUTH_TOKEN/ROBOT_BRAIN_TOKEN not set — '
+                'rejecting ALL connections (port 9091 will not accept '
+                'handshakes). Set WS_AUTH_TOKEN in deploy.sh before boot.',
+                file=sys.stderr,
+            )
+
+        async def process_request(connection, request):
+            """Reject the WebSocket handshake unless a valid token is supplied.
+
+            Reads the token from (in order):
+              1. URL query parameter ``?token=<value>``
+              2. ``Authorization: Bearer <token>`` header
+              3. ``Sec-WebSocket-Protocol: bearer, <token>`` subprotocol
+
+            If ``WS_AUTH_TOKEN`` / ``ROBOT_BRAIN_TOKEN`` is unset the server
+            rejects every connection — fail-closed rather than fail-open.
+            """
+            addr = str(connection.remote_address)
+
+            if not expected_token:
+                print(f'[WS] + rejected {addr} — no auth token configured',
+                      file=sys.stderr)
+                return _unauthorized('auth token not configured')
+
+            # 1. Query string
+            provided = self._extract_token_from_query(request.path)
+            # 2. Authorization header
+            if not provided:
+                auth_header = self._get_header(request.headers, 'authorization')
+                if auth_header and auth_header.lower().startswith('bearer '):
+                    provided = auth_header[7:].strip()
+            # 3. Sec-WebSocket-Protocol
+            if not provided:
+                proto = self._get_header(request.headers, 'sec-websocket-protocol')
+                provided = self._extract_token_from_subprotocol(proto)
+
+            if provided and hmac.compare_digest(provided, expected_token):
+                return None  # accept
+
+            print(f'[WS] + rejected {addr} — invalid or missing token',
+                  file=sys.stderr)
+            return _unauthorized('invalid or missing auth token')
+
+        async with websockets.serve(
+            self.handler,
+            HOST,
+            PORT,
+            process_request=process_request,
+        ) as srv:
+            print(f'[WS] Server on ws://{HOST}:{PORT} (auth={("on" if expected_token else "OFF — REJECTING")})')
             await asyncio.gather(self.broadcast_loop(), srv.__aenter__())
+
+    @staticmethod
+    def _get_header(headers, name: str) -> Optional[str]:
+        """Case-insensitive header lookup over websockets Headers / list of tuples."""
+        if headers is None:
+            return None
+        try:
+            return headers.get(name)
+        except Exception:
+            pass
+        for k, v in headers:
+            if k.lower() == name.lower():
+                return v
+        return None
+
+    @staticmethod
+    def _extract_token_from_query(path: str) -> Optional[str]:
+        """Pull ?token=... from a request path (handles ?token=a&other=b)."""
+        if not path:
+            return None
+        query_start = path.find('?')
+        if query_start < 0:
+            return None
+        from urllib.parse import parse_qs
+        qs = parse_qs(path[query_start + 1:])
+        vals = qs.get('token') or []
+        return vals[0] if vals else None
+
+    @staticmethod
+    def _extract_token_from_subprotocol(header: Optional[str]) -> Optional[str]:
+        """Read the token from ``Sec-WebSocket-Protocol: bearer, <token>``."""
+        if not header:
+            return None
+        for raw in header.split(','):
+            part = raw.strip()
+            if part.lower().startswith('bearer '):
+                return part[7:].strip()
+        return None
 
 
 def main() -> None:

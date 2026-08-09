@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Camera, Wifi, WifiOff, Maximize2, Minimize2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 
 const CAMERA_BASE_URL = (process.env.NEXT_PUBLIC_CAMERA_STREAM_URL || 'https://cam.nguyen-robot.io.vn').replace(/\/stream\/?$/, '');
@@ -18,6 +18,8 @@ export default function CameraPage() {
 
   // Snapshot polling — refresh frame every 200ms (~5 fps visual).
   // Uses ObjectURL for zero-copy, revokes the previous blob to avoid memory leaks.
+  const lastBlobUrlRef = useRef<string | null>(null);
+
   useEffect(() => {
     let alive = true;
 
@@ -28,7 +30,11 @@ export default function CameraPage() {
         if (res.ok && alive) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
-          setSnapshotUrl(prev => { URL.revokeObjectURL(prev); return url; });
+          if (lastBlobUrlRef.current) {
+            URL.revokeObjectURL(lastBlobUrlRef.current);
+          }
+          lastBlobUrlRef.current = url;
+          setSnapshotUrl(url);
           setIsOnline(true);
         } else {
           setIsOnline(false);
@@ -54,7 +60,14 @@ export default function CameraPage() {
     // Start snapshot loop
     const interval = setInterval(fetchFrame, 200);
     fetchFrame(); // first frame immediately
-    return () => { alive = false; clearInterval(interval); };
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      if (lastBlobUrlRef.current) {
+        URL.revokeObjectURL(lastBlobUrlRef.current);
+        lastBlobUrlRef.current = null;
+      }
+    };
   }, []);
 
   // Update timestamp every second

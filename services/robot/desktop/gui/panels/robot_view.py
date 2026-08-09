@@ -79,12 +79,14 @@ class RobotTelemetryPanel(QWidget):
         self._lbl_esp_tof = _val(el, 1, 0, 'tof: -')
         self._lbl_esp_cyl = _val(el, 1, 1, 'cyl: -')
         self._lbl_esp_cargo = _val(el, 1, 2, 'cargo: -')
+        self._lbl_esp_power = _val(el, 2, 0, 'power: -')
+        self._lbl_esp_imu = _val(el, 2, 1, 'IMU: -')
         self._lbl_esp_nav = _mono_label('nav vx/vy/w: -')
         self._lbl_esp_nav.setStyleSheet('color:#c9d1d9;')
-        el.addWidget(self._lbl_esp_nav, 2, 0, 1, 3)
+        el.addWidget(self._lbl_esp_nav, 3, 0, 1, 3)
         self._lbl_motors = _mono_label('motors: -')
         self._lbl_motors.setStyleSheet('color:#c9d1d9;')
-        el.addWidget(self._lbl_motors, 3, 0, 1, 3)
+        el.addWidget(self._lbl_motors, 4, 0, 1, 3)
         root.addWidget(g_esp)
 
         # ── Navigation / Survey group ───────────────────────────────
@@ -189,6 +191,25 @@ class RobotTelemetryPanel(QWidget):
         cyl = st.get('cyl', '-')
         self._lbl_esp_cyl.setText(f'cyl: {cyl}')
         self._lbl_esp_cargo.setText(f'cargo: {st.get("cargo", "-")}')
+        # Power (INA226)
+        pw = s.esp32_power or {}
+        if pw:
+            v = pw.get('bus_v', 0)
+            c = pw.get('current_ma', 0)
+            bat = pw.get('battery_pct', 0)
+            bat_color = '#9ece6a' if bat > 30 else '#ff9e64' if bat > 15 else '#f7768e'
+            self._lbl_esp_power.setText(f'bat:{bat}%  V:{v/1000:.1f}V  I:{c:.0f}mA')
+            self._lbl_esp_power.setStyleSheet(f'color:{bat_color};')
+        else:
+            self._lbl_esp_power.setText('power: -')
+        # IMU (BNO055)
+        imu = s.esp32_imu or {}
+        if imu:
+            heading = imu.get('heading', imu.get('yaw', 0))
+            self._lbl_esp_imu.setText(f'IMU heading:{heading:.1f}°')
+            self._lbl_esp_imu.setStyleSheet('color:#c9d1d9;')
+        else:
+            self._lbl_esp_imu.setText('IMU: -')
         nav_v = esp.get('nav', []) or [0, 0, 0]
         self._lbl_esp_nav.setText(f'nav vx/vy/w: {nav_v}')
         if motors:

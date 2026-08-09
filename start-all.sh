@@ -49,7 +49,41 @@ if [ ! -f apps/api/.env ]; then
     if [ -f apps/api/.env.example ]; then
         cp apps/api/.env.example apps/api/.env
         echo "  apps/api/.env created from .env.example"
-        echo "  ❗ EDIT IT with real secrets before relying on this deployment!"
+
+        # --- Generate random secrets if still placeholders ---
+        NEEDS_REAL_SECRETS=false
+        if grep -q "your-jwt-secret-here" apps/api/.env 2>/dev/null || \
+           grep -q "your-robot-brain-token-here" apps/api/.env 2>/dev/null; then
+            NEEDS_REAL_SECRETS=true
+        fi
+
+        if [ "$NEEDS_REAL_SECRETS" = true ]; then
+            if command -v openssl >/dev/null 2>&1; then
+                JWT_SECRET=$(openssl rand -hex 32)
+                ROBOT_TOKEN=$(openssl rand -hex 32)
+                sed -i "s/your-jwt-secret-here/$JWT_SECRET/" apps/api/.env
+                sed -i "s/your-robot-brain-token-here/$ROBOT_TOKEN/" apps/api/.env
+                echo ""
+                echo "  ╔══════════════════════════════════════════════════════════╗"
+                echo "  ║  ⚠️  AUTO-GENERATED SECRETS — SAVE THEM NOW!           ║"
+                echo "  ║                                                        ║"
+                echo "  ║  JWT_SIGN_SECRET=$JWT_SECRET"
+                echo "  ║  ROBOT_BRAIN_TOKEN=$ROBOT_TOKEN"
+                echo "  ║                                                        ║"
+                echo "  ║  Copy these to GitHub Secrets if you use CI/CD.        ║"
+                echo "  ║  They are written to apps/api/.env only.               ║"
+                echo "  ╚══════════════════════════════════════════════════════════╝"
+                echo ""
+            else
+                echo ""
+                echo "  ❌ FATAL: apps/api/.env has placeholder secrets but openssl is not installed."
+                echo "  Cannot auto-generate secure secrets. Aborting start."
+                echo "  Install openssl (apt install openssl) or manually edit apps/api/.env"
+                exit 1
+            fi
+        else
+            echo "  ✓ apps/api/.env has real secrets"
+        fi
     else
         echo "  ❌ ERROR: apps/api/.env.example not found. Cannot bootstrap."
     fi

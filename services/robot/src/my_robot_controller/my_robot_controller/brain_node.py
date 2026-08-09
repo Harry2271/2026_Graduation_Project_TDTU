@@ -125,12 +125,19 @@ class BrainNode(Node):
         self._bridge_connected: bool = False
         self._api_client = BrainApiClient()
         self._api_client.on_job_dispatch(self._handle_job_dispatch)
+        self._api_client.on_job_cancel(self._handle_job_cancel)
 
         # Exactly one worker consumes jobs. Socket.io events are queued so a
         # second dispatch can never start a parallel motor sequence.
         self._job_queue: asyncio.Queue[dict] = asyncio.Queue()
         self._job_worker_task: asyncio.Task[None] | None = None
         self._health_task: asyncio.Task[None] | None = None
+        self._active_job_id: str | None = None
+        # Jobs that have been cancelled by the API while still queued or
+        # actively executing. _execute_job pops them off as it sees them.
+        self._cancelled_job_ids: set[str] = set()
+
+        self._error_pub = self.create_publisher(String, '/robot/errors', 10)
 
         # AprilTag detection subscriber — cache all visible tags by ID.
         self._tag_cache: dict[int, dict] = {}
@@ -201,6 +208,14 @@ class BrainNode(Node):
         self._home_pose_timer = self.create_timer(1.0, self._try_capture_home_pose)
         self._home_pose_captured = False
 
+        # ── App-driven Auto mode ────────────────────────────────────────────
+        # web_bridge publishes /control/mode ('AUTO'|'MANUAL') when the
+        # operator toggles mode in the desktop app.  brain subscribes so
+        # it knows when autonomous tasks are allowed.
+        self._app_auto_mode: bool = False
+        self._control_mode_sub = self.create_subscription(
+            String, '/control/mode', self._on_control_mode, 10)
+
         # Autonomous cargo workflow state.  The robot stays at home until
         # the microswitch reports a package, then drives forward looking for
         # any fresh AprilTag, reverses, unloads, and returns home.
@@ -221,6 +236,7 @@ class BrainNode(Node):
         self._warehouse_target_distance_mm: int = 300
         self._warehouse_timeout_per_tag: float = 30.0
         self._warehouse_mission_timeout: float = 300.0
+        self._snapshot_pose: tuple[float, float, float] | None = None
 
         self.get_logger().info(f'brain_node started in state {self._state}')
 
@@ -228,6 +244,55 @@ class BrainNode(Node):
         old = self._state
         self._state = new_state
         self.get_logger().info(f'state: {old} -> {new_state} ({reason})')
+
+    def _is_cancelled(self, job_id: str) -> bool:
+        """Return True if this job was cancelled by the API."""
+        if job_id in self._cancelled_job_ids:
+            self._cancelled_job_ids.discard(job_id)
+            return True
+        return False
+
+    # ── App control mode subscription ───────────────────────────────────
+
+    def _on_control_mode(self, msg: String) -> None:
+        """Handle AUTO/MANUAL mode toggle from the desktop/web app.
+
+        When AUTO is received, enable autonomous tasks (cargo poll, etc.).
+        When MANUAL is received, cancel any running autonomous task.
+        """
+        mode = msg.data.strip().upper()
+        was_auto = self._app_auto_mode
+        self._app_auto_mode = (mode == 'AUTO')
+        if self._app_auto_mode and not was_auto:
+            self.get_logger().info('App switched to AUTO — autonomous tasks enabled')
+        elif not self._app_auto_mode and was_auto:
+            self.get_logger().info('App switched to MANUAL — cancelling autonomous tasks')
+            if self._autonomous_task is not None and not self._autonomous_task.done():
+                self._autonomous_task.cancel()
+                asyncio.create_task(self._stop())
+                self.transition_to(BrainState.IDLE, 'switched to MANUAL')
+
+    # ── Error reporting ─────────────────────────────────────────────────
+
+    async def _emit_error(self, severity: str, code: str, message: str) -> None:
+        """Publish an error/warning to /robot/errors and to the API via Socket.io.
+
+        severity: 'warning' | 'error' | 'critical'
+        code: machine-readable identifier (e.g. 'NAV_FAILED', 'DOCK_TIMEOUT')
+        message: human-readable description (Vietnamese preferred)
+        """
+        payload = json.dumps({
+            'ts': time.time(),
+            'severity': severity,
+            'code': code,
+            'message': message,
+        })
+        self._error_pub.publish(String(data=payload))
+        self.get_logger().error(f'[{severity.upper()}] {code}: {message}')
+        try:
+            await self._api_client.emit_robot_error(severity, code, message)
+        except Exception as e:
+            self.get_logger().warn(f'Failed to emit error to API: {e}')
 
     @property
     def state(self) -> BrainState:
@@ -282,8 +347,10 @@ class BrainNode(Node):
             x = tf.transform.translation.x
             y = tf.transform.translation.y
             q = tf.transform.rotation
-            yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                              1.0 - 2.0 * (q.y ** 2 + q.z ** 2))
+            # Correct yaw formula: siny_cosp = 2*(qw*qz + qx*qy)
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
             self._home_pose = (x, y, yaw)
             self._home_pose_captured = True
             self.get_logger().info(
@@ -583,8 +650,10 @@ class BrainNode(Node):
             x = tf.transform.translation.x
             y = tf.transform.translation.y
             q = tf.transform.rotation
-            yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                              1.0 - 2.0 * (q.y ** 2 + q.z ** 2))
+            # Correct yaw formula: siny_cosp = 2*(qw*qz + qx*qy)
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
             return (x, y, yaw)
         except Exception:
             return None
@@ -621,9 +690,17 @@ class BrainNode(Node):
         await asyncio.sleep(1.5)
         await self._stop()
 
-    def _warehouse_tag_pose(self, tag: dict) -> tuple[float, float, float] | None:
-        """Convert a camera-frame tag snapshot into an approximate map approach pose."""
-        pose = self._get_robot_pose()
+    def _warehouse_tag_pose(
+        self,
+        tag: dict,
+        detection_pose: tuple[float, float, float] | None = None,
+    ) -> tuple[float, float, float] | None:
+        """Convert a camera-frame tag snapshot using its detection pose.
+
+        A detection's x/z are relative to the robot pose at capture time;
+        using a later pose would send Nav2 to the wrong map position.
+        """
+        pose = detection_pose or self._get_robot_pose()
         if pose is None:
             return None
         rx, ry, yaw = pose
@@ -640,20 +717,31 @@ class BrainNode(Node):
                 tag_y - approach_m * math.sin(yaw), yaw)
 
     async def _run_warehouse_mission(self) -> None:
-        """Scan, dock/unload tags left-to-right, and return home once."""
+        """Scan, dock/unload tags left-to-right, and return home once.
+
+        After processing each tag, the robot re-scans from its new position
+        to build an accurate plan for the remaining tags.  The detection
+        pose is paired with each snapshot so that the camera-frame → map
+        conversion uses the correct origin.
+        """
         started = time.monotonic()
         self._warehouse_completed_ids.clear()
         self._warehouse_tag_queue.clear()
         self._warehouse_current_tag = None
+        self._snapshot_pose = None
         try:
             await self.connect_bridge()
+
+            # ── Initial scan ──────────────────────────────────────────────
             self.transition_to(BrainState.WAREHOUSE_SCAN, 'warehouse mission')
             self._publish_demo_status('SCANNING', message='Đang quét AprilTag trong khu kho')
             self._clear_tag()
             await asyncio.sleep(self._warehouse_scan_duration)
+            self._snapshot_pose = self._get_robot_pose()
 
             requested = set(self._warehouse_specific_tag_ids or [])
-            tags = self._get_fresh_tags(max_age_s=1.0, max_dist_m=10.0)
+            tags = self._get_fresh_tags(max_age_s=self._warehouse_scan_duration + 1.0,
+                                        max_dist_m=10.0)
             if requested:
                 tags = [tag for tag in tags if tag.get('tag_id') in requested]
             if not tags:
@@ -666,6 +754,7 @@ class BrainNode(Node):
                 'PLANNED', message='Thứ tự: ' + ', '.join(
                     f'#{tag["tag_id"]}' for tag in tags))
 
+            # ── Tag processing loop ───────────────────────────────────────
             while self._warehouse_tag_queue:
                 if self._warehouse_cancel_flag:
                     raise asyncio.CancelledError
@@ -675,7 +764,7 @@ class BrainNode(Node):
                 tag = self._warehouse_tag_queue.pop(0)
                 tag_id = int(tag['tag_id'])
                 self._warehouse_current_tag = tag
-                approach = self._warehouse_tag_pose(tag)
+                approach = self._warehouse_tag_pose(tag, self._snapshot_pose)
                 if approach is None:
                     raise RuntimeError(f'Không có pose để đến tag #{tag_id}')
 
@@ -685,8 +774,10 @@ class BrainNode(Node):
                 if not await self._nav_to_pose(*approach):
                     raise RuntimeError(f'Nav2 không đến được tag #{tag_id}')
 
-                # Require detections made after reaching the approach pose.
+                # Clear stale detections; fresh ones arrive from the detector
+                # at 10 Hz once we are at the new position.
                 self._clear_tag()
+                self._snapshot_pose = self._get_robot_pose()
                 self.transition_to(BrainState.WAREHOUSE_DOCK, f'tag {tag_id}')
                 self._publish_demo_status('DOCKING', str(tag_id),
                                           f'Đang căn AprilTag #{tag_id}')
@@ -707,7 +798,30 @@ class BrainNode(Node):
                 self._warehouse_completed_ids.add(tag_id)
                 self.transition_to(BrainState.WAREHOUSE_LEAVE_DOCK, f'tag {tag_id}')
                 await self._warehouse_leave_dock()
+
+                # ── Re-scan from the post-dock position ───────────────────
                 self._clear_tag()
+                self.transition_to(BrainState.WAREHOUSE_SCAN,
+                                   f're-scan after tag {tag_id}')
+                self._publish_demo_status('SCANNING',
+                                          message=f'Sau tag #{tag_id}, đang quét lại')
+                await asyncio.sleep(self._warehouse_scan_duration)
+                self._snapshot_pose = self._get_robot_pose()
+
+                if self._warehouse_cancel_flag:
+                    raise asyncio.CancelledError
+
+                fresh = self._get_fresh_tags(
+                    exclude_ids=self._warehouse_completed_ids,
+                    max_age_s=self._warehouse_scan_duration + 1.0,
+                    max_dist_m=10.0,
+                )
+                if requested:
+                    fresh = [t for t in fresh if t.get('tag_id') in requested]
+                self._warehouse_tag_queue = fresh
+                self.get_logger().info(
+                    'Remaining tags (left→right): ' +
+                    ', '.join(f'#{t["tag_id"]}' for t in fresh))
 
             self.transition_to(BrainState.WAREHOUSE_RETURN_HOME, 'all tags complete')
             self._publish_demo_status('RETURNING', message='Đã xong các tag, đang về Home')
@@ -1435,11 +1549,36 @@ class BrainNode(Node):
         self.get_logger().info(f'Enqueue job {job_id} (op={op_id})')
         await self._job_queue.put(payload)
 
+    async def _handle_job_cancel(self, payload: dict) -> None:
+        """Called when the API requests cancellation of a job.
+
+        Always ack immediately so the API can release the destination slot.
+        If a job is currently running, set the cancel flag and let
+        `_execute_job` abort cleanly (stop motors, emit FAILED).
+        """
+        job_id = payload.get('jobId', '')
+        self.get_logger().warn(f'Cancel requested for job {job_id}')
+        if job_id:
+            self._cancelled_job_ids.add(str(job_id))
+        if self._active_job_id == job_id:
+            await self._stop()
+        try:
+            await self._api_client.emit_job_cancel_ack(job_id)
+        except Exception as exc:
+            self.get_logger().warn(f'emit_job_cancel_ack failed: {exc}')
+
     async def _cargo_poll_loop(self) -> None:
-        """Poll cargo presence while idle and trigger autonomous delivery."""
+        """Poll cargo presence while idle and trigger autonomous delivery.
+
+        Only activates when the app has set AUTO mode.  This prevents
+        the robot from starting autonomous tasks while the operator is
+        still in MANUAL control.
+        """
         while rclpy.ok():
             try:
-                if self._state == BrainState.IDLE and self._autonomous_task is None:
+                if (self._app_auto_mode
+                        and self._state == BrainState.IDLE
+                        and self._autonomous_task is None):
                     await self._poll_cargo_sensor()
                 await asyncio.sleep(CARGO_POLL_INTERVAL_S)
             except asyncio.CancelledError:
@@ -1458,9 +1597,17 @@ class BrainNode(Node):
         self.get_logger().info('Job worker started')
         while rclpy.ok():
             payload = await self._job_queue.get()
-            job_id = payload.get('_id', 'unknown')
+            job_id = str(payload.get('_id', 'unknown'))
             try:
+                # Drop the job if the API cancelled it while it was queued.
+                if job_id in self._cancelled_job_ids:
+                    self.get_logger().warn(
+                        f'Job {job_id} was cancelled while queued — skipping')
+                    self._cancelled_job_ids.discard(job_id)
+                    continue
+
                 last_error: str | None = None
+                self._active_job_id = job_id
                 for attempt in range(1, _JOB_MAX_ATTEMPTS + 1):
                     try:
                         await self._api_client.emit_job_phase(
@@ -1484,6 +1631,7 @@ class BrainNode(Node):
                     await self._api_client.emit_job_status(job_id, 'FAILED')
                     self.transition_to(BrainState.ERROR, f'job {job_id} retries exhausted')
             finally:
+                self._active_job_id = None
                 self._job_queue.task_done()
         self.get_logger().info('Job worker stopped')
 
@@ -1498,9 +1646,14 @@ class BrainNode(Node):
         **Exceptions propagate to the caller** — the worker loop decides
         whether to retry or emit FAILED.
         """
-        job_id = job.get('_id', 'unknown')
+        job_id = str(job.get('_id', 'unknown'))
         op_id = job.get('operationId')
         self.get_logger().info(f'Starting job {job_id} (attempt {attempt})')
+
+        # If the API cancelled this job before execution started, abort early.
+        if self._is_cancelled(job_id):
+            self.get_logger().warn(f'Job {job_id} cancelled before start — skipping')
+            return
 
         # ── Timing: start clock ──────────────────────────────────────────
         t_start = time.time()
@@ -1524,18 +1677,35 @@ class BrainNode(Node):
         target_mm = job.get('dock_distance_mm', 40)
 
         if 'x' not in dropoff or 'y' not in dropoff:
+            await self._emit_error('error', 'JOB_NO_COORDINATES',
+                                   f'Job {job_id}: no calibrated dropoff coordinates')
             raise RuntimeError(f'Job {job_id} has no calibrated dropoff coordinates')
+        if tag_id is None:
+            await self._emit_error('error', 'JOB_NO_APRILTAG',
+                                   f'Job {job_id}: slot chưa được calibrate AprilTag')
+            raise RuntimeError(f'Job {job_id}: no AprilTag ID configured. '
+                               f'Calibrate slot in /calibrate page first.')
         reached = await self._nav_to_pose(
             dropoff.get('x', 0.0),
             dropoff.get('y', 0.0),
             dropoff.get('theta', 0.0))
         if not reached:
+            await self._emit_error('error', 'NAV_FAILED',
+                                   f'Job {job_id}: Nav2 không đến được '
+                                   f'({dropoff.get("x", 0):.2f}, {dropoff.get("y", 0):.2f})')
             raise RuntimeError(f'Nav2 failed to reach dropoff ({dropoff.get("x", 0)}, {dropoff.get("y", 0)})')
 
         # ── Timing: arrived at dropoff ───────────────────────────────────
         t_dropoff_at = datetime.now(timezone.utc).isoformat()
         travel_to_dropoff_ms = int((time.time() - t_dropoff_start) * 1000)
         self.get_logger().info(f'Timing: arrived at dropoff after {travel_to_dropoff_ms}ms')
+
+        # ── Cancel check ────────────────────────────────────────────────
+        if self._is_cancelled(job_id):
+            await self._stop()
+            await self._api_client.emit_job_status(job_id, 'FAILED')
+            self.transition_to(BrainState.IDLE, f'job {job_id} cancelled before dock')
+            return
 
         # ── Phase 3: Dock + firmware unload sequence ────────────────────
         t_unload_start = time.time()
@@ -1546,7 +1716,10 @@ class BrainNode(Node):
             await self._api_client.emit_job_phase(job_id, 'AT_DOCK')
             dock_ok = await self._dock_align(tag_id, target_mm)
             if not dock_ok:
-                raise RuntimeError('Dock align failed')
+                await self._emit_error('error', 'DOCK_ALIGN_TIMEOUT',
+                                       f'Job {job_id}: không căn được AprilTag #{tag_id} '
+                                       f'({target_mm}mm)')
+                raise RuntimeError(f'Dock align failed for tag {tag_id}')
 
         # 3b: Hand off to ESP32 firmware for autonomous unload
         self.get_logger().info(f'Sending begin_dock to firmware (op={op_id})...')
@@ -1554,6 +1727,8 @@ class BrainNode(Node):
         await self._bridge.begin_dock(tag_id or 0, target_mm, operation_id=op_id)
         unload_ok = await self._poll_unload_state()
         if not unload_ok:
+            await self._emit_error('error', 'UNLOAD_TIMEOUT',
+                                   f'Job {job_id}: firmware unload timeout tại tag #{tag_id}')
             raise RuntimeError(f'Job {job_id} unload timed out')
 
         # ── Timing: unload complete ──────────────────────────────────────

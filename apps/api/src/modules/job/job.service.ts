@@ -202,6 +202,22 @@ export class JobService {
     if (job.status === JobStatus.COMPLETED || job.status === JobStatus.CANCELLED)
       throw new NotFoundException(`Job "${jobId}" đã kết thúc`);
 
+    // If the brain is online, notify it first so it can abort an in-flight
+    // job before we release the destination slot. Wait briefly for an ack
+    // so we don't free the slot while the robot is still trying to dock.
+    if (this.robotService.isBrainConnected()) {
+      try {
+        const acked = await this.robotGateway.dispatchCancel(jobId, 500);
+        if (!acked) {
+          this.logger.warn(
+            `Job ${jobId} cancel — brain did not ack within 500ms, proceeding anyway`,
+          );
+        }
+      } catch (err) {
+        this.logger.warn(`Job ${jobId} cancel notification failed: ${err}`);
+      }
+    }
+
     // Release the destination reservation. There is no source slot in this
     // unload-only workflow.
     await this.shelfService.updateSlotStatus(job.toSlotCode, SlotStatus.AVAILABLE);

@@ -17,6 +17,13 @@ function buildOptions() {
 
 export function setAuthToken(token: string | null) {
   cachedToken = token;
+  // If a socket is already connected, update its auth and reconnect
+  // so the server sees the new token on the next handshake.
+  if (socket) {
+    socket.auth = token ? { token } : undefined;
+    socket.disconnect();
+    socket.connect();
+  }
 }
 
 export function getSocket(): Socket {

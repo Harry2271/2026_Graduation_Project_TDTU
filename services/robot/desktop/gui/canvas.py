@@ -80,6 +80,33 @@ class MapCanvas(QWidget):
         """Repaint the canvas after state or telemetry changes."""
         self.update()
 
+    def _draw_obstacle_layer(self, p: QPainter, layer: dict) -> None:
+        """Render the awareness-zone occupancy grid as a faint overlay."""
+        try:
+            data = layer.get('data') or []
+            w = int(layer.get('width', 0))
+            h = int(layer.get('height', 0))
+            res = float(layer.get('resolution', 0.05))
+            ox = float(layer.get('origin_x', 0))
+            oy = float(layer.get('origin_y', 0))
+        except (TypeError, ValueError):
+            return
+        if w <= 0 or h <= 0 or not data or len(data) < w * h:
+            return
+        # Mark every occupied cell — sample every Nth cell for speed.
+        step = max(1, int(0.5 / res))
+        for jy in range(0, h, step):
+            for ix in range(0, w, step):
+                val = data[jy * w + ix]
+                if val is None or val < 50:
+                    continue
+                wx = ox + (ix + 0.5) * res
+                wy = oy + (jy + 0.5) * res
+                sx, sy = self._world_to_screen(wx, wy)
+                if 0 <= sx <= self.width() and 0 <= sy <= self.height():
+                    p.fillRect(int(sx) - 2, int(sy) - 2, 4, 4,
+                               QColor(255, 80, 80, 90))
+
     # ── Coordinate helpers ────────────────────────────────────────────────
     def _px_per_m(self) -> float:
         return self.width() / max(self._range_m, 0.5)
@@ -339,6 +366,11 @@ class MapCanvas(QWidget):
                        else QColor(0, 0, 0, 0))
             pts = [QPointF(*self._world_to_screen(x, y)) for x, y in poly]
             p.drawPolygon(QPolygonF(pts))
+
+        # ── Obstacle layer (2m awareness zone) ─────────────────────────────
+        obs = self.state.obstacle_layer
+        if isinstance(obs, dict) and obs.get('data'):
+            self._draw_obstacle_layer(p, obs)
 
         # ── Map lines (walls) ─────────────────────────────────────────────
         if self.state.canvas_mode == 'design':

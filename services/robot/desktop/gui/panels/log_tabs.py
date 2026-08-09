@@ -1,8 +1,12 @@
 """Log / trip / help tabs."""
 from __future__ import annotations
+import csv
 import time
 from typing import Any
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QTextBrowser
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit, QTextBrowser,
+    QPushButton, QFileDialog,
+)
 
 
 class LogPanel(QWidget):
@@ -28,6 +32,58 @@ class TripPanel(QWidget):
         self.text = QPlainTextEdit()
         self.text.setReadOnly(True)
         layout.addWidget(self.text)
+        row = QHBoxLayout()
+        self.btn_export = QPushButton('Xuất CSV')
+        self.btn_export.clicked.connect(self._export_csv)
+        row.addWidget(self.btn_export)
+        self.btn_clear = QPushButton('Xóa log')
+        self.btn_clear.clicked.connect(self._clear_log)
+        row.addWidget(self.btn_clear)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+    def _export_csv(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        if not self.state.trip_log:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Xuất CSV', f'trip_log_{time.strftime("%Y%m%d_%H%M%S")}.csv',
+            'CSV (*.csv)')
+        if not path:
+            return
+        try:
+            with open(path, 'w', encoding='utf-8', newline='') as f:
+                w = csv.writer(f)
+                w.writerow(['start_ts', 'end_ts', 'duration_s', 'status',
+                            'label', 'x', 'y', 'theta'])
+                for entry in self.state.trip_log:
+                    goal = entry.get('goal', {}) or {}
+                    w.writerow([
+                        entry.get('start_ts', 0),
+                        entry.get('end_ts', 0),
+                        entry.get('duration_s', 0),
+                        entry.get('status', ''),
+                        goal.get('label', ''),
+                        float(goal.get('x', 0)),
+                        float(goal.get('y', 0)),
+                        float(goal.get('theta', 0)),
+                    ])
+        except OSError as exc:
+            self.text.append(f'\nXuất CSV lỗi: {exc}')
+
+    def _clear_log(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        if not self.state.trip_log:
+            return
+        ok = QMessageBox.question(
+            self, 'Xóa trip log',
+            f'Xóa toàn bộ {len(self.state.trip_log)} chuyến đi đã lưu?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if ok == QMessageBox.StandardButton.Yes:
+            self.state.trip_log = []
+            from ..state import save_json, _TRIP_LOG_PATH
+            save_json(_TRIP_LOG_PATH, [])
+            self.refresh()
 
     def refresh(self) -> None:
         if not self.state.trip_log:

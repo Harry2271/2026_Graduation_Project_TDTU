@@ -472,10 +472,11 @@ void handleStop()
 
 void handleEStop()
 {
-    // Converted to soft stop — e-stop hardware latch disabled per
-    // operator decision. Drivers remain enabled, PWM goes to 0.
-    g_e_stop_active = false;
-    g_pid_enabled   = true;
+    // CRITICAL safety path — hardware disable of BTS7960 drivers.
+    // Pulls EN pin LOW on every driver so no PWM can produce torque,
+    // even if the firmware later writes PWM by mistake.
+    g_e_stop_active = true;
+    g_pid_enabled   = false;
     g_nav_vx    = 0;
     g_nav_vy    = 0;
     g_nav_omega = 0;
@@ -483,10 +484,11 @@ void handleEStop()
         g_target_speeds[i] = 0;
         g_ramped_speeds[i] = 0;
         g_kick_ticks[i] = 0;
-        g_motors[i].coast();
-        g_motors[i].enable();
+        // emergencyStop() pulls EN LOW and zeros PWM. Disarms until
+        // an explicit handleEStopClear() re-arms the drivers.
+        g_motors[i].emergencyStop();
     }
-    PiSerial.println("ACK: stop-soft (was E-STOP)");
+    PiSerial.println("ACK: E-STOP (hardware disabled)");
 }
 
 void handleEStopClear()

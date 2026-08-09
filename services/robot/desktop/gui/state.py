@@ -144,6 +144,7 @@ class OperatorState:
         self._next_waypoint_id: int = 1
         # Placement intent for the map editor: ordinary waypoint or warehouse.
         self.waypoint_kind: str = 'waypoint'
+        self.selected_waypoint_id: int = -1
 
         # Navigation
         self.home_pose: dict | None = None
@@ -165,6 +166,17 @@ class OperatorState:
         self.replay_start_time: float = 0.0
         self.replay_playing: bool = False
         self.replay_data_view: list[dict] = []
+
+        # ESP32 telemetry extensions (populated by _handle)
+        self.esp32_imu: dict | None = None
+        self.esp32_power: dict | None = None
+
+        # Robot error log (brain → web_bridge → desktop, real-time alerts)
+        self.robot_errors: list[dict] = []
+        self.robot_errors_ts: float = 0.0
+
+        # Obstacle layer (2m awareness zone grid from bridge)
+        self.obstacle_layer: dict | None = None
 
         # Auto-survey
         self.survey_running: bool = False

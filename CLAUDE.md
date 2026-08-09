@@ -14,7 +14,7 @@ This is a **Turborepo + yarn-workspaces** monorepo containing the full-stack AGV
 | `apps/web/` | Web Frontend | Next.js 16 | `3000` | ✅ Docker (path-filtered) |
 | `apps/mobile/` | Mobile App | Expo 55 (Router) | — | ❌ none (per project decision) |
 | `services/robot/` | Robot Bridge (Pi 5) | Python / ROS 2 | `9091` (WS) | ✅ path-filtered (direct PM2) |
-| `firmware/` | ESP32-S3 real-time motor controller | PlatformIO / Arduino | UART `115200` | ❌ local flash (no CI/CD) |
+| `firmware/` | ESP32-S3 real-time motor controller | PlatformIO / Arduino | USB CDC + UART `115200` | ❌ local flash (no CI/CD) |
 | `packages/` | Shared libraries (future) | — | — | — |
 
 Per-app `CLAUDE.md` files: `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`, `apps/mobile/CLAUDE.md`, `services/robot/CLAUDE.md`, `firmware/CLAUDE.md`.
@@ -56,16 +56,16 @@ This section documents the physical robot and the firmware/software contract tha
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  Sensing Layer (SLAM source — Python)                      │
-│  web_bridge.py → LiDAR + WebSocket (port 9091)             │
-│  TF → pose (map → base_footprint)                          │
+│  Sensing Layer (SLAM source — ROS 2 Jazzy/Python)          │
+│  web_bridge.py → LiDAR + raw WebSocket (port 9091)         │
+│  slam_toolbox → map + TF (map → odom → base_footprint)     │
 └────────────────┬───────────────────────────────────────────┘
-                 │ ROS 2 topics + serial
+                 │ ROS 2 topics
 ┌────────────────▼───────────────────────────────────────────┐
-│  Gateway Layer (Robot Manager — Python bridge)             │
-│  • Serial to ESP32                                          │
-│  • Mecanum kinematics                                       │
-│  • Encoder + IMU → ROS 2 Odometry                          │
+│  Gateway Layer (Robot brain + telemetry node)              │
+│  • esp32_telemetry_node is sole serial owner              │
+│  • brain_node → Nav2 + job workflow                        │
+│  • Encoder + IMU → odometry and heading correction         │
 └────────────────┬───────────────────────────────────────────┘
                  │ Serial (115200 baud)
 ┌────────────────▼───────────────────────────────────────────┐
@@ -107,8 +107,9 @@ v_rr = Vx − Vy + ω(L + W)
 
 The contract between `services/robot/` and `firmware/`. Both sides must agree byte-for-byte; changes here require a coordinated update in `firmware/src/modules/CommandParser.cpp` and the corresponding Python serial handler in `services/robot/`.
 
-- **Physical:** UART2 on ESP32-S3 (GPIO 43 TX / GPIO 44 RX) ↔ Pi 5 UART. **Baud:** 115200, 8N1, newline-terminated.
+- **Physical:** USB CDC (`/dev/ttyACM0` on Pi 5, managed exclusively by `esp32_telemetry_node.py`). Backup: UART2 on ESP32-S3 (GPIO 43 TX / GPIO 44 RX). **Baud:** 115200, 8N1, newline-terminated.
 - **Framing:** JSON preferred, with an ASCII fallback for debugging and the web UI.
+- **Only one process may own the serial link** — `esp32_telemetry_node` is that process; all other ROS 2 nodes talk to the ESP32 via `/esp32/cmd`.
 
 **JSON commands (Pi → ESP32):**
 
@@ -122,6 +123,11 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `{"cmd":"get_encoder"}` / `{"cmd":"reset_encoder"}` | Encoder query / zero |
 | `{"cmd":"set_pid","motor_id":0,"kp":1.0,"ki":0.1,"kd":0.01}` | PID gain update |
 | `{"cmd":"heartbeat"}` | Reset watchdog (Pi must send within `HEARTBEAT_TIMEOUT_MS`, default 2000) |
+| `{"cmd":"cylinder_extend"}` | Extend electric cylinder (dock) |
+| `{"cmd":"cylinder_retract"}` | Retract electric cylinder |
+| `{"cmd":"cylinder_stop"}` | Stop cylinder immediately |
+| `{"cmd":"begin_dock"}` | Start full docking/unload sequence |
+| `{"cmd":"cancel_dock"}` | Cancel docking sequence |
 | `{"cmd":"obstacle_left"\|"obstacle_right"\|"obstacle_front"\|"obstacle_clear"}` | Reactive obstacle events (see `ObstacleAvoidance` module) |
 
 **JSON responses (ESP32 → Pi):**
@@ -130,8 +136,15 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 |---|---|
 | `128` | `{"type":128,"data":{...}}` — command ACK |
 | `129` | `{"type":129,"data":{"error":"..."}}` — error |
-| `130` | `{"type":130,"data":{"motors":[{id,name,count,rpm},...]}}` — encoder snapshot |
-| `131` | `{"type":131,"data":{uptime_ms,mode,e_stop,pid,max_pct,motors:[...]}}` — status |
+| `130` | `{"type":130,"data":{"encoders":[{id,name,count,rpm},...]}}` — encoder snapshot |
+| `131` | `{"type":131,"data":{uptime_ms,mode,e_stop,pid,max_pct,motors:[...],ir:[...],st:{...}}}` — full status |
+| `132` | `{"type":132,"data":{"seq":N,"status":"accepted"}}` — move ack (with sequence ID) |
+| `133` | `{"type":133,"data":{"bus_v":...,"current_a":...,"power_w":...,"soc_pct":...}}` — battery/power (INA226) |
+| `134` | `{"type":134,"data":{"yaw":...,"pitch":...,"roll":...,"temp":...,"cal":{...}}}` — IMU heading (BNO055, 20 Hz) |
+| `135` | `{"type":135,"data":{"ir":[bool,bool,bool,bool]}}` — IR proximity sensor state |
+| `136` | `{"type":136,"data":{"distance_mm":...,"obstacle":bool}}` — front Sharp distance sensor |
+| `140` | `{"type":140,"data":{"state":N,"error":bool}}` — cylinder unload state (0-6, see firmware/AutoRoam) |
+| `141` | `{"type":141,"data":{"cargo":bool}}` — VL53L0X cargo sensor (true = cargo present at dock) |
 
 **ASCII fallback (one command per line, useful for `pio device monitor` and the web UI):**
 

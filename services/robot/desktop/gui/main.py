@@ -12,7 +12,7 @@ import sys
 import time
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, Signal, Slot
+from PySide6.QtCore import Qt, QTimer, QSettings, Signal, Slot
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter, QVBoxLayout,
@@ -59,9 +59,15 @@ class OperatorWindow(QMainWindow):
     def __init__(self, url: str) -> None:
         super().__init__()
         self.url = url
+        self._settings = QSettings('NguyenRobot', 'AGVOperator')
         self.setWindowTitle(f'AGV Operator — {url}')
         self.setMinimumSize(1200, 760)
-        self.resize(1600, 900)
+        # Restore window geometry from last session
+        geom = self._settings.value('window/geometry')
+        if geom:
+            self.restoreGeometry(geom)
+        else:
+            self.resize(1600, 900)
 
         # ── State ────────────────────────────────────────────────────
         self.state = OperatorState()
@@ -319,6 +325,24 @@ class OperatorWindow(QMainWindow):
         survey_layout.addStretch(1)
         top_layout.addWidget(survey_group)
 
+        # Row 5 — SLAM mapping controls + demo status
+        slam_group = QGroupBox('SLAM / MAP')
+        slam_layout = QHBoxLayout(slam_group)
+        slam_layout.setContentsMargins(6, 2, 6, 2)
+        for label, cmd in [('▶ Start', 'start'), ('■ Stop', 'stop'),
+                           ('⊙ Idle', 'idle'), ('↺ Reset', 'reset')]:
+            btn = QPushButton(label)
+            btn.setMinimumHeight(28)
+            btn.clicked.connect(lambda _, c=cmd: self._send_cmd(c))
+            slam_layout.addWidget(btn)
+        slam_layout.addWidget(QLabel('|'))
+        self.lbl_demo_status = QLabel('demo: -')
+        self.lbl_demo_status.setStyleSheet(
+            'color:#c9d1d9;font-family:Consolas;font-size:11px;')
+        slam_layout.addWidget(self.lbl_demo_status)
+        slam_layout.addStretch(1)
+        top_layout.addWidget(slam_group)
+
         root_layout.addWidget(top_bar)
         self._update_waypoint_kind_buttons()
 
@@ -384,6 +408,7 @@ class OperatorWindow(QMainWindow):
             ('F1', lambda: self._set_canvas_mode('robot')),
             ('F2', lambda: self._set_canvas_mode('design')),
             ('F3', lambda: self._set_canvas_mode('waypoint')),
+            ('Delete', self._shortcut_delete_warehouse),
         ]:
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -398,6 +423,8 @@ class OperatorWindow(QMainWindow):
         super().keyReleaseEvent(ev)
 
     def closeEvent(self, ev: Any) -> None:
+        self._settings.setValue('window/geometry', self.saveGeometry())
+        self._settings.setValue('connection/url', self.url)
         self.bridge.close()
         if self._udp:
             self._udp.close()
@@ -423,6 +450,17 @@ class OperatorWindow(QMainWindow):
         h = self.state.home_pose
         self.lbl_home.setText(
             f'({h["x"]:.2f}, {h["y"]:.2f})' if h else '(chưa đặt)')
+        # Demo status
+        ds = self.state.demo_status
+        if ds:
+            d_state = ds.get('state', ds.get('status', ''))
+            d_zone = ds.get('zone', '')
+            d_msg = ds.get('message', '')
+            self.lbl_demo_status.setText(
+                f'demo: {d_state}  {d_zone}  {d_msg}')
+            demo_color = '#9ece6a' if d_state in ('active', 'running') else '#c9d1d9'
+            self.lbl_demo_status.setStyleSheet(
+                f'color:{demo_color};font-family:Consolas;font-size:11px;')
         if self.state.nav_active and self.state.nav_start_time:
             dt = time.monotonic() - self.state.nav_start_time
             self.lbl_trip.setText(f'⏱ {int(dt//60):02d}:{dt%60:04.1f}')
@@ -651,6 +689,68 @@ class OperatorWindow(QMainWindow):
         self.state.placing_home = True
         self._log('ℹ click vào canvas để đặt Home')
 
+    def _finalize_trip(self, success: bool, duration: float) -> None:
+        """Record a completed navigation as a trip-log entry and persist."""
+        goal = self.state.nav_goal
+        if not goal:
+            return
+        entry = {
+            'start_ts': time.time() - duration,
+            'end_ts': time.time(),
+            'duration_s': round(duration, 2),
+            'goal': goal,
+            'status': 'completed' if success else 'failed',
+        }
+        self.state.trip_log.append(entry)
+        if len(self.state.trip_log) > 200:
+            self.state.trip_log = self.state.trip_log[-200:]
+        save_json(_TRIP_LOG_PATH, self.state.trip_log)
+        self.state.nav_goal = None
+        # Advance scripted sequence if running.
+        if self.state.sequence_running and not self.state.sequence_paused:
+            self._advance_sequence()
+
+    def _advance_sequence(self) -> None:
+        """Move to the next step in a running scripted sequence."""
+        self.state.sequence_index += 1
+        QTimer.singleShot(50, self._execute_sequence_step)
+
+    def _execute_sequence_step(self) -> None:
+        """Dispatch the current sequence step to its concrete handler.
+
+        Supported step types: ``waypoint``, ``home``, ``cylinder``.
+        Unknown types are logged and the sequence advances.
+        """
+        if not self.state.sequence_running or self.state.sequence_paused:
+            return
+        if self.state.sequence_index >= len(self.state.sequence):
+            self.state.sequence_running = False
+            self._log('✓ kịch bản hoàn thành')
+            return
+        step = self.state.sequence[self.state.sequence_index]
+        kind = step.get('type')
+        if kind == 'waypoint':
+            wid = int(step.get('waypoint_id', -1))
+            wp = next((w for w in self.state.waypoints
+                       if int(w.get('id', -1)) == wid), None)
+            if wp is None:
+                self._log(f'⚠ step #{self.state.sequence_index}: waypoint #{wid} not found',
+                          error=True)
+                self._advance_sequence()
+                return
+            self._send_navigate(float(wp['x']), float(wp['y']), 0.0,
+                                label=str(wp.get('label', f'wp-{wid}')))
+            # navigate_result → _finalize_trip → _advance_sequence
+        elif kind == 'home':
+            self._go_home()
+        elif kind == 'cylinder':
+            action = step.get('action', 'stop')
+            self._send_cylinder(action)
+            QTimer.singleShot(500, self._advance_sequence)
+        else:
+            self._log(f'⚠ step type không hỗ trợ: {kind}', error=True)
+            self._advance_sequence()
+
     # ══════════════════════════════════════════════════════════════════════
     # TELEOP
     # ══════════════════════════════════════════════════════════════════════
@@ -663,8 +763,41 @@ class OperatorWindow(QMainWindow):
         vx, vy, omega = self._teleop_vector()
         if vx == 0 and vy == 0 and omega == 0:
             return
+        # Predictive geofence block — if heading outside the polygon, drop the
+        # packet. The breach-detector still E-STOPs when an actual sample falls
+        # outside, this just prevents us from steering into the wall first.
+        if not self._geofence_allows_motion(vx, vy):
+            self._geofence_blocked_count = getattr(self, '_geofence_blocked_count', 0) + 1
+            if self._geofence_blocked_count == 1:
+                self._log('⚠ teleop blocked — heading ra ngoài geofence', error=True)
+            return
+        self._geofence_blocked_count = 0
         self._last_teleop_sent = now
         self.bridge.send({'type': 'teleop', 'vx': vx, 'vy': vy, 'omega': omega})
+
+    def _geofence_allows_motion(self, vx: int, vy: int) -> bool:
+        """Predict the next pose one tick ahead. If outside geofence → reject."""
+        cfg = self.state.geofence
+        if not cfg.get('enabled', True):
+            return True
+        pose = self.state.pose
+        if not pose:
+            return True
+        poly = cfg.get('polygon', [])
+        if not poly:
+            return True
+        # Convert PWM-scaled velocities to a world-frame step (~0.1 s look-ahead).
+        # Coarse mapping: PWM 120 ≈ 0.3 m/s.
+        dt = TELEOP_INTERVAL
+        scale = 0.3 / TELEOP_MAX_VX if TELEOP_MAX_VX else 0
+        theta = float(pose.get('theta', 0))
+        body_x = float(vx) * scale * dt
+        body_y = float(vy) * scale * dt
+        dx = body_x * math.cos(theta) - body_y * math.sin(theta)
+        dy = body_x * math.sin(theta) + body_y * math.cos(theta)
+        nx = float(pose.get('x', 0)) + dx
+        ny = float(pose.get('y', 0)) + dy
+        return point_in_polygon(nx, ny, poly)
 
     def _teleop_vector(self) -> tuple[int, int, int]:
         vx, vy, omega = 0, 0, 0
@@ -747,10 +880,13 @@ class OperatorWindow(QMainWindow):
             self.state.esp32_encoder = data if isinstance(data, list) else []
             return
         if t == 'esp32_imu':
-            pass  # could display later
+            self.state.esp32_imu = data
             return
         if t == 'esp32_power':
-            pass  # could display later
+            self.state.esp32_power = data
+            return
+        if t == 'obstacle_layer':
+            self.state.obstacle_layer = data
             return
         if t == 'control_mode_status':
             if isinstance(data, dict):
@@ -775,6 +911,7 @@ class OperatorWindow(QMainWindow):
             duration = float(data.get('duration_s', 0.0))
             self.state.nav_active = False
             self._log(f'{"✓" if ok else "✗"} navigate result: {duration:.1f}s')
+            self._finalize_trip(ok, duration)
             # Keep the current survey substep. The survey timer sees
             # nav_active=False and advances home/navigate → unload.
             if not ok and self.state.survey_running:
@@ -786,6 +923,31 @@ class OperatorWindow(QMainWindow):
             return
         if t == 'navigate_status':
             self._log(f'⏳ nav: {data}')
+            return
+        if t == 'robot_error':
+            severity = (data.get('severity') if isinstance(data, dict) else 'error') or 'error'
+            code = (data.get('code') if isinstance(data, dict) else 'UNKNOWN') or 'UNKNOWN'
+            message = (data.get('message') if isinstance(data, dict) else str(data)) or ''
+            self.state.robot_errors.append({
+                'ts': time.time(),
+                'severity': severity,
+                'code': code,
+                'message': message,
+            })
+            self.state.robot_errors_ts = time.monotonic()
+            icon = {'critical': '⛔', 'warning': '⚠️'}.get(severity.lower(), '❌')
+            self._log(f'{icon} [{severity.upper()}] {code}: {message}', error=True)
+            # Pop a message box for critical errors so the operator notices immediately.
+            if severity.lower() in ('critical', 'error'):
+                try:
+                    QMessageBox.warning(
+                        self,
+                        f'{icon} {severity.upper()}: {code}',
+                        message,
+                        QMessageBox.StandardButton.Ok,
+                    )
+                except Exception:
+                    pass
             return
 
     @Slot(bool, str)
@@ -855,8 +1017,30 @@ class OperatorWindow(QMainWindow):
     def _delete_waypoint(self, wp_id: int) -> None:
         self.state.waypoints = [w for w in self.state.waypoints
                                 if int(w.get('id', -1)) != wp_id]
+        self.state.selected_waypoint_id = -1
         save_json(_WAYPOINTS_PATH, self.state.waypoints)
         self._log(f'✓ đã xóa waypoint #{wp_id}')
+
+    def _shortcut_delete_warehouse(self) -> None:
+        """Global Delete key: only active in F3 mode on a selected warehouse."""
+        if self.state.canvas_mode != 'waypoint':
+            return
+        wp_id = self.state.selected_waypoint_id
+        if wp_id < 0:
+            self._log('chọn1 kho trong danh sách trước khi nhấn Delete', error=True)
+            return
+        wp = next((w for w in self.state.waypoints
+                   if int(w.get('id', -1)) == wp_id), None)
+        if wp is None:
+            return
+        kind = wp.get('kind', 'waypoint')
+        label = wp.get('label', str(wp_id))
+        ok = QMessageBox.question(
+            self, 'Xóa waypoint',
+            f'Xóa {kind} "{label}" (id={wp_id})?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if ok == QMessageBox.StandardButton.Yes:
+            self._delete_waypoint(wp_id)
 
     def _rename_waypoint(self, wp_id: int) -> None:
         wp = next((w for w in self.state.waypoints if int(w.get('id', -1)) == wp_id), None)

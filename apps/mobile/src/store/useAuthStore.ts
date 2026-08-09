@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { api } from '@/lib/api';
 import { disconnectSocket, setAuthToken } from '@/lib/socket';
 import { storageDeleteItem, storageGetItem, storageSetItem } from '@/lib/storage';
+import { usePackageStore } from '@/store/usePackageStore';
 import type { AuthUser } from '@/types/auth';
 
 const TOKEN_KEY = 'auth_token';
@@ -11,6 +12,12 @@ function decodeJwtPayload(token: string): AuthUser | null {
   try {
     const payload = token.split('.')[1];
     const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+
+    // Reject expired tokens
+    if (decoded.exp && typeof decoded.exp === 'number' && decoded.exp * 1000 < Date.now()) {
+      return null;
+    }
+
     return { sub: decoded.sub, email: decoded.email };
   } catch {
     return null;
@@ -72,6 +79,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     disconnectSocket();
     setAuthToken(null);
     await storageDeleteItem(TOKEN_KEY);
+    usePackageStore.getState().reset();
     set({ token: null, user: null, isAuthenticated: false, error: null });
   },
 

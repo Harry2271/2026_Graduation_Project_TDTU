@@ -44,10 +44,20 @@ class WaypointPanel(QWidget):
 
     def _on_select(self) -> None:
         sel = self.list.currentRow()
-        if sel >= 0:
-            self._hint.setText(f'Đã chọn #{sel}')
+        if sel >= 0 and sel < len(self.state.waypoints):
+            wp = self.state.waypoints[sel]
+            wp_id = int(wp.get('id', -1))
+            kind = wp.get('kind', 'waypoint')
+            kind_str = 'kho' if kind == 'warehouse' else 'wp'
+            self._hint.setText(
+                f'Đã chọn {kind_str} #{wp_id} — nhấn Delete để xóa'
+                if self.state.canvas_mode == 'waypoint' and kind == 'warehouse'
+                else f'Đã chọn {kind_str} #{wp_id}')
+            # Mirror selection into shared state so global shortcuts can read it.
+            self.state.selected_waypoint_id = wp_id
         else:
             self._hint.setText('Chọn 1 dòng rồi bấm nút để thực hiện')
+            self.state.selected_waypoint_id = -1
 
     def _on_click(self, signal: Signal):
         def emit_signal():

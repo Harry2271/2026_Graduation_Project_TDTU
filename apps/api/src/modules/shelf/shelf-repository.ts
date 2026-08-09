@@ -57,9 +57,13 @@ export class ShelfRepository implements IShelfRepository {
   }
 
   async assignPackageToSlot(slotCode: string, packageId: Types.ObjectId): Promise<ShelfSlot | null> {
+    // Atomic: only assign if slot is AVAILABLE (direct assign) or RESERVED
+    // (move workflow — slot was reserved in a previous step). A concurrent
+    // TOCTOU race where two requests both see AVAILABLE will fail for the
+    // second writer because the first already transitioned it to OCCUPIED.
     return this.shelfSlotModel
       .findOneAndUpdate(
-        { code: slotCode },
+        { code: slotCode, status: { $in: [SlotStatus.AVAILABLE, SlotStatus.RESERVED] }, packageId: null },
         { packageId, status: SlotStatus.OCCUPIED },
         { new: true },
       )
@@ -115,6 +119,32 @@ export class ShelfRepository implements IShelfRepository {
     const query = this.shelfSlotModel.updateOne({ code: slotCode }, { status });
     if (session) query.session(session);
     await query.exec();
+  }
+
+  async updateCoordinatesMany(
+    entries: { slotCode: string; slotX: number; slotY: number; facingTheta: number | null }[],
+  ): Promise<void> {
+    if (entries.length === 0) return;
+    const ops = entries.map((e) => ({
+      updateOne: {
+        filter: { code: e.slotCode },
+        update: { $set: { slotX: e.slotX, slotY: e.slotY, facingTheta: e.facingTheta } },
+      },
+    }));
+    await this.shelfSlotModel.bulkWrite(ops, { ordered: false }).exec();
+  }
+
+  async reserveSlotIfAvailable(slotCode: string): Promise<ShelfSlot | null> {
+    // Atomic reserve — only transitions AVAILABLE → RESERVED if slot is
+    // still AVAILABLE. Concurrent move requests to the same target slot
+    // will see null and fail fast instead of clobbering an existing package.
+    return this.shelfSlotModel
+      .findOneAndUpdate(
+        { code: slotCode, status: SlotStatus.AVAILABLE },
+        { status: SlotStatus.RESERVED },
+        { new: true },
+      )
+      .exec();
   }
 }
 
