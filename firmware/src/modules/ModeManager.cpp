@@ -17,6 +17,7 @@ ModeManager::ModeManager()
         ramped_speeds_[i] = 0;
         mecanum_targets_[i] = 0;
         kick_ticks_[i]     = 0;
+        prev_target_for_kick_[i] = 0;
     }
 }
 
@@ -170,34 +171,35 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
         ramped_speeds_[i] = MecanumDrive::ramp(
             target_speeds[i], ramped_speeds_[i], ACCEL_RAMP_RATE);
 
-        // Start from a full stop with a short boost to overcome gearbox
-        // static friction.  This path is used by AUTO_ROAM and NAV; the
-        // manual applySpeeds() path has the same behavior in main.cpp.
-        if (ramped_speeds_[i] == 0 && target_speeds[i] != 0 && kick_ticks_[i] == 0) {
+        // Kick-start boost: fire only on a genuine target 0→non-zero
+        // transition (not on ramp crossings), matching the applySpeeds()
+        // logic in main.cpp.
+        if (prev_target_for_kick_[i] == 0 && target_speeds[i] != 0 && kick_ticks_[i] == 0) {
             kick_ticks_[i] = KICK_BOOST_TICKS;
         }
+        prev_target_for_kick_[i] = target_speeds[i];
 
         float scale = max_speed_pct_ / 100.0f;
         int16_t limited = (int16_t)(ramped_speeds_[i] * scale);
 
-        if (kick_ticks_[i] > 0) {
-            int16_t boost = (limited > 0) ? KICK_BOOST_PWM : -KICK_BOOST_PWM;
-            limited += boost;
-            limited = constrain(limited, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
-            kick_ticks_[i]--;
-        }
-
         float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_MAX_DUTY);
 
         if (pid_enabled_) {
-            // Use absolute encoder RPM so PID behaves identically for all
-            // motors regardless of dir.  dir=-1 motors (FR/RR) have reversed
-            // encoder polarity — multiplying by dir creates a large phantom
-            // error that saturates PID.  fabsf normalises both paths.
-            float actual_rpm = fabsf(encoders[i].getFilteredRPM());
+            // Sign the measurement with the motor's dir so the PID
+            // matches the wheel's physical rotation (avoids fabsf masking
+            // a mis-wired motor).
+            float actual_rpm = encoders[i].getFilteredRPM() * (float)MOTOR_PINS[i].dir;
             int16_t correction = pids[i].compute(target_rpm, actual_rpm, dt_us);
             int16_t final_pwm = limited + correction;
             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
+
+            // Kick boost applied AFTER PID, independent of target_rpm.
+            if (kick_ticks_[i] > 0) {
+                int16_t boost = (limited > 0) ? KICK_BOOST_PWM : -KICK_BOOST_PWM;
+                final_pwm = constrain(final_pwm + boost, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
+                kick_ticks_[i]--;
+            }
+
             int16_t motor_cmd = final_pwm * MOTOR_PINS[i].dir;
             motors[i].setSpeed(motor_cmd);
 

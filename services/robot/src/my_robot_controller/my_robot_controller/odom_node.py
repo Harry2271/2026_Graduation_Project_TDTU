@@ -14,7 +14,13 @@ Geometry constants (must match URDF and firmware config.h):
   wheel_radius       = 0.0485 m  (97 mm mecanum)
   half_length        = 0.12 m    (front/rear axle distance / 2)
   half_width         = 0.13 m    (left/right axle distance / 2)
-  encoder_counts_rev = 330       (11 PPR x 30 gear ratio x 2 edge decode)
+  encoder_counts_rev = 660       (11 PPR x 2 edges x 30 gear ratio)
+
+Rotation sign convention:
+  - Firmware MecanumDrive.h declares ``omega > 0`` as CW.
+  - ROS yaw / nav_msgs/Odometry.twist.twist.angular.z is CCW-positive.
+  - We compute omega from encoder deltas in the firmware convention,
+    then negate once at the ROS boundary so /odom and Nav2 agree.
 """
 from __future__ import annotations
 
@@ -36,14 +42,25 @@ from std_msgs.msg import Header, String
 from tf2_ros import TransformBroadcaster
 
 # Mecanum geometry constants. MUST match URDF agv.urdf + firmware Encoder.cpp.
+# Firmware `Encoder.cpp` uses OUTPUT_CPR = MOTOR_ENCODER_CPR (22) * GEAR_RATIO (30)
+# = 660 counts per output-shaft revolution. Any drift between this and the
+# firmware constant directly multiplies into position error.
 WHEEL_RADIUS_M      = 0.0485   # effective mecanum wheel radius (m)
 HALF_LENGTH_M       = 0.12     # half-distance between front/rear axles (m)
 HALF_WIDTH_M        = 0.13     # half-distance between left/right axles (m)
-ENCODER_COUNTS_REV  = 330      # 11 PPR * 30 gear ratio * 2 edge decode
+ENCODER_COUNTS_REV  = 660      # 11 PPR * 2 edges * 30 gear ratio (matches firmware)
 METERS_PER_COUNT    = (2.0 * math.pi * WHEEL_RADIUS_M) / ENCODER_COUNTS_REV
 
 PUBLISH_RATE_HZ     = 30.0
 PUBLISH_PERIOD_S    = 1.0 / PUBLISH_RATE_HZ
+
+# Sign flip applied at the ROS boundary: firmware omega is CW-positive,
+# ROS twist.angular.z is CCW-positive. Verified by physical 90-deg test.
+OMEGA_ROS_SIGN      = -1.0
+
+# After this many seconds without a fresh encoder sample the published
+# twist decays to zero, so Nav2 doesn't keep steering on stale velocity.
+TWIST_STALE_AFTER_S = 0.15
 
 # Status frame carries IR + Sharp + power + cylinder. Wheel encoder RPM and
 # counts come from /esp32/encoder (type-130 frames).
@@ -85,6 +102,14 @@ class OdomNode(Node):
         # Last encoder counts by wheel [FL, FR, RL, RR].
         self._last_counts: Optional[list[int]] = None
         self._last_encoder_msg_time: float = 0.0
+        # Integration timestamp (used for Odometry header stamp so the
+        # twist is associated with the sample time, not publish time).
+        self._last_integration_time: float = 0.0
+
+        # Wheel-only yaw integral for fallback when IMU is stale.
+        self._yaw_wheel_integral: float = 0.0
+        # Last raw IMU yaw reading (radians, continuous / unwrapped).
+        self._imu_yaw_continuous: Optional[float] = None
 
         # Battery cache from type-133.
         self._last_power: dict = {}
@@ -107,12 +132,31 @@ class OdomNode(Node):
     # ── Subscription callbacks (called from rclpy thread) ───────────────────
 
     def _on_encoder_msg(self, msg: String) -> None:
-        """type-130 list of {id, count, rpm}."""
+        """Parse type-130 ``data.motors`` and integrate counts by motor id."""
         try:
-            motors = json.loads(msg.data)
-            if not isinstance(motors, list) or len(motors) < 4:
+            frame = json.loads(msg.data)
+            if not isinstance(frame, dict):
                 return
-            counts = [int(m.get('count', 0)) for m in motors[:4]]
+            payload = frame.get('data', frame)
+            motors = payload.get('motors') if isinstance(payload, dict) else None
+            if not isinstance(motors, list):
+                return
+
+            by_id: dict[int, int] = {}
+            for motor in motors:
+                if not isinstance(motor, dict):
+                    continue
+                motor_id = int(motor['id'])
+                if motor_id not in range(4):
+                    continue
+                raw_count = motor.get('cnt', motor.get('count'))
+                if raw_count is None:
+                    return
+                by_id[motor_id] = int(raw_count)
+            if len(by_id) != 4:
+                return
+            counts = [by_id[i] for i in range(4)]
+
             now = self.get_clock().now().nanoseconds / 1e9
             if self._last_counts is not None:
                 dt = now - self._last_encoder_msg_time
@@ -124,23 +168,29 @@ class OdomNode(Node):
             self.get_logger().debug(f'encoder parse error: {e}')
 
     def _on_imu_msg(self, msg: String) -> None:
-        """Cache type-134 BNO055 yaw in degrees (or radians if marked).
+        """Cache and *unwrap* type-134 BNO055 heading into a continuous yaw.
 
-        Firmware `JsonStatus::emitIMU` emits ``heading`` (degrees, 0-360).
-        Older draft protocol used ``yaw``; accept both for forward-compat.
+        Firmware ``JsonStatus::emitIMU`` emits ``heading`` in degrees (0-360).
+        Unwrapping successive readings keeps the yaw continuous across the
+        0/360° boundary so the integrator doesn't see a 360° discontinuity.
         """
         try:
             data = json.loads(msg.data)
-            # Firmware wraps payload under `data`; some legacy frames put
-            # it flat at the root. Handle both shapes.
             payload = data.get('data', data) if isinstance(data, dict) else {}
             yaw_deg = float(payload.get('heading', payload.get('yaw', 0.0)))
-            units = str(payload.get('yaw_unit', 'deg')).lower()
-            self._imu_yaw = (
-                yaw_deg if units in ('rad', 'radian', 'radians')
-                else math.radians(yaw_deg)
-            )
-            self._imu_yaw_time = self.get_clock().now().nanoseconds / 1e9
+            yaw_rad = math.radians(yaw_deg)
+            now = self.get_clock().now().nanoseconds / 1e9
+
+            if self._imu_yaw_continuous is None:
+                self._imu_yaw_continuous = yaw_rad
+            else:
+                diff = yaw_rad - self._imu_yaw_continuous
+                # Wrap diff to [-pi, pi] so +180 → -180 crossing stays small.
+                diff = (diff + math.pi) % (2 * math.pi) - math.pi
+                self._imu_yaw_continuous += diff
+
+            self._imu_yaw = self._imu_yaw_continuous
+            self._imu_yaw_time = now
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             self.get_logger().debug(f'imu parse error: {e}')
 
@@ -174,10 +224,15 @@ class OdomNode(Node):
     ) -> None:
         """Mecanum inverse kinematics: encoder deltas -> body twist -> pose delta.
 
-        Wheel order [FL, FR, RL, RR].  Sign convention: forward motion -> +
-        forward displacement for FL and FR; rotation positive (CCW) increases
-        FR/RL wheel contribution.  Tune the per-wheel sign to match the
-        firmware's BTS7960 dir field if your robot drives backwards.
+        Wheel order [FL, FR, RL, RR] — matches firmware MecanumDrive.cpp
+        X-pattern: FL=//, FR=\\, RL=\\, RR=//.
+
+        Rotation sign note
+        ------------------
+        Firmware ``MecanumDrive.h`` declares omega>0 as CW.  ROS yaw and
+        ``nav_msgs/Odometry.twist.angular.z`` are CCW-positive.  We compute
+        wheel displacement in firmware coordinates here, then flip omega once
+        in ``_publish_odom`` so /odom and Nav2 agree with the ROS convention.
         """
         dFL = (new_counts[0] - prev_counts[0]) * METERS_PER_COUNT
         dFR = (new_counts[1] - prev_counts[1]) * METERS_PER_COUNT
@@ -188,42 +243,67 @@ class OdomNode(Node):
         # Derivation in CLAUDE.md "Mecanum Wheel Kinematics".
         vx_w = (dFL + dFR + dRL + dRR) / 4.0
         vy_w = (-dFL + dFR + dRL - dRR) / 4.0
-        omega_w = (-dFL + dFR - dRL + dRR) / (
+
+        # omega in *firmware* convention (CW-positive)
+        omega_firm = (-dFL + dFR - dRL + dRR) / (
             4.0 * (HALF_LENGTH_M + HALF_WIDTH_M)
         )
 
         self._vx = vx_w / dt
         self._vy = vy_w / dt
-        self._omega = omega_w / dt
 
-        # Yaw from wheel integration (drifts on mecanum wheels).
-        dtheta_w = omega_w
-
-        # Optionally correct yaw with IMU when fresh (< 0.2s).
+        # --- YAW: complementary fusion — IMU as primary, wheel as fallback ---
         now = self.get_clock().now().nanoseconds / 1e9
-        if (self._imu_yaw is not None
-                and (now - self._imu_yaw_time) < 0.2):
-            # Blend 80% wheel yaw, 20% IMU to suppress mecanum slip.
-            self._yaw = 0.8 * (self._yaw + dtheta_w) + 0.2 * self._imu_yaw
-        else:
-            self._yaw += dtheta_w
+        imu_fresh = (
+            self._imu_yaw is not None
+            and (now - self._imu_yaw_time) < 0.2
+        )
 
-        # Project body-frame displacement into odom frame.
+        if imu_fresh:
+            # IMU is fresh — use it as the absolute yaw reference.
+            self._yaw = self._imu_yaw
+            # Reset wheel-only integral to match (avoids discontinuity).
+            self._yaw_wheel_integral = self._yaw
+        else:
+            # IMU stale — integrate wheel omega (drifts, but no alternative).
+            self._yaw += omega_firm
+            self._yaw_wheel_integral = self._yaw
+
+        # Project body-frame displacement into odom frame using corrected yaw.
         cos_y = math.cos(self._yaw)
         sin_y = math.sin(self._yaw)
         self._x += vx_w * cos_y - vy_w * sin_y
         self._y += vx_w * sin_y + vy_w * cos_y
 
+        # omega_w is the firmware-frame angular velocity; sign flip to ROS CCW+
+        # is applied once in _publish_odom, not here.
+        self._omega = omega_firm / dt
+        self._last_integration_time = now
+
     # ── Periodic publishers ────────────────────────────────────────────────
 
     def _publish_odom(self) -> None:
-        """Publish Odometry + TF at PUBLISH_RATE_HZ."""
-        stamp = self.get_clock().now().to_msg()
+        """Publish Odometry + TF at PUBLISH_RATE_HZ.
+
+        Stamps the header with the most recent integration time so the
+        twist isn't associated with publish time.  Decays the twist to
+        zero if no fresh encoder sample arrived within ``TWIST_STALE_AFTER_S``.
+        """
+        now_sec = self.get_clock().now().nanoseconds / 1e9
+        age = now_sec - self._last_encoder_msg_time
+
+        vx = self._vx if age <= TWIST_STALE_AFTER_S else 0.0
+        vy = self._vy if age <= TWIST_STALE_AFTER_S else 0.0
+        omega_ros = self._omega * OMEGA_ROS_SIGN
+        if age > TWIST_STALE_AFTER_S:
+            omega_ros = 0.0
+
+        if self._last_integration_time > 0.0:
+            stamp = RosTime(nanoseconds=int(self._last_integration_time * 1e9)).to_msg()
+        else:
+            stamp = self.get_clock().now().to_msg()
         q = self._yaw_to_quat(self._yaw)
 
-        # Nav2 wants pose-covariance and twist-covariance to be set; we use
-        # placeholders that don't violate NAV2 requirements.  Tune after
-        # field tests with the encoder_odometry covariance tutorial.
         odom = Odometry()
         odom.header = Header(stamp=stamp, frame_id='odom')
         odom.child_frame_id = 'base_footprint'
@@ -232,9 +312,9 @@ class OdomNode(Node):
         odom.pose.pose.position.z = 0.0
         odom.pose.pose.orientation = q
         odom.twist.twist = Twist()
-        odom.twist.twist.linear.x = self._vx
-        odom.twist.twist.linear.y = self._vy
-        odom.twist.twist.angular.z = self._omega
+        odom.twist.twist.linear.x = vx
+        odom.twist.twist.linear.y = vy
+        odom.twist.twist.angular.z = omega_ros
         # Covariance: diagonal values only; pose 0.05 m^2 + 0.05 rad^2; twist 0.05.
         for i in (0, 7, 14, 21, 28, 35):
             odom.pose.covariance[i] = 0.05

@@ -19,7 +19,7 @@ private:
     float ki_;
     float kd_;
     float integral_;
-    float prev_error_;
+    float prev_actual_rpm_;   // for derivative-on-measurement (avoids derivative kick)
     float target_rpm_;
-    bool   first_run_;   // true until first compute() so we can skip the D-term
+    bool   first_run_;       // true until first compute() so we can skip the D-term
 };

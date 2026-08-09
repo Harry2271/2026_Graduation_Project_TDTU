@@ -59,8 +59,11 @@ void Encoder::pause()
 void Encoder::resume()
 {
     pcnt_counter_pause(unit_);
-    pcnt_counter_clear(unit_);
-    last_count_ = 0;
+    // Synchronize the baseline before resuming.  Clearing PCNT while keeping
+    // the old last_count_ creates one phantom delta at the next PID tick.
+    int16_t raw = 0;
+    pcnt_get_counter_value(unit_, &raw);
+    last_count_ = raw;
     cumulative_count_ = 0;
     last_filtered_rpm_ = 0.0f;
     pcnt_counter_resume(unit_);
@@ -108,14 +111,14 @@ float Encoder::calculateRPM(uint32_t dt_ms)
     constexpr float OUTPUT_CPR = (float)MOTOR_ENCODER_CPR * MOTOR_GEAR_RATIO;
     float rpm = ((float)delta / (float)dt_ms) * (60000.0f / OUTPUT_CPR);
 
-    // Guard against bogus spikes (e.g. first tick after boot, or wiring noise)
-    if (rpm >  500.0f) rpm =  500.0f;
-    if (rpm < -500.0f) rpm = -500.0f;
-
+    // Filter before clipping.  Clipping a raw one-tick spike before the EMA
+    // creates an artificial step that the PID over-reacts to.
     const float alpha = 0.3f;
-    rpm = last_filtered_rpm_ * (1.0f - alpha) + rpm * alpha;
-    if (fabsf(rpm) < 0.1f) rpm = 0.0f;   // floor: kill denormals / noise floor
-    last_filtered_rpm_ = rpm;
+    float filtered = last_filtered_rpm_ * (1.0f - alpha) + rpm * alpha;
+    if (filtered >  500.0f) filtered =  500.0f;
+    if (filtered < -500.0f) filtered = -500.0f;
+    if (fabsf(filtered) < 0.1f) filtered = 0.0f;
+    last_filtered_rpm_ = filtered;
 
-    return rpm;
+    return filtered;
 }
