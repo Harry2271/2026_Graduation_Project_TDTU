@@ -19,17 +19,17 @@ if %ERRORLEVEL%==0 (
     )
 )
 
-REM Ensure websockets
-%PY% -c "import websockets" >nul 2>&1
+REM Ensure GUI dependencies
+%PY% -c "import websockets, PySide6" >nul 2>&1
 if errorlevel 1 (
-    echo Installing websockets...
-    %PY% -m pip install --quiet websockets
+    echo Installing GUI dependencies...
+    %PY% -m pip install --quiet -r "%SCRIPT_DIR%requirements.txt"
 )
 
-REM Launch app
+REM Launch PySide6 app
 title AGV Operator
 echo Starting AGV Operator...
-%PY% "%SCRIPT_DIR%operator_app.py"
+%PY% -m gui.main
 if errorlevel 1 (
     echo.
     echo [ERROR] Python exited with code %ERRORLEVEL%

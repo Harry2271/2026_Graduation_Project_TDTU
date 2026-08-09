@@ -55,6 +55,7 @@ The full key state is sent at ~20 Hz; the latest frame always wins.
 from __future__ import annotations
 
 import argparse
+import collections
 import gzip
 import json
 import math
@@ -518,6 +519,12 @@ class OperatorState:
         self.pose_ts: float = 0.0
         self.scan_points: list[tuple[float, float]] = []
         self.scan_ts: float = 0.0
+        # Recent AGV trajectory in map/world frame (not persisted).
+        self.trajectory: collections.deque[tuple[float, float]] = collections.deque(maxlen=500)
+        # Latest AprilTag detections keyed by tag id. Payload is camera-frame;
+        # map position is inferred only when matched to a configured waypoint.
+        self.detected_tags: dict[int, dict] = {}
+        self.detected_tag_ts: float = 0.0
         self.map_data: dict | None = None
         self.map_image: Any | None = None       # tk.PhotoImage
         self.status_text: str = ''
@@ -2042,6 +2049,13 @@ class OperatorApp:
         if t == 'pose':
             self.state.pose = data
             self.state.pose_ts = time.monotonic()
+            # Record world-frame trajectory for the trailing path overlay.
+            try:
+                wx = float(data.get('x', 0.0))
+                wy = float(data.get('y', 0.0))
+                self.state.trajectory.append((wx, wy))
+            except (TypeError, ValueError):
+                pass
             # Home is now set explicitly via "Đặt Home" — no auto-capture.
             # Replay recording samples at receive cadence.
             if self.state.replay_recording:
@@ -2053,6 +2067,35 @@ class OperatorApp:
             pts = data.get('points') or []
             self.state.scan_points = [(p['x'], p['y']) for p in pts]
             self.state.scan_ts = time.monotonic()
+            return
+
+        if t == 'detected_tags':
+            # Keep the complete latest payload per tag. Detection coordinates
+            # are camera-relative; never plot them as map coordinates without
+            # an explicit camera extrinsic calibration.
+            #
+            # New payload format: {"ts": ..., "tags": [{tag_id, x, y, z, ...}, ...]}
+            # Legacy single-tag payload is also accepted.
+            if isinstance(data, dict):
+                tags = data.get('tags')
+                if not isinstance(tags, list) and 'tag_id' in data:
+                    tags = [data]
+                if isinstance(tags, list):
+                    seen_ids = set()
+                    for tag in tags:
+                        if not isinstance(tag, dict) or 'tag_id' not in tag:
+                            continue
+                        try:
+                            tag_id = int(tag['tag_id'])
+                        except (TypeError, ValueError):
+                            continue
+                        self.state.detected_tags[tag_id] = tag
+                        seen_ids.add(tag_id)
+                    if seen_ids:
+                        self.state.detected_tag_ts = time.monotonic()
+                        self._log(
+                            '📷 phát hiện AprilTags: ' +
+                            ', '.join(f'#{tag_id}' for tag_id in sorted(seen_ids)))
             return
 
         if t == 'map_layer':
@@ -2614,8 +2657,46 @@ class OperatorApp:
         # Robot at center
         c.create_oval(cx - 5, cy - 5, cx + 5, cy + 5,
                       fill='#00ff88', outline='')
+        # Direction arrow (uses latest pose theta)
+        if self.state.pose:
+            theta = float(self.state.pose.get('theta', 0.0))
+            hx = cx + math.cos(theta) * 12
+            hy = cy - math.sin(theta) * 12
+            c.create_line(cx, cy, hx, hy, fill='#ff3b5c', width=2, arrow='last')
         c.create_polygon(cx + 8, cy, cx + 2, cy - 3, cx + 2, cy + 3,
                         fill='#ff3b5c', outline='')
+
+        # Trajectory overlay in robot radar view (centred on robot)
+        traj = list(self.state.trajectory)
+        if len(traj) >= 2 and self.state.pose:
+            px_ = float(self.state.pose.get('x', 0.0))
+            py_ = float(self.state.pose.get('y', 0.0))
+            n = len(traj)
+            for i in range(1, n):
+                wx0, wy0 = traj[i - 1]
+                wx1, wy1 = traj[i]
+                rx0 = (wx0 - px_) * scale
+                ry0 = -(wy0 - py_) * scale
+                rx1 = (wx1 - px_) * scale
+                ry1 = -(wy1 - py_) * scale
+                frac = i / n
+                col_val = int(60 + 195 * frac)
+                c.create_line(cx + rx0, cy + ry0, cx + rx1, cy + ry1,
+                              fill=f'#{0:02x}{col_val:02x}{col_val:02x}', width=1)
+
+        # Detected AprilTags (camera-frame offset only — not in map frame)
+        if self.state.detected_tags:
+            tag_stale = (time.monotonic() - self.state.detected_tag_ts) < 5.0
+            if tag_stale:
+                for tag_id, info in self.state.detected_tags.items():
+                    tx = float(info.get('x', 0.0))   # camera-frame x
+                    ty = float(info.get('y', 0.0))   # camera-frame y
+                    sx = cx + tx * scale
+                    sy = cy - ty * scale
+                    c.create_rectangle(sx - 4, sy - 4, sx + 4, sy + 4,
+                                       fill='', outline='#00ff88', width=2)
+                    c.create_text(sx, sy - 8, text=f'T{tag_id}',
+                                  fill='#00ff88', font=('Consolas', 8, 'bold'))
 
         # Stale banner
         if stale:
@@ -2709,15 +2790,91 @@ class OperatorApp:
             sx2, sy2 = self._world_to_screen(x2, y2, W, H)
             c.create_line(sx1, sy1, sx2, sy2, fill='#ffffff', width=2, dash=(3, 2))
 
-        # Waypoints
+        # ── Trajectory trail (fading world-frame path) ────────────────
+        traj = list(self.state.trajectory)
+        if len(traj) >= 2:
+            n = len(traj)
+            for i in range(1, n):
+                x0, y0 = traj[i - 1]
+                x1, y1 = traj[i]
+                frac = i / n                         # 0.0 (oldest) → 1.0 (latest)
+                alpha_val = int(40 + 160 * frac)     # 40–200
+                r = int(0 + 0 * frac)
+                g = int(180 + 75 * frac)
+                b = int(200 + 55 * frac)
+                col = f'#{r:02x}{g:02x}{b:02x}'
+                sx0, sy0 = self._world_to_screen(x0, y0, W, H)
+                sx1, sy1 = self._world_to_screen(x1, y1, W, H)
+                c.create_line(sx0, sy0, sx1, sy1, fill=col, width=2)
+
+        # ── LiDAR scan points in world frame ─────────────────────────
+        stale = (time.monotonic() - self.state.scan_ts) > 8.0
+        if self.state.scan_points and not stale and self.state.pose:
+            px_ = float(self.state.pose.get('x', 0.0))
+            py_ = float(self.state.pose.get('y', 0.0))
+            th_ = float(self.state.pose.get('theta', 0.0))
+            cos_t = math.cos(th_)
+            sin_t = math.sin(th_)
+            step = max(1, len(self.state.scan_points) // 360)
+            for i in range(0, len(self.state.scan_points), step):
+                lx, ly = self.state.scan_points[i]
+                wx = px_ + lx * cos_t - ly * sin_t
+                wy = py_ + lx * sin_t + ly * cos_t
+                sx, sy = self._world_to_screen(wx, wy, W, H)
+                if -20 < sx < W + 20 and -20 < sy < H + 20:
+                    c.create_oval(sx - 1, sy - 1, sx + 1, sy + 1,
+                                  fill='#00d4ff', outline='')
+
+        # ── Waypoints (with highlight for current nav / survey target)
+        nav_goal = self.state.nav_goal or {}
+        nav_target_id = nav_goal.get('label', '')
+        survey_next_id = -1
+        if self.state.survey_running and self.state.survey_queue:
+            survey_next_id = int(self.state.survey_queue[0].get('id', -1))
+
         for w in self.state.waypoints:
             sx, sy = self._world_to_screen(w['x'], w['y'], W, H)
+            wp_id = int(w.get('id', -1))
+            is_nav_target = (nav_target_id == f"survey-wp-{wp_id}"
+                             or (not nav_target_id.startswith('survey')
+                                 and nav_goal.get('label') == str(w.get('label', ''))))
+            is_survey_next = (self.state.survey_running and wp_id == survey_next_id)
+            is_detected = wp_id in self.state.detected_tags
+
+            # Glow ring for navigation target
+            if is_nav_target:
+                c.create_oval(sx - 14, sy - 14, sx + 14, sy + 14,
+                              fill='', outline='#ffdd00', width=2, dash=(3, 2))
+                c.create_text(sx, sy - 22, text='NAV',
+                              fill='#ffdd00', font=('Consolas', 7, 'bold'))
+            # Orange glow for next survey shelf
+            if is_survey_next:
+                c.create_oval(sx - 16, sy - 16, sx + 16, sy + 16,
+                              fill='', outline='#ff8800', width=2, dash=(4, 2))
+                c.create_text(sx, sy + 22, text='SHELF',
+                              fill='#ff8800', font=('Consolas', 7, 'bold'))
+            # Apriltag confirmed detection → green outline
+            if is_detected:
+                c.create_oval(sx - 11, sy - 11, sx + 11, sy + 11,
+                              fill='', outline='#00ff88', width=2)
+                c.create_text(sx + 14, sy - 14, text='✓',
+                              fill='#00ff88', font=('Consolas', 9, 'bold'))
+
+            fill_col = '#00d4ff'
+            if is_survey_next:
+                fill_col = '#ff8800'
+            elif is_nav_target:
+                fill_col = '#ffdd00'
+            elif is_detected:
+                fill_col = '#00ff88'
+
             c.create_oval(sx - 8, sy - 8, sx + 8, sy + 8,
-                          fill='#00d4ff', outline='#ffffff', width=2)
-            c.create_text(sx, sy - 18, text=str(w.get('label', w['id'])),
+                          fill=fill_col, outline='#ffffff', width=2)
+            c.create_text(sx, sy - 18,
+                          text=str(w.get('label', w['id'])),
                           fill='#ffffff', font=('Consolas', 9, 'bold'))
 
-        # Home marker
+        # ── Home marker ──────────────────────────────────────────────
         if self.state.home_pose:
             hx_ = self.state.home_pose['x']
             hy_ = self.state.home_pose['y']
@@ -2729,17 +2886,29 @@ class OperatorApp:
             c.create_text(shx, shy - 16, text='HOME', fill='#ffcc00',
                           font=('Consolas', 8, 'bold'))
 
-        # Robot pose marker
+        # ── Robot pose marker (dot + direction arrow) ────────────────
         if self.state.pose:
             px = float(self.state.pose.get('x', 0.0))
             py = float(self.state.pose.get('y', 0.0))
             theta = float(self.state.pose.get('theta', 0.0))
             sx, sy = self._world_to_screen(px, py, W, H)
+            # Green filled dot
             c.create_oval(sx - 7, sy - 7, sx + 7, sy + 7,
                           fill='#00ff88', outline='#ffffff', width=2)
+            # Direction arrow (triangle + line)
             hx = sx + math.cos(theta) * 18
             hy = sy - math.sin(theta) * 18
             c.create_line(sx, sy, hx, hy, fill='#ff3b5c', width=3, arrow='last')
+            # Small heading triangle
+            tri_len = 12
+            tri_w = 5
+            ax = sx + math.cos(theta) * tri_len
+            ay = sy - math.sin(theta) * tri_len
+            lx = sx + math.cos(theta + 2.5) * tri_w
+            ly = sy - math.sin(theta + 2.5) * tri_w
+            rx = sx + math.cos(theta - 2.5) * tri_w
+            ry = sy - math.sin(theta - 2.5) * tri_w
+            c.create_polygon(ax, ay, lx, ly, rx, ry, fill='#ff3b5c', outline='')
 
         # Mouse coordinate tooltip
         if self._mouse_world:

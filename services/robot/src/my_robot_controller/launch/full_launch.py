@@ -158,6 +158,13 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': LaunchConfiguration('use_sim_time'),
         }],
+        additional_env={
+            'APRILTAG_FAMILY': os.environ.get('APRILTAG_FAMILY', 'tag36h11'),
+            'APRILTAG_SIZE_M': os.environ.get('APRILTAG_SIZE_M', '0.166'),
+            'CAMERA_DEVICE': os.environ.get('CAMERA_DEVICE', '/dev/video0'),
+            'CAMERA_WIDTH': os.environ.get('CAMERA_WIDTH', '640'),
+            'CAMERA_HEIGHT': os.environ.get('CAMERA_HEIGHT', '480'),
+        },
     )
 
     # ── 8. Web bridge (WebSocket :9091) ────────────────────────────────────────

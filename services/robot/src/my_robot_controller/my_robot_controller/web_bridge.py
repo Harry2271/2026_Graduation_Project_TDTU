@@ -120,6 +120,7 @@ class WebBridge(Node):
         self.create_subscription(String, '/esp32/encoder', self._on_esp32_encoder, 10)
         self.create_subscription(String, '/esp32/imu', self._on_esp32_imu, 10)
         self.create_subscription(String, '/esp32/power', self._on_esp32_power, 10)
+        self.create_subscription(String, '/detected_tags', self._on_detected_tags, 10)
 
         # ── Timers ──────────────────────────────────────────────────────
         self.create_timer(5.0, self._broadcast_info)
@@ -318,6 +319,20 @@ class WebBridge(Node):
         except json.JSONDecodeError:
             return
         self._emit({'type': 'esp32_power', 'data': data})
+
+    def _on_detected_tags(self, msg: String) -> None:
+        """Forward AprilTag detection to all WebSocket clients.
+
+        The ``april_tag_node`` publishes JSON on ``/detected_tags`` with
+        a root timestamp and a ``tags`` array.  Each item contains the
+        camera-frame pose (tag_id, x, y, z, yaw, pitch, roll, confidence,
+        size_m).  Legacy single-tag payloads are forwarded unchanged too.
+        """
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        self._emit({'type': 'detected_tags', 'data': data})
 
     # ── Info ───────────────────────────────────────────────────────────────────
 
@@ -529,6 +544,8 @@ class WSServer:
                         # Four-zone delivery demo commands.
                         # Only accepted in AUTO mode.
                         # Payload: { type: 'demo', action: 'A'|'B'|'C'|'D'|'full'|'stop' }
+                        #         { type: 'demo', action: 'warehouse' }
+                        #         { type: 'demo', action: 'warehouse 0 1 2' }
                         if self._control_mode != 'AUTO':
                             ack = {'type': 'ack', 'data': {
                                 'command': 'demo', 'accepted': False,
@@ -539,8 +556,12 @@ class WSServer:
                                 pass
                             continue
                         action = str(msg.get('action', '')).strip()
-                        valid_demo = {'A', 'B', 'C', 'D', 'full', 'stop'}
-                        if action in valid_demo:
+                        normalized_action = action.upper()
+                        valid_demo = {'A', 'B', 'C', 'D', 'FULL', 'STOP',
+                                      'WAREHOUSE'}
+                        warehouse_command = normalized_action == 'WAREHOUSE' or normalized_action.startswith('WAREHOUSE ')
+                        if normalized_action in valid_demo or warehouse_command:
+                            action = normalized_action
                             while True:
                                 try:
                                     self.demo_q.get_nowait()

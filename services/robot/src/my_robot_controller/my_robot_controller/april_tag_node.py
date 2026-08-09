@@ -17,12 +17,19 @@ Why two camera consumers?
 Payload (std_msgs/String, JSON):
   {
     "ts": 1234567890.123,
-    "tag_id": 42,
-    "x": 0.31, "y": 0.02, "z": 0.85,          # camera-frame tvec (m)
-    "yaw": 1.57, "pitch": 0.0, "roll": 0.0,     # rvec → euler (rad)
-    "confidence": 0.92,                          # decision_margin
-    "size_m": 0.166,                            # tag square size (m)
+    "tags": [
+      {
+        "tag_id": 42,
+        "x": 0.31, "y": 0.02, "z": 0.85,        # camera-frame tvec (m)
+        "yaw": 1.57, "pitch": 0.0, "roll": 0.0,   # rvec → euler (rad)
+        "confidence": 0.92,                        # decision_margin
+        "size_m": 0.166                            # tag square size (m)
+      }
+    ]
   }
+
+All detections in one frame are published. Consumers should order them by
+camera-frame x (left to right), not by confidence.
 
 Environment variables:
   CAMERA_DEVICE    — V4L2 device (default: /dev/video0)
@@ -264,7 +271,7 @@ class AprilTagNode(Node):
             return None
 
     def _process_frame(self, gray: np.ndarray) -> None:
-        """Detect tags in a grayscale frame and publish the best one."""
+        """Detect and publish every tag in a grayscale frame."""
         try:
             detections = self._detector.detect(gray, estimate_tag_pose=True,
                                                 camera_params=[FX, FY, CX, CY],
@@ -276,29 +283,29 @@ class AprilTagNode(Node):
         if not detections:
             return
 
-        # Pick the most confident detection (highest decision_margin)
-        best = max(detections, key=lambda d: d.decision_margin)
-        tvec = best.pose_t.flatten()  # [x, y, z] in camera frame, metres
-        rvec = best.pose_R.flatten()
-        yaw, pitch, roll = _rvec_to_euler(best.pose_R)
+        tags = []
+        for detection in detections:
+            tvec = detection.pose_t.flatten()  # [x, y, z] in camera frame
+            yaw, pitch, roll = _rvec_to_euler(detection.pose_R)
+            tags.append({
+                'tag_id': int(detection.tag_id),
+                'x': float(tvec[0]),
+                'y': float(tvec[1]),
+                'z': float(tvec[2]),
+                'yaw': float(yaw),
+                'pitch': float(pitch),
+                'roll': float(roll),
+                'confidence': float(detection.decision_margin),
+                'size_m': self._tag_size_m,
+            })
 
         msg = String()
-        msg.data = json.dumps({
-            'ts': time.time(),
-            'tag_id': int(best.tag_id),
-            'x': float(tvec[0]),
-            'y': float(tvec[1]),
-            'z': float(tvec[2]),
-            'yaw': float(yaw),
-            'pitch': float(pitch),
-            'roll': float(roll),
-            'confidence': float(best.decision_margin),
-            'size_m': self._tag_size_m,
-        })
+        msg.data = json.dumps({'ts': time.time(), 'tags': tags})
         self._pub.publish(msg)
         self.get_logger().info(
-            f'tag {best.tag_id} x={tvec[0]:.2f} y={tvec[1]:.2f} z={tvec[2]:.2f} '
-            f'confidence={best.decision_margin:.1f}',
+            'tags ' + ', '.join(
+                f'#{tag["tag_id"]} x={tag["x"]:.2f} z={tag["z"]:.2f}'
+                for tag in tags),
             throttle_duration_sec=1.0)
 
 

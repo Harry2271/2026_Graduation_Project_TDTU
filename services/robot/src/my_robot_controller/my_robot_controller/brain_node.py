@@ -39,6 +39,12 @@ class BrainState(str, Enum):
     JOB_NAV_TO_DROPOFF = 'JOB_NAV_TO_DROPOFF'
     JOB_DOCK_UNLOAD = 'JOB_DOCK_UNLOAD'
     JOB_RETURN_HOME = 'JOB_RETURN_HOME'
+    WAREHOUSE_SCAN = 'WAREHOUSE_SCAN'
+    WAREHOUSE_NAV_TAG = 'WAREHOUSE_NAV_TAG'
+    WAREHOUSE_DOCK = 'WAREHOUSE_DOCK'
+    WAREHOUSE_UNLOAD = 'WAREHOUSE_UNLOAD'
+    WAREHOUSE_LEAVE_DOCK = 'WAREHOUSE_LEAVE_DOCK'
+    WAREHOUSE_RETURN_HOME = 'WAREHOUSE_RETURN_HOME'
     E_STOP = 'E_STOP'
     ERROR = 'ERROR'
 
@@ -126,8 +132,8 @@ class BrainNode(Node):
         self._job_worker_task: asyncio.Task[None] | None = None
         self._health_task: asyncio.Task[None] | None = None
 
-        # AprilTag detection subscriber — latest detection stored for job execution
-        self._latest_tag: Optional[dict] = None
+        # AprilTag detection subscriber — cache all visible tags by ID.
+        self._tag_cache: dict[int, dict] = {}
         self._tag_sub = self.create_subscription(
             String, '/detected_tags', self._on_tag_detected, 10)
 
@@ -203,6 +209,18 @@ class BrainNode(Node):
         self._cargo_present = False
         self._last_cargo_poll = 0.0
         self._autonomous_cycle_count = 0
+
+        # ── Warehouse multi-tag mission ────────────────────────────────────────
+        self._warehouse_task: asyncio.Task[None] | None = None
+        self._warehouse_cancel_flag: bool = False
+        self._warehouse_tag_queue: list[dict] = []
+        self._warehouse_completed_ids: set[int] = set()
+        self._warehouse_current_tag: Optional[dict] = None
+        self._warehouse_specific_tag_ids: list[int] | None = None
+        self._warehouse_scan_duration: float = 3.0
+        self._warehouse_target_distance_mm: int = 300
+        self._warehouse_timeout_per_tag: float = 30.0
+        self._warehouse_mission_timeout: float = 300.0
 
         self.get_logger().info(f'brain_node started in state {self._state}')
 
@@ -476,26 +494,247 @@ class BrainNode(Node):
         return await self._nav_to_pose(*self._home_pose)
 
     def _on_tag_detected(self, msg: String) -> None:
-        """Keep a timestamped cache of the latest tag detection."""
+        """Cache all tags from the AprilTag detector payload.
+
+        Supports two payload formats:
+          - New:  {"ts": ..., "tags": [{tag_id, x, y, z, ...}, ...]}
+          - Legacy single-tag: {"tag_id": ..., "x": ..., ...}
+        """
         try:
-            self._latest_tag = json.loads(msg.data)
-            self._latest_tag['_age'] = time.time()
+            payload = json.loads(msg.data)
         except Exception:
-            pass
+            return
+
+        tags = payload.get('tags')
+        if not isinstance(tags, list):
+            # Legacy single-tag format — wrap in list
+            if isinstance(payload, dict) and 'tag_id' in payload:
+                tags = [payload]
+            else:
+                return
+
+        now = time.time()
+        for tag in tags:
+            try:
+                tid = int(tag.get('tag_id', -1))
+            except (TypeError, ValueError):
+                continue
+            if tid < 0:
+                continue
+            self._tag_cache[tid] = {**tag, '_age': now}
 
     def _get_tag(self, tag_id: int, max_age_s: float = 2.0) -> Optional[dict]:
         """Return the latest detection for a specific tag if fresh enough."""
-        if self._latest_tag is None:
+        tag = self._tag_cache.get(tag_id)
+        if tag is None:
             return None
-        if self._latest_tag.get('tag_id') != tag_id:
+        age = time.time() - tag.get('_age', 0)
+        if age > max_age_s:
             return None
-        if (time.time() - self._latest_tag.get('_age', 0)) > max_age_s:
-            return None
-        return self._latest_tag
+        return tag
+
+    def _get_any_tag(self, max_age_s: float = 1.0) -> Optional[dict]:
+        """Return the freshest tag detection (used during autonomous explore)."""
+        now = time.time()
+        best: Optional[dict] = None
+        best_age = float('inf')
+        for tag in self._tag_cache.values():
+            age = now - tag.get('_age', 0)
+            if age < best_age and age <= max_age_s:
+                best = tag
+                best_age = age
+        return best
+
+    def _get_fresh_tags(
+        self,
+        exclude_ids: set[int] | None = None,
+        max_age_s: float = 2.0,
+        max_dist_m: float = 5.0,
+    ) -> list[dict]:
+        """Return visible tags sorted left→right, nearest-first.
+
+        Sort order: x ascending (left=negative, right=positive),
+        then z ascending (nearer first) as tie-breaker.
+        """
+        now = time.time()
+        exclude = exclude_ids or set()
+        result = []
+        for tid, tag in self._tag_cache.items():
+            if tid in exclude:
+                continue
+            age = now - tag.get('_age', 0)
+            if age > max_age_s:
+                continue
+            z = tag.get('z', 99.0)
+            if z > max_dist_m:
+                continue
+            result.append(tag)
+        result.sort(key=lambda t: (t.get('x', 0), t.get('z', 99)))
+        return result
 
     def _clear_tag(self) -> None:
-        """Invalidate cached tag so a fresh scan is needed for the next dock."""
-        self._latest_tag = None
+        """Invalidate cached tags so a fresh scan is needed for the next dock."""
+        self._tag_cache.clear()
+
+    def _get_robot_pose(self) -> tuple[float, float, float] | None:
+        """Return (x, y, yaw) from TF (map→base_footprint), or None."""
+        try:
+            tf = self._tf_buffer.lookup_transform('map', 'base_footprint', Time())
+            x = tf.transform.translation.x
+            y = tf.transform.translation.y
+            q = tf.transform.rotation
+            yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                              1.0 - 2.0 * (q.y ** 2 + q.z ** 2))
+            return (x, y, yaw)
+        except Exception:
+            return None
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Multi-tag warehouse mission
+    # ─────────────────────────────────────────────────────────────────
+
+    def _start_warehouse_mission(self, tag_ids: list[int] | None = None) -> None:
+        """Start one serialized mission for all currently visible warehouse tags."""
+        if self._warehouse_task is not None and not self._warehouse_task.done():
+            self.get_logger().warning('Warehouse mission already running')
+            return
+        if self._demo_task is not None and not self._demo_task.done():
+            self.get_logger().warning('Demo already running — warehouse ignored')
+            return
+        self._warehouse_cancel_flag = False
+        self._warehouse_specific_tag_ids = tag_ids or None
+        self._warehouse_task = asyncio.create_task(self._run_warehouse_mission())
+
+    def _cancel_warehouse_mission(self) -> None:
+        """Cancel the mission and stop hardware without leaving a live Nav2 goal."""
+        self._warehouse_cancel_flag = True
+        task = self._warehouse_task
+        if task is not None and not task.done():
+            task.cancel()
+        asyncio.create_task(self._stop())
+        self.get_logger().warning('Warehouse mission stop requested')
+        self._publish_demo_status('STOPPED', message='Khảo sát kho đã dừng')
+
+    async def _warehouse_leave_dock(self) -> None:
+        """Back away briefly after firmware reports unload COMPLETE."""
+        await self._drive(-50.0, 0.0, 0.0)
+        await asyncio.sleep(1.5)
+        await self._stop()
+
+    def _warehouse_tag_pose(self, tag: dict) -> tuple[float, float, float] | None:
+        """Convert a camera-frame tag snapshot into an approximate map approach pose."""
+        pose = self._get_robot_pose()
+        if pose is None:
+            return None
+        rx, ry, yaw = pose
+        try:
+            z = float(tag['z'])
+            x = float(tag['x'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        # Camera x is positive to the robot's right; z is forward.
+        tag_x = rx + z * math.cos(yaw) + x * math.sin(yaw)
+        tag_y = ry + z * math.sin(yaw) - x * math.cos(yaw)
+        approach_m = max(0.8, self._warehouse_target_distance_mm / 1000.0)
+        return (tag_x - approach_m * math.cos(yaw),
+                tag_y - approach_m * math.sin(yaw), yaw)
+
+    async def _run_warehouse_mission(self) -> None:
+        """Scan, dock/unload tags left-to-right, and return home once."""
+        started = time.monotonic()
+        self._warehouse_completed_ids.clear()
+        self._warehouse_tag_queue.clear()
+        self._warehouse_current_tag = None
+        try:
+            await self.connect_bridge()
+            self.transition_to(BrainState.WAREHOUSE_SCAN, 'warehouse mission')
+            self._publish_demo_status('SCANNING', message='Đang quét AprilTag trong khu kho')
+            self._clear_tag()
+            await asyncio.sleep(self._warehouse_scan_duration)
+
+            requested = set(self._warehouse_specific_tag_ids or [])
+            tags = self._get_fresh_tags(max_age_s=1.0, max_dist_m=10.0)
+            if requested:
+                tags = [tag for tag in tags if tag.get('tag_id') in requested]
+            if not tags:
+                raise RuntimeError('Không phát hiện AprilTag mới trong khu kho')
+            self._warehouse_tag_queue = tags
+            self.get_logger().info(
+                'Warehouse order (left→right): ' +
+                ', '.join(f'#{tag["tag_id"]}' for tag in tags))
+            self._publish_demo_status(
+                'PLANNED', message='Thứ tự: ' + ', '.join(
+                    f'#{tag["tag_id"]}' for tag in tags))
+
+            while self._warehouse_tag_queue:
+                if self._warehouse_cancel_flag:
+                    raise asyncio.CancelledError
+                if time.monotonic() - started > self._warehouse_mission_timeout:
+                    raise RuntimeError('Warehouse mission timeout')
+
+                tag = self._warehouse_tag_queue.pop(0)
+                tag_id = int(tag['tag_id'])
+                self._warehouse_current_tag = tag
+                approach = self._warehouse_tag_pose(tag)
+                if approach is None:
+                    raise RuntimeError(f'Không có pose để đến tag #{tag_id}')
+
+                self.transition_to(BrainState.WAREHOUSE_NAV_TAG, f'tag {tag_id}')
+                self._publish_demo_status('NAVIGATING', str(tag_id),
+                                          f'Đang đến AprilTag #{tag_id}')
+                if not await self._nav_to_pose(*approach):
+                    raise RuntimeError(f'Nav2 không đến được tag #{tag_id}')
+
+                # Require detections made after reaching the approach pose.
+                self._clear_tag()
+                self.transition_to(BrainState.WAREHOUSE_DOCK, f'tag {tag_id}')
+                self._publish_demo_status('DOCKING', str(tag_id),
+                                          f'Đang căn AprilTag #{tag_id}')
+                if not await self._dock_align(
+                        tag_id, self._warehouse_target_distance_mm, timeout_s=20.0):
+                    raise RuntimeError(f'Không căn được AprilTag #{tag_id}')
+
+                self.transition_to(BrainState.WAREHOUSE_UNLOAD, f'tag {tag_id}')
+                self._publish_demo_status('UNLOADING', str(tag_id),
+                                          f'Đang đổ hàng tại tag #{tag_id}')
+                await self._bridge.begin_dock(
+                    tag_id, self._warehouse_target_distance_mm,
+                    operation_id=f'warehouse-{tag_id}-{int(time.time())}')
+                if not await self._poll_unload_state(
+                        timeout_s=self._warehouse_timeout_per_tag):
+                    raise RuntimeError(f'Unload timeout tại tag #{tag_id}')
+
+                self._warehouse_completed_ids.add(tag_id)
+                self.transition_to(BrainState.WAREHOUSE_LEAVE_DOCK, f'tag {tag_id}')
+                await self._warehouse_leave_dock()
+                self._clear_tag()
+
+            self.transition_to(BrainState.WAREHOUSE_RETURN_HOME, 'all tags complete')
+            self._publish_demo_status('RETURNING', message='Đã xong các tag, đang về Home')
+            if not await self._return_home():
+                raise RuntimeError('Không thể quay về Home')
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'warehouse mission complete')
+            self._publish_demo_status(
+                'COMPLETED', message=f'Hoàn tất {len(self._warehouse_completed_ids)} tag')
+        except asyncio.CancelledError:
+            await self._bridge.cancel_dock()
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'warehouse mission cancelled')
+            raise
+        except Exception as exc:
+            self.get_logger().error(f'Warehouse mission failed: {exc}')
+            await self._bridge.cancel_dock()
+            await self._stop()
+            # A failed mission must not continue driving; return home only if safe.
+            if self._home_pose is not None and not self._warehouse_cancel_flag:
+                self.transition_to(BrainState.WAREHOUSE_RETURN_HOME, 'warehouse failure')
+                await self._return_home()
+            self.transition_to(BrainState.ERROR, 'warehouse mission failed')
+            self._publish_demo_status('FAILED', message=str(exc))
+        finally:
+            self._warehouse_current_tag = None
+            self._warehouse_task = None
 
     # ─────────────────────────────────────────────────────────────────
     #  Four-zone delivery demo
@@ -517,10 +756,16 @@ class BrainNode(Node):
         command = msg.data.strip().upper()
         if command == 'STOP':
             self._demo_cancel = True
+            self._cancel_warehouse_mission()
             if self._demo_task is not None and not self._demo_task.done():
                 self._demo_task.cancel()
             self.get_logger().warn('Demo stop requested')
             self._publish_demo_status('STOPPED', message='Demo đã dừng')
+            return
+        if command == 'WAREHOUSE' or command.startswith('WAREHOUSE '):
+            parts = command.split()
+            tag_ids = [int(p) for p in parts[1:] if p.lstrip('-').isdigit()]
+            self._start_warehouse_mission(tag_ids or None)
             return
         if command == 'FULL':
             if self._demo_task is not None and not self._demo_task.done():
@@ -955,14 +1200,6 @@ class BrainNode(Node):
             return True
 
         return False
-
-    def _get_any_tag(self, max_age_s: float = 1.0) -> Optional[dict]:
-        """Return latest tag detection for ANY tag_id (used during explore)."""
-        if self._latest_tag is None:
-            return None
-        if (time.time() - self._latest_tag.get('_age', 0)) > max_age_s:
-            return None
-        return self._latest_tag
 
     async def _drive_reverse_distance(self, distance_m: float, speed: int,
                                       timeout_s: float = 10.0) -> None:
