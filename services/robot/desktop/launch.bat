@@ -26,10 +26,12 @@ if errorlevel 1 (
     %PY% -m pip install --quiet -r "%SCRIPT_DIR%requirements.txt"
 )
 
-REM Launch PySide6 app
+REM Launch PySide6 app and connect directly to the Raspberry Pi.
 title AGV Operator
+set "ROBOT_WS_URL=ws://192.168.1.16:9091"
 echo Starting AGV Operator...
-%PY% -m gui.main
+echo Connecting to %ROBOT_WS_URL%
+%PY% -m gui.main --url "%ROBOT_WS_URL%"
 if errorlevel 1 (
     echo.
     echo [ERROR] Python exited with code %ERRORLEVEL%

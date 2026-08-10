@@ -64,6 +64,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import urllib.parse
 from tkinter import ttk
 from typing import Any
 
@@ -92,9 +93,10 @@ class UDPDiscovery:
     time a new device is discovered.
     """
 
-    def __init__(self, root: tk.Tk, on_found) -> None:
+    def __init__(self, root: tk.Tk, on_found, on_complete=None) -> None:
         self.root = root
         self.on_found = on_found            # callable(device_dict)
+        self.on_complete = on_complete     # callable(found_devices)
         self.found_devices: list[dict] = []
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -152,6 +154,15 @@ class UDPDiscovery:
             except Exception:
                 break
         sock.close()
+        # Notify the UI thread that the scan is done so it can prompt
+        # the user to enter the IP manually when nothing was found.
+        if self.on_complete is not None:
+            try:
+                with self._lock:
+                    devices_copy = list(self.found_devices)
+                self.root.after(0, self.on_complete, devices_copy)
+            except Exception:
+                pass
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -167,7 +178,7 @@ STALE_DATA_AFTER = 3.0      # seconds without pose / scan → dim the canvas
 
 DEFAULT_URL = 'ws://127.0.0.1:9091'
 UDP_DISCOVERY_PORT = 9090
-UDP_SCAN_TIMEOUT = 3.0       # seconds to wait for UDP replies
+UDP_SCAN_TIMEOUT = 5.0       # seconds to wait for UDP replies (was 3, increased for Windows firewall)
 
 MAP_VIEW_RANGE = 4.0        # metres visible around the robot (mini-map)
 MINI_SIZE = 320
@@ -182,6 +193,7 @@ _SEQUENCE_PATH = _os.path.join(_DESKTOP_DIR, 'sequence.json')
 _TRIP_LOG_PATH = _os.path.join(_DESKTOP_DIR, 'trip_log.json')
 _HOME_PATH = _os.path.join(_DESKTOP_DIR, 'home_pose.json')
 _WAREHOUSE_STATE_PATH = _os.path.join(_DESKTOP_DIR, 'warehouse_state.json')
+_CONFIG_PATH = _os.path.join(_DESKTOP_DIR, 'operator_config.json')
 
 # ── Geofence ──────────────────────────────────────────────
 # Area the robot is allowed to operate in. Configured via geofence.json
@@ -359,6 +371,44 @@ def _save_warehouse_state(path: str, data: dict) -> None:
     _save_json(path, data)
 
 
+# ── Operator config (persists last URL + optional auth token) ────────
+
+def _load_config() -> dict:
+    """Load operator_config.json. Falls back to sane defaults on any error."""
+    return _load_json(_CONFIG_PATH, {})
+
+
+def _save_config(cfg: dict) -> None:
+    _save_json(_CONFIG_PATH, cfg)
+
+
+def _get_auth_token() -> str:
+    """Resolve the WebSocket auth token from env vars or config.
+
+    Priority: WS_AUTH_TOKEN env > ROBOT_BRAIN_TOKEN env > config file > empty.
+    """
+    token = _os.environ.get('WS_AUTH_TOKEN', '').strip()
+    if not token:
+        token = _os.environ.get('ROBOT_BRAIN_TOKEN', '').strip()
+    if not token:
+        cfg = _load_config()
+        token = cfg.get('auth_token', '').strip()
+    return token
+
+
+def _get_default_url() -> str:
+    """Return the saved robot URL, or empty while LAN discovery runs.
+
+    localhost is deliberately not used as an automatic fallback: on a
+    Windows operator PC, 127.0.0.1 is the PC itself, not the Raspberry Pi.
+    """
+    cfg = _load_config()
+    saved = cfg.get('last_url', '').strip()
+    if saved and (saved.startswith('ws://') or saved.startswith('wss://')):
+        return saved
+    return ''
+
+
 def geofence_predict(vx: int, vy: int, _omega: int,
                      dt: float, theta: float) -> tuple[float, float]:
     """Predict where the robot will be ``dt`` seconds from now if it
@@ -384,8 +434,9 @@ class BridgeClient:
     decoded events from ``incoming`` (a queue.Queue drained from tkinter).
     """
 
-    def __init__(self, url: str, logger) -> None:
+    def __init__(self, url: str, logger, auth_token: str = '') -> None:
         self.url = url
+        self.auth_token = auth_token
         self.logger = logger
         self.outgoing: queue.Queue = queue.Queue(maxsize=64)
         self.incoming: queue.Queue = queue.Queue(maxsize=1024)
@@ -410,8 +461,13 @@ class BridgeClient:
                 # when the Pi is unreachable.  The 5 s ceiling keeps
                 # latency sane on fast LANs while still tolerating the
                 # normal TCP SYN round-trip.
+                # Append auth token to URL if present and not already there.
+                connect_url = self.url
+                if self.auth_token and 'token=' not in connect_url:
+                    sep = '&' if '?' in connect_url else '?'
+                    connect_url = f'{connect_url}{sep}token={urllib.parse.quote(self.auth_token)}'
                 async with websockets.connect(
-                    self.url,
+                    connect_url,
                     open_timeout=5.0,
                     ping_interval=PING_INTERVAL,
                     ping_timeout=PING_INTERVAL * 2,
@@ -603,10 +659,12 @@ class OperatorState:
 # ── Main app ────────────────────────────────────────────────────────────────
 
 class OperatorApp:
-    def __init__(self, root: tk.Tk, url: str) -> None:
+    def __init__(self, root: tk.Tk, url: str, auth_token: str = '',
+                 run_discovery: bool = False) -> None:
         self.root = root
         self.url = url
-        self.root.title(f'AGV Operator — {url}')
+        self.auth_token = auth_token
+        self.root.title(f'AGV Operator — {url or "chưa kết nối"}')
         self.root.minsize(1100, 720)
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
 
@@ -649,16 +707,38 @@ class OperatorApp:
         self._build_menu()
         self._bind_keys()
 
-        # WebSocket
-        self.bridge = BridgeClient(url, self._log)
+        # WebSocket — start immediately only if we have a URL; otherwise
+        # wait for LAN discovery or manual IP entry to provide one.
+        self.bridge: BridgeClient | None = None
+        self._udp_discovery: UDPDiscovery | None = None
+        self._discovered_devices: list[dict] = []
+        if url:
+            self._start_bridge(url)
+        if run_discovery or not url:
+            self._start_udp_scan()
+
+    # ── Bridge lifecycle ─────────────────────────────────────────────
+
+    def _start_bridge(self, url: str) -> None:
+        """Create a new BridgeClient and start the UI polling loops."""
+        self.url = url
+        self.root.title(f'AGV Operator — {url}')
+        if self.bridge is not None:
+            self.bridge.close()
+        self.bridge = BridgeClient(url, self._log, auth_token=self.auth_token)
+        # Persist so next launch connects automatically.
+        # Skip localhost — it only makes sense on the Pi itself, not on
+        # an operator's Windows/Mac PC where discovery should be used.
+        if not any(h in url for h in ('127.0.0.1', 'localhost', '[::1]')):
+            try:
+                cfg = _load_config()
+                cfg['last_url'] = url
+                _save_config(cfg)
+            except Exception:
+                pass
         self.root.after(50, self._drain_incoming)
         self.root.after(50, self._tick_teleop)
         self.root.after(100, self._refresh_timer_label)
-        # Auto-discovery: scan LAN on startup if no custom URL was provided
-        self._udp_discovery: UDPDiscovery | None = None
-        self._discovered_devices: list[dict] = []
-        if url == DEFAULT_URL:
-            self._start_udp_scan()
 
     # ── Layout ───────────────────────────────────────────────────────
 
@@ -1523,6 +1603,7 @@ class OperatorApp:
         try:
             now = time.monotonic()
             if (self.state.control_mode == 'MANUAL'
+                    and self.bridge is not None
                     and self.bridge.is_connected()
                     and self._pressed
                     and now - self._last_teleop_sent >= TELEOP_INTERVAL):
@@ -1561,6 +1642,9 @@ class OperatorApp:
     # ── Outbound commands ──────────────────────────────────────────
 
     def _send_cmd(self, command: str) -> None:
+        if self.bridge is None:
+            self._log('❌ chưa kết nối robot', error=True)
+            return
         if self.bridge.send({'type': 'cmd', 'command': command}):
             self._log(f'→ cmd:{command}')
         else:
@@ -1570,6 +1654,9 @@ class OperatorApp:
         if self.state.control_mode != 'AUTO':
             self._log(f'❌ demo:{action} rejected (mode is {self.state.control_mode})',
                       error=True)
+            return
+        if self.bridge is None:
+            self._log('❌ chưa kết nối robot', error=True)
             return
         if self.bridge.send({'type': 'demo', 'action': action}):
             self._log(f'→ demo:{action}')
@@ -1581,11 +1668,17 @@ class OperatorApp:
             self._log(f'❌ cylinder:{action} rejected (mode is {self.state.control_mode})',
                       error=True)
             return
+        if self.bridge is None:
+            self._log('❌ chưa kết nối robot', error=True)
+            return
         if self.bridge.send({'type': 'cylinder', 'action': action}):
             self._log(f'→ cylinder:{action}')
 
     def _set_mode(self, mode: str) -> None:
         if mode not in ('AUTO', 'MANUAL'):
+            return
+        if self.bridge is None:
+            self._log('❌ chưa kết nối robot', error=True)
             return
         if self.bridge.send({'type': 'control_mode', 'mode': mode}):
             self._log(f'→ mode:{mode}')
@@ -1598,21 +1691,23 @@ class OperatorApp:
         ESP32 with priority over any in-flight ``move`` commands.
         Then sends a firmware ``stop`` for the brake state.
         """
-        if self.bridge.send({'type': 'esp32', 'cmd': {'cmd': 'e_stop'}}):
-            self._log('🛑 ESP32 E-STOP issued')
-            if self.state.survey_running:
-                self.state.survey_paused = True
-                self.state.survey_running = False
-                self.btn_survey.state(['!disabled'])
-                self.btn_survey_reset.state(['!disabled'])
-                self._log('⏸ khảo sát đã tạm dừng do E-STOP', error=True)
-                self._update_survey_hint()
-        else:
-            self._log('cannot E-STOP — bridge disconnected', error=True)
+        if self.bridge is None or not self.bridge.send({'type': 'esp32', 'cmd': {'cmd': 'e_stop'}}):
+            self._log('❌ cannot E-STOP — chưa kết nối robot', error=True)
+            return
+        self._log('🛑 ESP32 E-STOP issued')
+        if self.state.survey_running:
+            self.state.survey_paused = True
+            self.state.survey_running = False
+            self.btn_survey.state(['!disabled'])
+            self.btn_survey_reset.state(['!disabled'])
+            self._log('⏸ khảo sát đã tạm dừng do E-STOP', error=True)
+            self._update_survey_hint()
 
     def _reconnect(self) -> None:
-        self.bridge.close()
-        self.bridge = BridgeClient(self.url, self._log)
+        if not self.url:
+            self._log('❌ chưa có URL robot — dùng kết nối thủ công hoặc tìm LAN', error=True)
+            return
+        self._start_bridge(self.url)
         self._log('manual reconnect requested')
 
     # ── Navigate (Phase 2) + Trip timer + Home (Phase 4) ─────────
@@ -1625,6 +1720,9 @@ class OperatorApp:
             return False
         if self.state.nav_active:
             self._log('❌ navigate rejected — robot đang chạy lệnh khác', error=True)
+            return False
+        if self.bridge is None:
+            self._log('❌ chưa kết nối robot', error=True)
             return False
         # Survey waypoints are user-designed and should always be reachable;
         # skip geofence validation so shelves placed near walls still work.
@@ -1675,7 +1773,7 @@ class OperatorApp:
             self._log('⚠ khảo sát đang chạy — bấm DỪNG trước nếu muốn restart',
                       error=True)
             return
-        if not self.bridge.is_connected():
+        if self.bridge is None or not self.bridge.is_connected():
             self._log('❌ chưa kết nối robot', error=True)
             return
         # --- prerequisite checks ---
@@ -1895,7 +1993,8 @@ class OperatorApp:
 
     def _start_udp_scan(self) -> None:
         self._log('🔍 đang tìm robot trên mạng …')
-        self._udp_discovery = UDPDiscovery(self.root, self._on_device_found)
+        self._udp_discovery = UDPDiscovery(self.root, self._on_device_found,
+                                            on_complete=self._on_discovery_complete)
         self._udp_discovery.scan()
 
     def _on_device_found(self, device: dict) -> None:
@@ -1903,10 +2002,36 @@ class OperatorApp:
         hostname = device.get('hostname', device.get('ip', '?'))
         self._log(f'✓ tìm thấy: {hostname} — {ws_url}')
         self._discovered_devices.append(device)
-        if self.bridge._connected.is_set():
+        if self.bridge is not None and self.bridge._connected.is_set():
             return
         self._log(f'→ tự động kết nối {ws_url} …')
         self._reconnect_to_url(ws_url)
+
+    def _on_discovery_complete(self, devices: list[dict]) -> None:
+        """Called after the UDP scan window closes.  If nothing was found,
+        surface a clear message and offer the manual-entry dialog."""
+        if self.bridge is not None and self.bridge._connected.is_set():
+            return
+        if devices:
+            return
+        self._log('⚠ không tìm thấy robot trên LAN. Nguyên nhân thường gặp: '
+                  'Windows Firewall chặn UDP, AP isolation, hoặc robot chưa '
+                  'chạy (chưa start.sh). Vào Tệp → Nhập IP thủ công.', error=True)
+        try:
+            from tkinter import messagebox
+            if messagebox.askyesno(
+                'Không tìm thấy robot',
+                'Không có robot nào trả lời trên mạng LAN.\n\n'
+                'Nguyên nhân thường gặp:\n'
+                '• Windows Firewall chặn UDP broadcast\n'
+                '• Wi-Fi có AP isolation\n'
+                '• Robot chưa chạy (chưa start.sh)\n'
+                '• Pi ở subnet khác\n\n'
+                'Mở cửa sổ nhập IP thủ công?',
+            ):
+                self._on_manual_connect()
+        except Exception:
+            pass
 
     def _on_manual_connect(self) -> None:
         win = tk.Toplevel(self.root)
@@ -1938,10 +2063,7 @@ class OperatorApp:
 
     def _reconnect_to_url(self, ws_url: str) -> None:
         """Switch the WebSocket bridge to a new URL (discovered or manual)."""
-        self.url = ws_url
-        self.root.title(f'AGV Operator — {ws_url}')
-        self.bridge.close()
-        self.bridge = BridgeClient(ws_url, self._log)
+        self._start_bridge(ws_url)
         self._log(f'→ đã chuyển sang {ws_url}')
 
     def _go_home(self) -> None:
@@ -2023,6 +2145,11 @@ class OperatorApp:
 
     def _drain_incoming(self) -> None:
         if self._closing:
+            return
+        if self.bridge is None:
+            # Bridge not yet created — re-check after a short delay.
+            if not self._closing:
+                self.root.after(100, self._drain_incoming)
             return
         try:
             for _ in range(200):
@@ -2214,7 +2341,7 @@ class OperatorApp:
         return True
 
     def _send_esp32(self, cmd: dict) -> bool:
-        if self.bridge.send({'type': 'esp32', 'cmd': cmd}):
+        if self.bridge is not None and self.bridge.send({'type': 'esp32', 'cmd': cmd}):
             self._log(f'→ esp32:{cmd.get("cmd", "?")}')
             return True
         self._log('cannot send ESP32 command — bridge disconnected', error=True)
@@ -2411,8 +2538,8 @@ class OperatorApp:
         elif kind == 'cylinder':
             action = step.get('action', 'stop')
             if self.state.control_mode == 'MANUAL':
-                self.bridge.send({'type': 'cylinder', 'action': action})
-                self._log(f'→ cylinder:{action}')
+                if self.bridge is not None and self.bridge.send({'type': 'cylinder', 'action': action}):
+                    self._log(f'→ cylinder:{action}')
             self.root.after(800, self._advance_sequence)
         elif kind == 'wait':
             secs = float(step.get('wait_s', 1.0))
@@ -3081,7 +3208,8 @@ class OperatorApp:
         try:
             if self._udp_discovery is not None:
                 self._udp_discovery.stop()
-            self.bridge.close()
+            if self.bridge is not None:
+                self.bridge.close()
         except Exception:
             pass
         finally:
@@ -3099,16 +3227,20 @@ class OperatorApp:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='AGV operator desktop fallback')
-    p.add_argument('--url', default=DEFAULT_URL,
-                   help=f'WebSocket URL (default: {DEFAULT_URL})')
+    p.add_argument('--url', default=None,
+                   help='WebSocket URL (default: saved config, then LAN discovery)')
+    p.add_argument('--token', default=None,
+                   help='WebSocket auth token (overrides WS_AUTH_TOKEN env)')
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    url = args.url or _get_default_url()
+    auth_token = (args.token or _get_auth_token()).strip()
     root = tk.Tk()
     try:
-        OperatorApp(root, args.url)
+        OperatorApp(root, url, auth_token=auth_token)
     except Exception as e:
         # If anything blows up during startup, show the error in a
         # system dialog so the user can report it.

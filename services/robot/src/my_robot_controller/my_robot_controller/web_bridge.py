@@ -459,6 +459,9 @@ class WSServer:
         self.navigate_q = navigate_q    # {'x': float, 'y': float, 'theta': float}
         self.clients: set = set()
         self.running = True
+        # Mirror the ROS-side default so teleop/demo/navigate handlers
+        # don't crash with AttributeError on the first interactive message.
+        self._control_mode = 'MANUAL'
 
     async def handler(self, connection) -> None:
         addr = str(connection.remote_address)
@@ -813,7 +816,25 @@ class WSServer:
             process_request=process_request,
         ) as srv:
             print(f'[WS] Server on ws://{HOST}:{PORT} (auth={("on" if expected_token else "OFF — REJECTING")})')
-            await asyncio.gather(self.broadcast_loop(), srv.__aenter__())
+
+            # ── Start UDP discovery beacon (find_pi replies on port 9090) ──
+            beacon = None
+            try:
+                from .udp_beacon import DiscoveryBeacon
+
+                async def _beacon_info() -> dict:
+                    return {'ws_port': PORT}
+
+                beacon = DiscoveryBeacon(get_info=_beacon_info)
+                await beacon.start()
+            except Exception as exc:
+                print(f'[UDP beacon] skipped: {exc}')
+
+            try:
+                await asyncio.gather(self.broadcast_loop(), srv.__aenter__())
+            finally:
+                if beacon is not None:
+                    await beacon.stop()
 
     @staticmethod
     def _get_header(headers, name: str) -> Optional[str]:
@@ -885,19 +906,6 @@ def main() -> None:
     time.sleep(2)
 
     srv = WSServer(msg_q, cmd_q, teleop_q, cylinder_q, demo_q, esp32_cmd_q, navigate_q)
-
-    # UDP discovery beacon — replies to desktop apps asking "find_pi" on port 9090.
-    async def _run_beacon() -> None:
-        try:
-            from .udp_beacon import DiscoveryBeacon
-            async def _info() -> dict:
-                return {'ws_port': 9091}
-            beacon = DiscoveryBeacon(get_info=_info)
-            await beacon.start()
-        except Exception as exc:
-            print(f'[UDP beacon] skipped: {exc}')
-
-    asyncio.create_task(_run_beacon())
 
     try:
         asyncio.run(srv.run())

@@ -100,6 +100,10 @@ bool I2CBus::probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr)
     }
     Wire.beginTransmission(addr);
     uint8_t err = Wire.endTransmission();
+    if (err != 0) {
+        Serial.printf("[I2C] probe 0x%02X: err=%u (SDA=%d SCL=%d)\n",
+                      addr, err, digitalRead(sda_pin), digitalRead(scl_pin));
+    }
     return (err == 0);
 }
 

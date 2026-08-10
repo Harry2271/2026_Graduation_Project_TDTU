@@ -20,7 +20,7 @@ except ImportError as exc:  # pragma: no cover - launcher installs it
 
 UDP_DISCOVERY_PORT = 9090
 UDP_SCAN_TIMEOUT = 3.0
-DEFAULT_URL = 'ws://127.0.0.1:9091'
+DEFAULT_URL = 'ws://192.168.1.16:9091'
 RECONNECT_BACKOFF = (1.0, 2.0, 4.0, 8.0, 16.0)
 PING_INTERVAL = 5.0
 
