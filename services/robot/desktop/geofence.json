@@ -1,0 +1,24 @@
+{
+  "enabled": true,
+  "polygon": [
+    [
+      -2.043,
+      1.177
+    ],
+    [
+      1.697,
+      1.177
+    ],
+    [
+      1.614,
+      -1.089
+    ],
+    [
+      -2.096,
+      -1.03
+    ]
+  ],
+  "soft_margin_m": 0.3,
+  "hard_margin_m": 0.1,
+  "description": "Vùng demo trong nhà kho (5m x 4m). Tâm tại (0,0) của map frame. Sửa polygon này bằng cách mở Tools > Geofence trong app, hoặc sửa trực tiếp file JSON."
+}

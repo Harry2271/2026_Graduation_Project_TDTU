@@ -75,7 +75,10 @@ TOPIC_MAPPING_CTRL   = '/mapping/control'
 
 def _yaw_from_quat(x: float, y: float, z: float, w: float) -> float:
     """Extract yaw from quaternion."""
-    return math.atan2(2.0 * (w * z + x * x), 1.0 - 2.0 * (y * y + z * z))
+    # Correct formula: siny_cosp = 2*(qw*qz + qx*qy)
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    return math.atan2(siny_cosp, cosy_cosp)
 
 
 def voxel_downsample(xs: np.ndarray, ys: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

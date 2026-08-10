@@ -1,0 +1,56 @@
+# Four-zone unloading demo configuration.
+#
+# IMPORTANT: coordinates below are PROVISIONAL examples in the `map` frame.
+# Calibrate them after building the real SLAM map.  Do not run the full demo
+# until each approach pose has been tested individually at low speed.
+#
+# Layout for the compact graduation demonstration:
+#   A (left)  B (right)  -- first cross-section
+#   C (left)  D (right)  -- farther down the aisle
+#
+# AprilTags should be mounted level with the camera optical axis and face the
+# corresponding approach direction.  `dock_distance_mm` remains provisional
+# until the physical robot-to-bay distance is measured.
+
+demo:
+  route: [A, B, D, C]
+  dock_distance_mm: 300
+  distance_status: MEASURE_REQUIRED
+  zones:
+    A:
+      label: Khu A
+      tag_id: 0
+      approach_x: 1.00
+      approach_y: 0.90
+      approach_theta: 0.0
+      side: left
+      calibrated: false
+    B:
+      label: Khu B
+      tag_id: 1
+      approach_x: 2.40
+      approach_y: 0.90
+      approach_theta: 0.0
+      side: right
+      calibrated: false
+    C:
+      label: Khu C
+      tag_id: 2
+      approach_x: 1.00
+      approach_y: 2.20
+      approach_theta: 0.0
+      side: left
+      calibrated: false
+    D:
+      label: Khu D
+      tag_id: 3
+      approach_x: 2.40
+      approach_y: 2.20
+      approach_theta: 0.0
+      side: right
+      calibrated: false
+
+# Recommended physical clearance (measure on the real setup):
+#   clear_aisle_width_m: 0.85-1.00
+#   approach_depth_m: 1.20-1.50
+#   separation_between_AB_and_CD_m: 1.50-2.00

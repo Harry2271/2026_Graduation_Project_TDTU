@@ -12,7 +12,7 @@ import os
 import time
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -25,7 +25,7 @@ from tf2_ros import Buffer, TransformListener
 
 from my_robot_controller.api_client import BrainApiClient
 from my_robot_controller.esp32_bridge import (
-    Esp32Bridge, FakeEsp32Bridge, open_esp32_bridge,
+    Esp32Bridge, FakeEsp32Bridge, MirrorBridge,
 )
 
 
@@ -39,6 +39,12 @@ class BrainState(str, Enum):
     JOB_NAV_TO_DROPOFF = 'JOB_NAV_TO_DROPOFF'
     JOB_DOCK_UNLOAD = 'JOB_DOCK_UNLOAD'
     JOB_RETURN_HOME = 'JOB_RETURN_HOME'
+    WAREHOUSE_SCAN = 'WAREHOUSE_SCAN'
+    WAREHOUSE_NAV_TAG = 'WAREHOUSE_NAV_TAG'
+    WAREHOUSE_DOCK = 'WAREHOUSE_DOCK'
+    WAREHOUSE_UNLOAD = 'WAREHOUSE_UNLOAD'
+    WAREHOUSE_LEAVE_DOCK = 'WAREHOUSE_LEAVE_DOCK'
+    WAREHOUSE_RETURN_HOME = 'WAREHOUSE_RETURN_HOME'
     E_STOP = 'E_STOP'
     ERROR = 'ERROR'
 
@@ -63,11 +69,17 @@ DOCK_SEQUENCE_TIMEOUT_S = 90.0
 # Serialized job execution: only 1 job runs at a time; retries on failure.
 _JOB_MAX_ATTEMPTS = 3      # 1 original + 2 retries
 _JOB_RETRY_BACKOFF_S = 3.0 # seconds between retries
+_BRIDGE_STALE_ERROR_MIN_GAP_S = 5.0
 
 
 # Whether to instantiate the real hardware bridge or the fake test double.
 # Set USE_REAL_BRIDGE=0 in the PM2 environment to force the fake for tests.
 USE_REAL_BRIDGE = os.environ.get('USE_REAL_BRIDGE', '1') not in ('0', 'false', 'False')
+
+# Direction-A mirror mode: brain uses ROS /esp32/cmd topic to send commands,
+# telemetry_node owns serial and mirrors telemetry back.
+# Set USE_MIRROR_BRIDGE=1 in PM2 env for production (Pi 5).
+USE_MIRROR_BRIDGE = os.environ.get('USE_MIRROR_BRIDGE', '1') not in ('0', 'false', 'False')
 
 # Explorer parameters (Tag search phase)
 EXPLORE_FWD_SPEED     = 60     # PWM forward speed during tag search
@@ -85,26 +97,84 @@ CARGO_STARTUP_DELAY_S = 20.0
 CARGO_RELEASE_TIMEOUT_S = 15.0
 CARGO_RELEASE_STABLE_S = 0.8
 
+# ── Demo delivery zones (4 zones A/B/C/D for capstone demo) ─────────────────
+# Hard-coded coordinates suitable for the demo mat.  Each zone is 0.9×1.1 m
+# with a 15×15 cm AprilTag at the centre of its approach face.  The robot
+# navigates to the centroid, then uses AprilTag + VL53L0X to dock to the
+# precise ±3 cm unload position.
+#
+# Coordinates are in the map frame — they become valid once SLAM has built
+# a map in MAPPING mode and lifecycle has shifted to LIVE (AMCL).
+DEMO_ZONES: dict[str, dict] = {
+    'A': {'x': 1.00, 'y': 0.90, 'theta': 0.0, 'tag_id': 0, 'label': 'Khu A'},
+    'B': {'x': 2.40, 'y': 0.90, 'theta': 0.0, 'tag_id': 1, 'label': 'Khu B'},
+    'C': {'x': 1.00, 'y': 2.20, 'theta': 0.0, 'tag_id': 2, 'label': 'Khu C'},
+    'D': {'x': 2.40, 'y': 2.20, 'theta': 0.0, 'tag_id': 3, 'label': 'Khu D'},
+}
+DEMO_DOCK_DISTANCE_MM = 300   # VL53L0X target distance to dock body
+DEMO_DEMO_SEQUENCE = ['A', 'B', 'D', 'C']  # route that minimises total travel
+
 
 class BrainNode(Node):
+    # Shared asyncio loop reference — set once in _run_async() and read
+    # from any ROS subscription callback that needs to schedule async work.
+    # This avoids the unsafe asyncio.get_event_loop() call from callback
+    # threads, which can return the wrong loop or raise in Python 3.10+.
+    _loop: asyncio.AbstractEventLoop | None = None
+
     def __init__(self) -> None:
         super().__init__('brain')
         self._state: BrainState = BrainState.BOOT
-        self._bridge: Esp32Bridge = FakeEsp32Bridge()
+        # Direction-A production path: MirrorBridge publishes ROS commands;
+        # esp32_telemetry_node is the sole serial owner.
+        self._bridge: Esp32Bridge = (
+            MirrorBridge(self) if USE_MIRROR_BRIDGE else FakeEsp32Bridge())
         self._bridge_connected: bool = False
         self._api_client = BrainApiClient()
         self._api_client.on_job_dispatch(self._handle_job_dispatch)
+        self._api_client.on_job_cancel(self._handle_job_cancel)
 
         # Exactly one worker consumes jobs. Socket.io events are queued so a
         # second dispatch can never start a parallel motor sequence.
         self._job_queue: asyncio.Queue[dict] = asyncio.Queue()
         self._job_worker_task: asyncio.Task[None] | None = None
         self._health_task: asyncio.Task[None] | None = None
+        self._active_job_id: str | None = None
+        # Jobs that have been cancelled by the API while still queued or
+        # actively executing. _execute_job pops them off as it sees them.
+        self._cancelled_job_ids: set[str] = set()
 
-        # AprilTag detection subscriber — latest detection stored for job execution
-        self._latest_tag: Optional[dict] = None
+        self._error_pub = self.create_publisher(String, '/robot/errors', 10)
+
+        # AprilTag detection subscriber — cache all visible tags by ID.
+        self._tag_cache: dict[int, dict] = {}
         self._tag_sub = self.create_subscription(
             String, '/detected_tags', self._on_tag_detected, 10)
+
+        # ── Demo control: web_bridge → /demo/cmd (trigger zone or full run) ──
+        # Payload: 'A'|'B'|'C'|'D' → run deliver_to_zone once
+        # Payload: 'full'           → run_demo (S→A→B→D→C→S)
+        # Payload: 'stop'           → request cancel of current demo step
+        self._demo_pub = self.create_publisher(String, '/demo/status', 10)
+        self._demo_cmd_sub = self.create_subscription(
+            String, '/demo/cmd', self._on_demo_cmd, 10)
+        self._demo_task: asyncio.Task[None] | None = None
+        self._demo_cancel = False
+
+        # ── Operator navigation: web_bridge → /brain/navigate_cmd ──────────
+        # Payload JSON: {"action":"navigate","x":1.5,"y":2.0,"theta":0.0}
+        #         or : {"action":"navigate_home"}
+        # brain_node dispatches the goal to Nav2, publishes progress to
+        # /brain/navigate_status, and emits a terminal result on
+        # /brain/navigate_result.
+        self._navigate_status_pub = self.create_publisher(
+            String, '/brain/navigate_status', 10)
+        self._navigate_result_pub = self.create_publisher(
+            String, '/brain/navigate_result', 10)
+        self._navigate_cmd_sub = self.create_subscription(
+            String, '/brain/navigate_cmd', self._on_navigate_cmd, 10)
+        self._navigate_task: asyncio.Task[None] | None = None
+        self._navigate_cancel = False
 
         # ── Obstacle avoidance: LiDAR + ESP32 local sensors ──────────────
         #   LiDAR: /scan (LaserScan ~10 Hz) — global view
@@ -134,6 +204,26 @@ class BrainNode(Node):
         self._esp32_sub = self.create_subscription(
             String, '/esp32/status', self._on_esp32_status, 10)
 
+        # ── CPS watchdog + E-stop edge subscribers (on-robot hardening) ────
+        # These MUST be validated on the real robot.  Code implements the
+        # subscription paths; timing thresholds require field measurement.
+        self._esp32_e_stop_sub = self.create_subscription(
+            String, '/esp32/e_stop', self._on_esp32_e_stop, 10)
+        self._esp32_health_sub = self.create_subscription(
+            String, '/esp32/bridge_health', self._on_esp32_health, 10)
+
+        # Latched flags — used to deduplicate repeat events fired every
+        # tick by esp32_telemetry_node (e.g. STALE publishes every 0.5 s).
+        # Without these, _handle_e_stop / _handle_bridge_stale would fire
+        # repeatedly and spam the API.
+        self._e_stop_latched: bool = False
+        self._bridge_stale_latched: bool = False
+
+        # Minimum gap between two ERROR emissions for the same stale-bridge
+        # condition.  Bridge health fires every 0.5 s; we throttle errors
+        # so the API log does not fill up.  Tune on the real robot.
+        self._last_bridge_stale_error_s: float = 0.0
+
         # TF for home pose capture + navigation goal poses
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -145,6 +235,14 @@ class BrainNode(Node):
         self._home_pose_timer = self.create_timer(1.0, self._try_capture_home_pose)
         self._home_pose_captured = False
 
+        # ── App-driven Auto mode ────────────────────────────────────────────
+        # web_bridge publishes /control/mode ('AUTO'|'MANUAL') when the
+        # operator toggles mode in the desktop app.  brain subscribes so
+        # it knows when autonomous tasks are allowed.
+        self._app_auto_mode: bool = False
+        self._control_mode_sub = self.create_subscription(
+            String, '/control/mode', self._on_control_mode, 10)
+
         # Autonomous cargo workflow state.  The robot stays at home until
         # the microswitch reports a package, then drives forward looking for
         # any fresh AprilTag, reverses, unloads, and returns home.
@@ -154,6 +252,19 @@ class BrainNode(Node):
         self._last_cargo_poll = 0.0
         self._autonomous_cycle_count = 0
 
+        # ── Warehouse multi-tag mission ────────────────────────────────────────
+        self._warehouse_task: asyncio.Task[None] | None = None
+        self._warehouse_cancel_flag: bool = False
+        self._warehouse_tag_queue: list[dict] = []
+        self._warehouse_completed_ids: set[int] = set()
+        self._warehouse_current_tag: Optional[dict] = None
+        self._warehouse_specific_tag_ids: list[int] | None = None
+        self._warehouse_scan_duration: float = 3.0
+        self._warehouse_target_distance_mm: int = 300
+        self._warehouse_timeout_per_tag: float = 30.0
+        self._warehouse_mission_timeout: float = 300.0
+        self._snapshot_pose: tuple[float, float, float] | None = None
+
         self.get_logger().info(f'brain_node started in state {self._state}')
 
     def transition_to(self, new_state: BrainState, reason: str = '') -> None:
@@ -161,21 +272,111 @@ class BrainNode(Node):
         self._state = new_state
         self.get_logger().info(f'state: {old} -> {new_state} ({reason})')
 
+    def _schedule_async(self, coro: Any) -> bool:
+        """Schedule a coroutine on the loop owned by _run_async().
+
+        ROS callbacks may run outside the asyncio thread.  Scheduling through
+        the stored loop is thread-safe and avoids silently creating a second
+        event loop for safety-critical stop handling.
+        """
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self.get_logger().error('Cannot schedule async safety action: loop unavailable')
+            coro.close()
+            return False
+        try:
+            loop.call_soon_threadsafe(asyncio.create_task, coro)
+            return True
+        except RuntimeError as exc:
+            self.get_logger().error(f'Cannot schedule async safety action: {exc}')
+            coro.close()
+            return False
+
+    def _is_motion_locked(self) -> bool:
+        return self._e_stop_latched or self._bridge_stale_latched
+
+    def _is_cancelled(self, job_id: str) -> bool:
+        """Return True if this job was cancelled by the API."""
+        if job_id in self._cancelled_job_ids:
+            self._cancelled_job_ids.discard(job_id)
+            return True
+        return False
+
+    # ── App control mode subscription ───────────────────────────────────
+
+    def _on_control_mode(self, msg: String) -> None:
+        """Handle AUTO/MANUAL mode toggle from the desktop/web app.
+
+        When AUTO is received, enable autonomous tasks (cargo poll, etc.).
+        When MANUAL is received, cancel any running autonomous task.
+        """
+        mode = msg.data.strip().upper()
+        was_auto = self._app_auto_mode
+        self._app_auto_mode = (mode == 'AUTO')
+        if self._app_auto_mode and not was_auto:
+            self.get_logger().info('App switched to AUTO — autonomous tasks enabled')
+        elif not self._app_auto_mode and was_auto:
+            self.get_logger().info('App switched to MANUAL — cancelling autonomous tasks')
+            if self._autonomous_task is not None and not self._autonomous_task.done():
+                self._autonomous_task.cancel()
+                asyncio.create_task(self._stop())
+                self.transition_to(BrainState.IDLE, 'switched to MANUAL')
+
+    # ── Error reporting ─────────────────────────────────────────────────
+
+    async def _emit_error(self, severity: str, code: str, message: str) -> None:
+        """Publish an error/warning to /robot/errors and to the API via Socket.io.
+
+        severity: 'warning' | 'error' | 'critical'
+        code: machine-readable identifier (e.g. 'NAV_FAILED', 'DOCK_TIMEOUT')
+        message: human-readable description (Vietnamese preferred)
+        """
+        payload = json.dumps({
+            'ts': time.time(),
+            'severity': severity,
+            'code': code,
+            'message': message,
+        })
+        self._error_pub.publish(String(data=payload))
+        self.get_logger().error(f'[{severity.upper()}] {code}: {message}')
+        try:
+            await self._api_client.emit_robot_error(severity, code, message)
+        except Exception as e:
+            self.get_logger().warn(f'Failed to emit error to API: {e}')
+
     @property
     def state(self) -> BrainState:
         return self._state
 
     async def connect_bridge(self) -> None:
-        """Open the real ESP32 serial bridge. Safe to call repeatedly."""
+        """Open the real ESP32 serial bridge. Safe to call repeatedly.
+
+        Direction-A architecture: when USE_MIRROR_BRIDGE=1 (production),
+        brain_node does NOT open the serial device directly — it relies on
+        esp32_telemetry_node (started via PM2) being the sole serial owner
+        and forwarding commands via /esp32/cmd, returning telemetry via
+        /esp32/status and friends.  This call only marks the bridge ready.
+        """
         if self._bridge_connected:
             return
+
+        if USE_MIRROR_BRIDGE:
+            await self._bridge.connect()
+            self._bridge_connected = True
+            self.get_logger().info(
+                'Mirror bridge ready — using /esp32/cmd + /esp32/status topics '
+                '(serial owned by esp32_telemetry_node)')
+            return
+
         if not USE_REAL_BRIDGE:
             self.get_logger().info('USE_REAL_BRIDGE=0 — keeping FakeEsp32Bridge')
             self._bridge_connected = True
             return
 
+        # Legacy direct-serial path — kept only for dev/test
+        from my_robot_controller.esp32_bridge import open_esp32_bridge
         port = os.environ.get('ESP32_PORT', '/dev/robot-esp32')
-        self.get_logger().info(f'Connecting to ESP32 on {port}...')
+        self.get_logger().info(f'Connecting to ESP32 directly on {port}...')
         try:
             self._bridge = await open_esp32_bridge(port=port, baudrate=115200)
             await self._bridge.connect()
@@ -196,8 +397,10 @@ class BrainNode(Node):
             x = tf.transform.translation.x
             y = tf.transform.translation.y
             q = tf.transform.rotation
-            yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                              1.0 - 2.0 * (q.y ** 2 + q.z ** 2))
+            # Correct yaw formula: siny_cosp = 2*(qw*qz + qx*qy)
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
             self._home_pose = (x, y, yaw)
             self._home_pose_captured = True
             self.get_logger().info(
@@ -265,7 +468,16 @@ class BrainNode(Node):
         The ESP32 has its own 50 Hz PID control loop — we just send the
         desired (vx, vy, omega) and it keeps the motors running until the
         next command or e-stop.
+
+        When the motion lock is active (E_STOP or bridge stale) the
+        command is silently dropped to prevent the robot from moving
+        after a safety event.
         """
+        if self._is_motion_locked():
+            self.get_logger().warn(
+                f'drive({vx:.0f},{vy:.0f},{omega:.0f}) BLOCKED — '
+                f'motion locked (e_stop={self._e_stop_latched}, stale={self._bridge_stale_latched})')
+            return
         await self._bridge.move(vx, vy, omega)
 
     async def _stop(self) -> None:
@@ -408,26 +620,533 @@ class BrainNode(Node):
         return await self._nav_to_pose(*self._home_pose)
 
     def _on_tag_detected(self, msg: String) -> None:
-        """Keep a timestamped cache of the latest tag detection."""
+        """Cache all tags from the AprilTag detector payload.
+
+        Supports two payload formats:
+          - New:  {"ts": ..., "tags": [{tag_id, x, y, z, ...}, ...]}
+          - Legacy single-tag: {"tag_id": ..., "x": ..., ...}
+        """
         try:
-            self._latest_tag = json.loads(msg.data)
-            self._latest_tag['_age'] = time.time()
+            payload = json.loads(msg.data)
         except Exception:
-            pass
+            return
+
+        tags = payload.get('tags')
+        if not isinstance(tags, list):
+            # Legacy single-tag format — wrap in list
+            if isinstance(payload, dict) and 'tag_id' in payload:
+                tags = [payload]
+            else:
+                return
+
+        now = time.time()
+        for tag in tags:
+            try:
+                tid = int(tag.get('tag_id', -1))
+            except (TypeError, ValueError):
+                continue
+            if tid < 0:
+                continue
+            self._tag_cache[tid] = {**tag, '_age': now}
 
     def _get_tag(self, tag_id: int, max_age_s: float = 2.0) -> Optional[dict]:
         """Return the latest detection for a specific tag if fresh enough."""
-        if self._latest_tag is None:
+        tag = self._tag_cache.get(tag_id)
+        if tag is None:
             return None
-        if self._latest_tag.get('tag_id') != tag_id:
+        age = time.time() - tag.get('_age', 0)
+        if age > max_age_s:
             return None
-        if (time.time() - self._latest_tag.get('_age', 0)) > max_age_s:
-            return None
-        return self._latest_tag
+        return tag
+
+    def _get_any_tag(self, max_age_s: float = 1.0) -> Optional[dict]:
+        """Return the freshest tag detection (used during autonomous explore)."""
+        now = time.time()
+        best: Optional[dict] = None
+        best_age = float('inf')
+        for tag in self._tag_cache.values():
+            age = now - tag.get('_age', 0)
+            if age < best_age and age <= max_age_s:
+                best = tag
+                best_age = age
+        return best
+
+    def _get_fresh_tags(
+        self,
+        exclude_ids: set[int] | None = None,
+        max_age_s: float = 2.0,
+        max_dist_m: float = 5.0,
+    ) -> list[dict]:
+        """Return visible tags sorted left→right, nearest-first.
+
+        Sort order: x ascending (left=negative, right=positive),
+        then z ascending (nearer first) as tie-breaker.
+        """
+        now = time.time()
+        exclude = exclude_ids or set()
+        result = []
+        for tid, tag in self._tag_cache.items():
+            if tid in exclude:
+                continue
+            age = now - tag.get('_age', 0)
+            if age > max_age_s:
+                continue
+            z = tag.get('z', 99.0)
+            if z > max_dist_m:
+                continue
+            result.append(tag)
+        result.sort(key=lambda t: (t.get('x', 0), t.get('z', 99)))
+        return result
 
     def _clear_tag(self) -> None:
-        """Invalidate cached tag so a fresh scan is needed for the next dock."""
-        self._latest_tag = None
+        """Invalidate cached tags so a fresh scan is needed for the next dock."""
+        self._tag_cache.clear()
+
+    def _get_robot_pose(self) -> tuple[float, float, float] | None:
+        """Return (x, y, yaw) from TF (map→base_footprint), or None."""
+        try:
+            tf = self._tf_buffer.lookup_transform('map', 'base_footprint', Time())
+            x = tf.transform.translation.x
+            y = tf.transform.translation.y
+            q = tf.transform.rotation
+            # Correct yaw formula: siny_cosp = 2*(qw*qz + qx*qy)
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
+            return (x, y, yaw)
+        except Exception:
+            return None
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Multi-tag warehouse mission
+    # ─────────────────────────────────────────────────────────────────
+
+    def _start_warehouse_mission(self, tag_ids: list[int] | None = None) -> None:
+        """Start one serialized mission for all currently visible warehouse tags."""
+        if self._warehouse_task is not None and not self._warehouse_task.done():
+            self.get_logger().warning('Warehouse mission already running')
+            return
+        if self._demo_task is not None and not self._demo_task.done():
+            self.get_logger().warning('Demo already running — warehouse ignored')
+            return
+        self._warehouse_cancel_flag = False
+        self._warehouse_specific_tag_ids = tag_ids or None
+        self._warehouse_task = asyncio.create_task(self._run_warehouse_mission())
+
+    def _cancel_warehouse_mission(self) -> None:
+        """Cancel the mission and stop hardware without leaving a live Nav2 goal."""
+        self._warehouse_cancel_flag = True
+        task = self._warehouse_task
+        if task is not None and not task.done():
+            task.cancel()
+        asyncio.create_task(self._stop())
+        self.get_logger().warning('Warehouse mission stop requested')
+        self._publish_demo_status('STOPPED', message='Khảo sát kho đã dừng')
+
+    async def _warehouse_leave_dock(self) -> None:
+        """Back away briefly after firmware reports unload COMPLETE."""
+        await self._drive(-50.0, 0.0, 0.0)
+        await asyncio.sleep(1.5)
+        await self._stop()
+
+    def _warehouse_tag_pose(
+        self,
+        tag: dict,
+        detection_pose: tuple[float, float, float] | None = None,
+    ) -> tuple[float, float, float] | None:
+        """Convert a camera-frame tag snapshot using its detection pose.
+
+        A detection's x/z are relative to the robot pose at capture time;
+        using a later pose would send Nav2 to the wrong map position.
+        """
+        pose = detection_pose or self._get_robot_pose()
+        if pose is None:
+            return None
+        rx, ry, yaw = pose
+        try:
+            z = float(tag['z'])
+            x = float(tag['x'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        # Camera x is positive to the robot's right; z is forward.
+        tag_x = rx + z * math.cos(yaw) + x * math.sin(yaw)
+        tag_y = ry + z * math.sin(yaw) - x * math.cos(yaw)
+        approach_m = max(0.8, self._warehouse_target_distance_mm / 1000.0)
+        return (tag_x - approach_m * math.cos(yaw),
+                tag_y - approach_m * math.sin(yaw), yaw)
+
+    async def _run_warehouse_mission(self) -> None:
+        """Scan, dock/unload tags left-to-right, and return home once.
+
+        After processing each tag, the robot re-scans from its new position
+        to build an accurate plan for the remaining tags.  The detection
+        pose is paired with each snapshot so that the camera-frame → map
+        conversion uses the correct origin.
+        """
+        started = time.monotonic()
+        self._warehouse_completed_ids.clear()
+        self._warehouse_tag_queue.clear()
+        self._warehouse_current_tag = None
+        self._snapshot_pose = None
+        try:
+            await self.connect_bridge()
+
+            # ── Initial scan ──────────────────────────────────────────────
+            self.transition_to(BrainState.WAREHOUSE_SCAN, 'warehouse mission')
+            self._publish_demo_status('SCANNING', message='Đang quét AprilTag trong khu kho')
+            self._clear_tag()
+            await asyncio.sleep(self._warehouse_scan_duration)
+            self._snapshot_pose = self._get_robot_pose()
+
+            requested = set(self._warehouse_specific_tag_ids or [])
+            tags = self._get_fresh_tags(max_age_s=self._warehouse_scan_duration + 1.0,
+                                        max_dist_m=10.0)
+            if requested:
+                tags = [tag for tag in tags if tag.get('tag_id') in requested]
+            if not tags:
+                raise RuntimeError('Không phát hiện AprilTag mới trong khu kho')
+            self._warehouse_tag_queue = tags
+            self.get_logger().info(
+                'Warehouse order (left→right): ' +
+                ', '.join(f'#{tag["tag_id"]}' for tag in tags))
+            self._publish_demo_status(
+                'PLANNED', message='Thứ tự: ' + ', '.join(
+                    f'#{tag["tag_id"]}' for tag in tags))
+
+            # ── Tag processing loop ───────────────────────────────────────
+            while self._warehouse_tag_queue:
+                if self._warehouse_cancel_flag:
+                    raise asyncio.CancelledError
+                if time.monotonic() - started > self._warehouse_mission_timeout:
+                    raise RuntimeError('Warehouse mission timeout')
+
+                tag = self._warehouse_tag_queue.pop(0)
+                tag_id = int(tag['tag_id'])
+                self._warehouse_current_tag = tag
+                approach = self._warehouse_tag_pose(tag, self._snapshot_pose)
+                if approach is None:
+                    raise RuntimeError(f'Không có pose để đến tag #{tag_id}')
+
+                self.transition_to(BrainState.WAREHOUSE_NAV_TAG, f'tag {tag_id}')
+                self._publish_demo_status('NAVIGATING', str(tag_id),
+                                          f'Đang đến AprilTag #{tag_id}')
+                if not await self._nav_to_pose(*approach):
+                    raise RuntimeError(f'Nav2 không đến được tag #{tag_id}')
+
+                # Clear stale detections; fresh ones arrive from the detector
+                # at 10 Hz once we are at the new position.
+                self._clear_tag()
+                self._snapshot_pose = self._get_robot_pose()
+                self.transition_to(BrainState.WAREHOUSE_DOCK, f'tag {tag_id}')
+                self._publish_demo_status('DOCKING', str(tag_id),
+                                          f'Đang căn AprilTag #{tag_id}')
+                if not await self._dock_align(
+                        tag_id, self._warehouse_target_distance_mm, timeout_s=20.0):
+                    raise RuntimeError(f'Không căn được AprilTag #{tag_id}')
+
+                self.transition_to(BrainState.WAREHOUSE_UNLOAD, f'tag {tag_id}')
+                self._publish_demo_status('UNLOADING', str(tag_id),
+                                          f'Đang đổ hàng tại tag #{tag_id}')
+                await self._bridge.begin_dock(
+                    tag_id, self._warehouse_target_distance_mm,
+                    operation_id=f'warehouse-{tag_id}-{int(time.time())}')
+                if not await self._poll_unload_state(
+                        timeout_s=self._warehouse_timeout_per_tag):
+                    raise RuntimeError(f'Unload timeout tại tag #{tag_id}')
+
+                self._warehouse_completed_ids.add(tag_id)
+                self.transition_to(BrainState.WAREHOUSE_LEAVE_DOCK, f'tag {tag_id}')
+                await self._warehouse_leave_dock()
+
+                # ── Re-scan from the post-dock position ───────────────────
+                self._clear_tag()
+                self.transition_to(BrainState.WAREHOUSE_SCAN,
+                                   f're-scan after tag {tag_id}')
+                self._publish_demo_status('SCANNING',
+                                          message=f'Sau tag #{tag_id}, đang quét lại')
+                await asyncio.sleep(self._warehouse_scan_duration)
+                self._snapshot_pose = self._get_robot_pose()
+
+                if self._warehouse_cancel_flag:
+                    raise asyncio.CancelledError
+
+                fresh = self._get_fresh_tags(
+                    exclude_ids=self._warehouse_completed_ids,
+                    max_age_s=self._warehouse_scan_duration + 1.0,
+                    max_dist_m=10.0,
+                )
+                if requested:
+                    fresh = [t for t in fresh if t.get('tag_id') in requested]
+                self._warehouse_tag_queue = fresh
+                self.get_logger().info(
+                    'Remaining tags (left→right): ' +
+                    ', '.join(f'#{t["tag_id"]}' for t in fresh))
+
+            self.transition_to(BrainState.WAREHOUSE_RETURN_HOME, 'all tags complete')
+            self._publish_demo_status('RETURNING', message='Đã xong các tag, đang về Home')
+            if not await self._return_home():
+                raise RuntimeError('Không thể quay về Home')
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'warehouse mission complete')
+            self._publish_demo_status(
+                'COMPLETED', message=f'Hoàn tất {len(self._warehouse_completed_ids)} tag')
+        except asyncio.CancelledError:
+            await self._bridge.cancel_dock()
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'warehouse mission cancelled')
+            raise
+        except Exception as exc:
+            self.get_logger().error(f'Warehouse mission failed: {exc}')
+            await self._bridge.cancel_dock()
+            await self._stop()
+            # A failed mission must not continue driving; return home only if safe.
+            if self._home_pose is not None and not self._warehouse_cancel_flag:
+                self.transition_to(BrainState.WAREHOUSE_RETURN_HOME, 'warehouse failure')
+                await self._return_home()
+            self.transition_to(BrainState.ERROR, 'warehouse mission failed')
+            self._publish_demo_status('FAILED', message=str(exc))
+        finally:
+            self._warehouse_current_tag = None
+            self._warehouse_task = None
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Four-zone delivery demo
+    # ─────────────────────────────────────────────────────────────────
+
+    def _publish_demo_status(self, state: str, zone: str = '',
+                             message: str = '') -> None:
+        """Publish a small JSON status frame for the map-page demo panel."""
+        payload = json.dumps({
+            'state': state,
+            'zone': zone,
+            'message': message,
+            'ts': time.time(),
+        })
+        self._demo_pub.publish(String(data=payload))
+
+    def _on_demo_cmd(self, msg: String) -> None:
+        """Start/cancel demo tasks from a ROS String command."""
+        command = msg.data.strip().upper()
+        if command == 'STOP':
+            self._demo_cancel = True
+            self._cancel_warehouse_mission()
+            if self._demo_task is not None and not self._demo_task.done():
+                self._demo_task.cancel()
+            self.get_logger().warn('Demo stop requested')
+            self._publish_demo_status('STOPPED', message='Demo đã dừng')
+            return
+        if command == 'WAREHOUSE' or command.startswith('WAREHOUSE '):
+            parts = command.split()
+            tag_ids = [int(p) for p in parts[1:] if p.lstrip('-').isdigit()]
+            self._start_warehouse_mission(tag_ids or None)
+            return
+        if command == 'FULL':
+            if self._demo_task is not None and not self._demo_task.done():
+                self.get_logger().warn('Demo already running — ignoring FULL')
+                return
+            self._demo_cancel = False
+            self._demo_task = asyncio.create_task(self.run_demo())
+            return
+        if command in DEMO_ZONES:
+            if self._demo_task is not None and not self._demo_task.done():
+                self.get_logger().warn('Demo already running — ignoring zone command')
+                return
+            self._demo_cancel = False
+            self._demo_task = asyncio.create_task(self.deliver_to_zone(command))
+            return
+        self.get_logger().warn(f'Unknown demo command: {msg.data!r}')
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Operator navigation (WebSocket → Nav2)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _on_navigate_cmd(self, msg: String) -> None:
+        """Accept operator navigation commands via ROS from web_bridge.
+
+        Two accepted payloads:
+          {"action":"navigate", "x":float, "y":float, "theta":float}
+          {"action":"navigate_home"}
+        """
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().warn(f'navigate_cmd: bad JSON: {msg.data!r}')
+            return
+
+        action = payload.get('action', '')
+
+        if self._navigate_task is not None and not self._navigate_task.done():
+            self._navigate_cancel = True
+            self._navigate_task.cancel()
+            self.get_logger().warn('Previous operator navigation cancelled')
+
+        if action == 'navigate':
+            x = float(payload.get('x', 0.0))
+            y = float(payload.get('y', 0.0))
+            theta = float(payload.get('theta', 0.0))
+            self._navigate_cancel = False
+            self._navigate_task = asyncio.create_task(
+                self._operator_navigate(x, y, theta))
+        elif action == 'navigate_home':
+            self._navigate_cancel = False
+            self._navigate_task = asyncio.create_task(
+                self._operator_navigate_home())
+        else:
+            self.get_logger().warn(f'navigate_cmd: unknown action {action!r}')
+
+    def _publish_navigate_status(self, state: str, goal: dict | None = None) -> None:
+        payload = json.dumps({
+            'state': state,
+            'goal': goal,
+            'ts': time.time(),
+        })
+        self._navigate_status_pub.publish(String(data=payload))
+
+    def _publish_navigate_result(self, success: bool, duration_s: float = 0.0,
+                                 error: str = '') -> None:
+        payload = json.dumps({
+            'success': success,
+            'duration_s': round(duration_s, 2),
+            'error': error,
+            'ts': time.time(),
+        })
+        self._navigate_result_pub.publish(String(data=payload))
+
+    async def _operator_navigate(self, x: float, y: float, theta: float) -> None:
+        goal = {'x': round(x, 4), 'y': round(y, 4), 'theta': round(theta, 4)}
+        self.get_logger().info(f'Operator navigate → ({x:.2f}, {y:.2f}, θ={math.degrees(theta):.1f}°)')
+        self._publish_navigate_status('navigating', goal=goal)
+        t0 = time.time()
+
+        try:
+            self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, 'operator nav')
+            ok = await self._nav_to_pose(x, y, theta)
+            if self._navigate_cancel:
+                self.get_logger().info('Operator navigation was cancelled')
+                return
+            elapsed = time.time() - t0
+            if ok:
+                self.transition_to(BrainState.IDLE, 'operator nav complete')
+                self._publish_navigate_result(True, duration_s=elapsed)
+            else:
+                self.transition_to(BrainState.IDLE, 'operator nav failed')
+                self._publish_navigate_result(False, duration_s=elapsed,
+                                               error='nav failed or aborted')
+        except asyncio.CancelledError:
+            self.get_logger().info('Operator navigate task cancelled')
+            return
+        except Exception as exc:
+            elapsed = time.time() - t0
+            self.transition_to(BrainState.ERROR, 'operator nav exception')
+            self._publish_navigate_result(False, duration_s=elapsed, error=str(exc))
+            self.get_logger().error(f'Operator navigate failed: {exc}')
+
+    async def _operator_navigate_home(self) -> None:
+        self.get_logger().info('Operator navigate_home')
+        if self._home_pose is None:
+            self._publish_navigate_result(False, error='home pose not captured')
+            self.get_logger().warn('navigate_home: home pose not yet available')
+            return
+        hx, hy, ht = self._home_pose
+        await self._operator_navigate(hx, hy, ht)
+
+    async def deliver_to_zone(self, zone_id: str,
+                              return_home: bool = True) -> bool:
+        """Navigate to one configured zone, dock with its tag, and unload.
+
+        Nav2 handles the coarse map-frame trip.  AprilTag + VL53L0X provide
+        the final alignment, then the ESP32 firmware executes the guarded
+        cylinder unload sequence.  All failures stop the robot and are
+        reported on /demo/status; no stale Nav2 goal is allowed to continue.
+        """
+        zone_id = zone_id.upper()
+        zone = DEMO_ZONES.get(zone_id)
+        if zone is None:
+            self.get_logger().error(f'Unknown delivery zone {zone_id!r}')
+            return False
+
+        self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, f'demo zone {zone_id}')
+        self._publish_demo_status('NAVIGATING', zone_id,
+                                  f'Đang đi đến {zone["label"]}')
+        try:
+            await self.connect_bridge()
+            if self._demo_cancel:
+                return False
+
+            reached = await self._nav_to_pose(
+                zone['x'], zone['y'], zone['theta'])
+            if not reached:
+                raise RuntimeError('Nav2 không đến được tọa độ khu đổ hàng')
+
+            self._publish_demo_status('SEARCHING_TAG', zone_id,
+                                      f'Tìm AprilTag ID {zone["tag_id"]}')
+            self.transition_to(BrainState.JOB_DOCK_UNLOAD,
+                               f'demo zone {zone_id} tag')
+            self._clear_tag()
+            dock_ok = await self._dock_align(
+                zone['tag_id'], DEMO_DOCK_DISTANCE_MM, timeout_s=20.0)
+            if not dock_ok:
+                raise RuntimeError(f'Không căn được AprilTag ID {zone["tag_id"]}')
+
+            if self._demo_cancel:
+                return False
+            self._publish_demo_status('UNLOADING', zone_id,
+                                      'Đang đổ hàng bằng xy lanh')
+            await self._bridge.begin_dock(
+                zone['tag_id'], DEMO_DOCK_DISTANCE_MM,
+                facing_theta_deg=math.degrees(zone['theta']),
+                operation_id=f'demo-{zone_id}-{int(time.time())}')
+            if not await self._poll_unload_state():
+                raise RuntimeError('Firmware unload timeout')
+
+            self._clear_tag()
+            self.transition_to(BrainState.IDLE, f'demo zone {zone_id} complete')
+            self._publish_demo_status('COMPLETED', zone_id,
+                                      f'Đã đổ hàng tại {zone["label"]}')
+            if return_home:
+                self._publish_demo_status('RETURNING', zone_id, 'Đang về điểm S')
+                if not await self._return_home():
+                    raise RuntimeError('Không thể quay về điểm xuất phát')
+            await self._stop()
+            return True
+        except asyncio.CancelledError:
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'demo cancelled')
+            raise
+        except Exception as exc:
+            self.get_logger().error(f'Demo zone {zone_id} failed: {exc}')
+            await self._stop()
+            self.transition_to(BrainState.ERROR, f'demo zone {zone_id} failed')
+            self._publish_demo_status('FAILED', zone_id, str(exc))
+            return False
+
+    async def run_demo(self) -> bool:
+        """Run the short capstone route S→A→B→D→C→S."""
+        self._publish_demo_status('RUNNING', message='Bắt đầu demo A→B→D→C')
+        try:
+            for zone_id in DEMO_DEMO_SEQUENCE:
+                if self._demo_cancel:
+                    return False
+                if not await self.deliver_to_zone(zone_id, return_home=False):
+                    return False
+                await asyncio.sleep(1.0)
+            self._publish_demo_status('RETURNING', message='Đang về điểm xuất phát S')
+            returned = await self._return_home()
+            await self._stop()
+            if returned:
+                self.transition_to(BrainState.IDLE, 'full demo complete')
+                self._publish_demo_status('COMPLETED', message='Hoàn tất demo A→B→D→C')
+            return returned
+        except asyncio.CancelledError:
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'full demo cancelled')
+            raise
+        except Exception as exc:
+            self.get_logger().error(f'Full demo failed: {exc}')
+            await self._stop()
+            self.transition_to(BrainState.ERROR, 'full demo failed')
+            self._publish_demo_status('FAILED', message=str(exc))
+            return False
 
     # ─────────────────────────────────────────────────────────────────
     #  Cargo sensor: detect new cargo and emit cargo_ready event
@@ -655,14 +1374,6 @@ class BrainNode(Node):
 
         return False
 
-    def _get_any_tag(self, max_age_s: float = 1.0) -> Optional[dict]:
-        """Return latest tag detection for ANY tag_id (used during explore)."""
-        if self._latest_tag is None:
-            return None
-        if (time.time() - self._latest_tag.get('_age', 0)) > max_age_s:
-            return None
-        return self._latest_tag
-
     async def _drive_reverse_distance(self, distance_m: float, speed: int,
                                       timeout_s: float = 10.0) -> None:
         """Drive backward for approximately distance_m, using encoder delta
@@ -808,6 +1519,107 @@ class BrainNode(Node):
         except Exception:
             pass
 
+    def _on_esp32_e_stop(self, msg: String) -> None:
+        """Handle ESP32 e-stop edge event from /esp32/e_stop.
+
+        Latched: once fired, motion stays locked until the operator
+        sends an explicit e_stop_clear flow.  Subsequent edge events
+        are ignored until the latch is cleared.
+
+        This code requires field validation:
+          - Press K (e-stop) on the ESP32 ASCII console.
+          - Confirm `brain_node` logs "ESP32 e-stop" and enters E_STOP.
+          - Verify `brain._drive()` is blocked in E_STOP state.
+          - Verify an explicit e_stop_clear resets the latch.
+        """
+        if self._e_stop_latched:
+            return  # already handled — debounce
+        self._e_stop_latched = True
+        self.get_logger().error(
+            'ESP32 e-stop edge event received — locking to E_STOP')
+        self._schedule_async(self._handle_e_stop())
+
+    async def _handle_e_stop(self) -> None:
+        """Async side of e-stop edge handling."""
+        try:
+            await self._bridge.stop()
+        except Exception as e:
+            self.get_logger().warn(f'_bridge.stop() during e-stop failed: {e}')
+        self.transition_to(BrainState.E_STOP, 'esp32 e_stop edge')
+        try:
+            await self._emit_error('critical', 'ESP32_ESTOP',
+                                   'ESP32 raised e-stop — robot locked to E_STOP')
+        except Exception:
+            pass
+
+    def _on_esp32_health(self, msg: String) -> None:
+        """React to bridge health snapshot.
+
+        HEALTHY → clear stale latch (recovery path).
+        STALE   → latched; stop motors and force ERROR once.
+
+        Without latching, every 0.5 s STALE tick would re-schedule
+        ``_handle_bridge_stale``, creating duplicate error emissions
+        and repeated ``stop()`` calls.
+
+        Field validation:
+          - Unplug ESP32 USB for ≥3 s → STALE + ERROR once.
+          - Re-plug USB → HEALTHY clears the latch, robot can resume.
+        """
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        health = payload.get('health', 'HEALTHY')
+        if health == 'HEALTHY':
+            if self._bridge_stale_latched:
+                self.get_logger().info('ESP32 bridge recovered — clearing stale latch')
+                self._bridge_stale_latched = False
+            return
+        # health == 'STALE'
+        if self._bridge_stale_latched:
+            return  # already handled — debounce
+        self._bridge_stale_latched = True
+        self.get_logger().warn(
+            f'ESP32 bridge STALE (alive_age={payload.get("last_alive_age_s")}s, '
+            f'status_age={payload.get("last_status_age_s")}s) — stopping')
+        self._schedule_async(self._handle_bridge_stale())
+
+    async def _handle_bridge_stale(self) -> None:
+        """Stop motors and warn when the ESP32 bridge is STALE."""
+        try:
+            await self._bridge.stop()
+        except Exception as e:
+            self.get_logger().warn(f'_bridge.stop() during stale failed: {e}')
+        if self._state not in (BrainState.IDLE, BrainState.E_STOP, BrainState.BOOT):
+            self.transition_to(BrainState.ERROR, 'esp32 bridge stale')
+        try:
+            await self._emit_error('error', 'ESP32_BRIDGE_STALE',
+                                   'ESP32 bridge stopped reporting — robot stopped')
+        except Exception:
+            pass
+
+    async def clear_safety_latch(self) -> bool:
+        """Explicitly clear the brain safety latch after operator reset.
+
+        The firmware e-stop must be cleared first.  This method then sends
+        ``e_stop_clear`` and returns the brain to IDLE only when the bridge
+        is healthy.  It is intentionally never called automatically.
+        """
+        if self._bridge_stale_latched:
+            self.get_logger().warn('Cannot clear E_STOP while ESP32 bridge is STALE')
+            return False
+        try:
+            await self._bridge.clear_e_stop()
+        except Exception as exc:
+            self.get_logger().error(f'ESP32 e_stop_clear failed: {exc}')
+            return False
+        self._e_stop_latched = False
+        if self._state == BrainState.E_STOP:
+            self.transition_to(BrainState.IDLE, 'operator cleared ESP32 e-stop')
+        self.get_logger().info('Safety latch cleared by operator')
+        return True
+
     def _esp32_obstacle_blocking(self) -> bool:
         """Return True if ESP32's local sensors (IR / Sharp) report an
         immediate obstacle.  Used as a fast e-stop layer before LiDAR.
@@ -897,11 +1709,36 @@ class BrainNode(Node):
         self.get_logger().info(f'Enqueue job {job_id} (op={op_id})')
         await self._job_queue.put(payload)
 
+    async def _handle_job_cancel(self, payload: dict) -> None:
+        """Called when the API requests cancellation of a job.
+
+        Always ack immediately so the API can release the destination slot.
+        If a job is currently running, set the cancel flag and let
+        `_execute_job` abort cleanly (stop motors, emit FAILED).
+        """
+        job_id = payload.get('jobId', '')
+        self.get_logger().warn(f'Cancel requested for job {job_id}')
+        if job_id:
+            self._cancelled_job_ids.add(str(job_id))
+        if self._active_job_id == job_id:
+            await self._stop()
+        try:
+            await self._api_client.emit_job_cancel_ack(job_id)
+        except Exception as exc:
+            self.get_logger().warn(f'emit_job_cancel_ack failed: {exc}')
+
     async def _cargo_poll_loop(self) -> None:
-        """Poll cargo presence while idle and trigger autonomous delivery."""
+        """Poll cargo presence while idle and trigger autonomous delivery.
+
+        Only activates when the app has set AUTO mode.  This prevents
+        the robot from starting autonomous tasks while the operator is
+        still in MANUAL control.
+        """
         while rclpy.ok():
             try:
-                if self._state == BrainState.IDLE and self._autonomous_task is None:
+                if (self._app_auto_mode
+                        and self._state == BrainState.IDLE
+                        and self._autonomous_task is None):
                     await self._poll_cargo_sensor()
                 await asyncio.sleep(CARGO_POLL_INTERVAL_S)
             except asyncio.CancelledError:
@@ -920,9 +1757,17 @@ class BrainNode(Node):
         self.get_logger().info('Job worker started')
         while rclpy.ok():
             payload = await self._job_queue.get()
-            job_id = payload.get('_id', 'unknown')
+            job_id = str(payload.get('_id', 'unknown'))
             try:
+                # Drop the job if the API cancelled it while it was queued.
+                if job_id in self._cancelled_job_ids:
+                    self.get_logger().warn(
+                        f'Job {job_id} was cancelled while queued — skipping')
+                    self._cancelled_job_ids.discard(job_id)
+                    continue
+
                 last_error: str | None = None
+                self._active_job_id = job_id
                 for attempt in range(1, _JOB_MAX_ATTEMPTS + 1):
                     try:
                         await self._api_client.emit_job_phase(
@@ -946,6 +1791,7 @@ class BrainNode(Node):
                     await self._api_client.emit_job_status(job_id, 'FAILED')
                     self.transition_to(BrainState.ERROR, f'job {job_id} retries exhausted')
             finally:
+                self._active_job_id = None
                 self._job_queue.task_done()
         self.get_logger().info('Job worker stopped')
 
@@ -960,9 +1806,14 @@ class BrainNode(Node):
         **Exceptions propagate to the caller** — the worker loop decides
         whether to retry or emit FAILED.
         """
-        job_id = job.get('_id', 'unknown')
+        job_id = str(job.get('_id', 'unknown'))
         op_id = job.get('operationId')
         self.get_logger().info(f'Starting job {job_id} (attempt {attempt})')
+
+        # If the API cancelled this job before execution started, abort early.
+        if self._is_cancelled(job_id):
+            self.get_logger().warn(f'Job {job_id} cancelled before start — skipping')
+            return
 
         # ── Timing: start clock ──────────────────────────────────────────
         t_start = time.time()
@@ -986,18 +1837,35 @@ class BrainNode(Node):
         target_mm = job.get('dock_distance_mm', 40)
 
         if 'x' not in dropoff or 'y' not in dropoff:
+            await self._emit_error('error', 'JOB_NO_COORDINATES',
+                                   f'Job {job_id}: no calibrated dropoff coordinates')
             raise RuntimeError(f'Job {job_id} has no calibrated dropoff coordinates')
+        if tag_id is None:
+            await self._emit_error('error', 'JOB_NO_APRILTAG',
+                                   f'Job {job_id}: slot chưa được calibrate AprilTag')
+            raise RuntimeError(f'Job {job_id}: no AprilTag ID configured. '
+                               f'Calibrate slot in /calibrate page first.')
         reached = await self._nav_to_pose(
             dropoff.get('x', 0.0),
             dropoff.get('y', 0.0),
             dropoff.get('theta', 0.0))
         if not reached:
+            await self._emit_error('error', 'NAV_FAILED',
+                                   f'Job {job_id}: Nav2 không đến được '
+                                   f'({dropoff.get("x", 0):.2f}, {dropoff.get("y", 0):.2f})')
             raise RuntimeError(f'Nav2 failed to reach dropoff ({dropoff.get("x", 0)}, {dropoff.get("y", 0)})')
 
         # ── Timing: arrived at dropoff ───────────────────────────────────
         t_dropoff_at = datetime.now(timezone.utc).isoformat()
         travel_to_dropoff_ms = int((time.time() - t_dropoff_start) * 1000)
         self.get_logger().info(f'Timing: arrived at dropoff after {travel_to_dropoff_ms}ms')
+
+        # ── Cancel check ────────────────────────────────────────────────
+        if self._is_cancelled(job_id):
+            await self._stop()
+            await self._api_client.emit_job_status(job_id, 'FAILED')
+            self.transition_to(BrainState.IDLE, f'job {job_id} cancelled before dock')
+            return
 
         # ── Phase 3: Dock + firmware unload sequence ────────────────────
         t_unload_start = time.time()
@@ -1008,7 +1876,10 @@ class BrainNode(Node):
             await self._api_client.emit_job_phase(job_id, 'AT_DOCK')
             dock_ok = await self._dock_align(tag_id, target_mm)
             if not dock_ok:
-                raise RuntimeError('Dock align failed')
+                await self._emit_error('error', 'DOCK_ALIGN_TIMEOUT',
+                                       f'Job {job_id}: không căn được AprilTag #{tag_id} '
+                                       f'({target_mm}mm)')
+                raise RuntimeError(f'Dock align failed for tag {tag_id}')
 
         # 3b: Hand off to ESP32 firmware for autonomous unload
         self.get_logger().info(f'Sending begin_dock to firmware (op={op_id})...')
@@ -1016,6 +1887,8 @@ class BrainNode(Node):
         await self._bridge.begin_dock(tag_id or 0, target_mm, operation_id=op_id)
         unload_ok = await self._poll_unload_state()
         if not unload_ok:
+            await self._emit_error('error', 'UNLOAD_TIMEOUT',
+                                   f'Job {job_id}: firmware unload timeout tại tag #{tag_id}')
             raise RuntimeError(f'Job {job_id} unload timed out')
 
         # ── Timing: unload complete ──────────────────────────────────────
@@ -1202,7 +2075,7 @@ class BrainNode(Node):
         # Hard e-stop: ALL 4 LiDAR zones < 0.6m (no IR info, but
         # LiDAR confirms complete surround at very close range).
         # ─────────────────────────────────────────────────────────────
-        if not li_stale and min(zones.values()) < 0.6:
+        if not li_stale and max(fl_dist, fc_dist, fr_dist, l_dist, r_dist, rr_dist) < 0.6:
             self.get_logger().warn(
                 'E-STOP: all LiDAR zones < 0.6m — robot surrounded')
             return 'e_stop', -2.0
@@ -1224,7 +2097,7 @@ class BrainNode(Node):
         # but NOT all-sensors-blocked — some side is technically free).
         # PREFER RIGHT FIRST per user — bump reverse_right above reverse_left.
         all_sides_blocked = (
-            (score_z['front'] < 0) and
+            (score_z['front_center'] < 0) and
             (score_z['left'] < 0) and
             (score_z['right'] < 0)
         )
@@ -1377,6 +2250,11 @@ async def _run_async(node: BrainNode) -> None:
     Also starts the single ``_job_worker_loop`` task that consumes jobs off
     the asyncio queue — exactly one motor sequence at a time.
     """
+    # Store the running loop once so ROS subscription callbacks
+    # (_on_esp32_e_stop, _on_esp32_health) can schedule async work
+    # via BrainNode._schedule_async() without calling get_event_loop().
+    BrainNode._loop = asyncio.get_running_loop()
+
     node.get_logger().info('Attempting initial API connection...')
     await node._api_client.connect()
 
@@ -1389,14 +2267,14 @@ async def _run_async(node: BrainNode) -> None:
     # Periodic health heartbeat to the API so the UI can show "brain alive".
     node._health_task = asyncio.create_task(node._health_heartbeat_loop())
 
-    last_reconnect = asyncio.get_event_loop().time()
+    last_reconnect = BrainNode._loop.time()
 
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.1)
 
         # If disconnected, try to reconnect periodically
         if not node._api_client.connected:
-            now = asyncio.get_event_loop().time()
+            now = BrainNode._loop.time()
             if now - last_reconnect >= _RECONNECT_INTERVAL:
                 node.get_logger().info('Attempting to reconnect to API...')
                 last_reconnect = now

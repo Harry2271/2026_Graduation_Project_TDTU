@@ -35,9 +35,9 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 
-from my_robot_controller.esp32_bridge import RealEsp32Bridge, open_esp32_bridge
+from my_robot_controller.esp32_bridge import MirrorBridge
 
 # ── Scale factors ───────────────────────────────────────────────────
 # Twist linear.x/y are in m/s (default teleop_twist_keyboard max ~0.5 m/s).
@@ -68,7 +68,7 @@ class TeleopNode(Node):
         self._max_omega: int = int(self.get_parameter('max_omega').value)
         self._timeout: float = float(self.get_parameter('cmd_vel_timeout').value)
 
-        self._bridge: RealEsp32Bridge | None = None
+        self._bridge: MirrorBridge = MirrorBridge(self)
         self._last_cmd_vel_time: float = 0.0
         self._connected = False
         self._stopping = False
@@ -78,6 +78,15 @@ class TeleopNode(Node):
             Twist, '/cmd_vel', self._on_cmd_vel, 10)
         self._e_stop_sub = self.create_subscription(
             Bool, '/e_stop', self._on_e_stop, 10)
+        # Cylinder commands from web_bridge (keyboard Space key)
+        self._cylinder_sub = self.create_subscription(
+            String, '/cylinder_cmd', self._on_cylinder_cmd, 10)
+
+        # Auto/Manual mode arbitration — teleop_node only accepts commands
+        # when mode is MANUAL.  Default to MANUAL on startup.
+        self._mode = 'MANUAL'
+        self._mode_sub = self.create_subscription(
+            String, '/control/mode', self._on_mode, 10)
 
         self.get_logger().info(
             f'teleop_node ready — max_vx={self._max_vx} '
@@ -86,8 +95,29 @@ class TeleopNode(Node):
 
     # ── Callbacks ───────────────────────────────────────────────────
 
+    def _on_mode(self, msg: String) -> None:
+        """Handle Auto/Manual mode change from web_bridge.
+
+        teleop_node only forwards commands to ESP32 in MANUAL mode.
+        On mode switch to AUTO, teleop_node stops immediately.
+        On mode switch to MANUAL, teleop_node is armed to accept /cmd_vel.
+        """
+        new_mode = msg.data.strip().upper()
+        if new_mode not in ('AUTO', 'MANUAL'):
+            return
+        old = self._mode
+        self._mode = new_mode
+        if new_mode != old:
+            self.get_logger().info(f'Mode changed: {old} → {new_mode}')
+            if new_mode == 'AUTO' and self._connected:
+                loop = asyncio.get_event_loop()
+                loop.create_task(self._bridge.stop())
+                self.get_logger().info('Switched to AUTO — teleop stopped')
+
     def _on_cmd_vel(self, msg: Twist) -> None:
         """Convert Twist to ESP32 move command."""
+        if self._mode != 'MANUAL':
+            return
         if self._bridge is None or not self._connected:
             return
 
@@ -119,33 +149,50 @@ class TeleopNode(Node):
             loop.create_task(self._bridge.clear_e_stop())
             self.get_logger().info('E-STOP cleared')
 
+    def _on_cylinder_cmd(self, msg: String) -> None:
+        """Handle cylinder actuator commands from web_bridge keyboard control.
+
+        Only active in MANUAL mode.  Brain_node uses its own
+        MirrorBridge.begin_dock() / cylinder_extend() for autonomous
+        unloading, so this path is only for keyboard cylinder control.
+        """
+        if self._mode != 'MANUAL':
+            return
+        if self._bridge is None or not self._connected:
+            self.get_logger().warn('cylinder cmd received but bridge not connected')
+            return
+        action = msg.data.strip().lower()
+        loop = asyncio.get_event_loop()
+        if action == 'extend':
+            loop.create_task(self._bridge.cylinder_extend())
+            self.get_logger().info('cylinder → extend')
+        elif action == 'retract':
+            loop.create_task(self._bridge.cylinder_retract())
+            self.get_logger().info('cylinder → retract')
+        elif action == 'stop':
+            loop.create_task(self._bridge.cylinder_stop())
+            self.get_logger().info('cylinder → stop')
+        else:
+            self.get_logger().warn(f'unknown cylinder action: {action!r}')
+
     # ── Async bridge lifecycle ──────────────────────────────────────
 
     async def _run(self) -> None:
-        """Open serial, wire callbacks, run until shutdown."""
-        port = os.environ.get('ESP32_PORT', '/dev/robot-esp32')
-        baud = int(os.environ.get('ESP32_BAUD', '115200'))
-        self.get_logger().info(f'opening ESP32 bridge on {port} @ {baud}')
+        """Connect the MirrorBridge (ROS topics only, no direct serial).
 
-        try:
-            self._bridge = await open_esp32_bridge(port=port, baudrate=baud)
-        except Exception as e:
-            self.get_logger().error(f'failed to open ESP32 bridge: {e}')
-            return
-
-        self._bridge.on_status_update = self._on_status
-        self._bridge.on_encoder_update = self._on_encoder
-        self._bridge.on_e_stop = self._on_e_stop_event
-        self._bridge.on_error = self._on_error
-        self._bridge.on_alive = self._on_alive
-
+        The MirrorBridge publishes /esp32/cmd and receives telemetry via
+        ROS subscriptions.  esp32_telemetry_node is the sole serial owner
+        and forwards commands from /esp32/cmd to the ESP32.
+        """
         await self._bridge.connect()
         self._connected = True
-        self.get_logger().info('ESP32 bridge connected — sending heartbeat')
+        self.get_logger().info(
+            'MirrorBridge connected — commands via /esp32/cmd '
+            '(serial owned by esp32_telemetry_node)')
 
         try:
             while rclpy.ok():
-                await asyncio.sleep(0.05)  # 20 Hz loop
+                await asyncio.sleep(0.05)  # 20 Hz timeout check
                 await self._check_timeout()
         finally:
             # Graceful shutdown: stop motors before disconnecting
@@ -179,23 +226,6 @@ class TeleopNode(Node):
                 await self._bridge.stop()
             except Exception as e:
                 self.get_logger().error(f'stop failed: {e}')
-
-    # ── Bridge callbacks ────────────────────────────────────────────
-
-    def _on_status(self, data: dict) -> None:
-        pass  # Telemetry node handles status publishing
-
-    def _on_encoder(self, motors: list[dict]) -> None:
-        pass
-
-    def _on_e_stop_event(self) -> None:
-        self.get_logger().warn('ESP32 entered E-STOP state')
-
-    def _on_error(self, msg: str) -> None:
-        self.get_logger().error(f'esp32 bridge: {msg}')
-
-    def _on_alive(self, data: dict) -> None:
-        pass  # Silent — keep log clean
 
 
 def main(args: list[str] | None = None) -> None:

@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SymbolView } from 'expo-symbols';
@@ -28,16 +28,29 @@ export default function PackageDetailScreen() {
 
   const pkg = packages.find((p) => p._id === id);
   const [showPicker, setShowPicker] = useState(false);
+  const loadingAttempted = useRef(false);
 
   useEffect(() => {
-    if (!pkg) void load();
+    if (!pkg && !loadingAttempted.current) {
+      loadingAttempted.current = true;
+      void load();
+    }
   }, [pkg, load]);
 
   if (!pkg) {
+    if (!loadingAttempted.current) {
+      return (
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+          <View style={styles.empty}>
+            <Text style={[styles.emptyText, { color: theme.textMuted }]}>Đang tải kiện hàng...</Text>
+          </View>
+        </SafeAreaView>
+      );
+    }
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
         <View style={styles.empty}>
-          <Text style={[styles.emptyText, { color: theme.textMuted }]}>Đang tải kiện hàng...</Text>
+          <Text style={[styles.emptyText, { color: theme.textMuted }]}>Không tìm thấy kiện hàng.</Text>
         </View>
       </SafeAreaView>
     );

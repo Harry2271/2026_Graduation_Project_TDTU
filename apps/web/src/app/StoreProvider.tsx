@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Provider } from "react-redux";
-import { store } from "../store/store";
+import { makeStore } from "../store";
+import type { AppStore } from "../store";
 
 export default function StoreProvider({
   children,
@@ -11,7 +12,7 @@ export default function StoreProvider({
 }) {
   // Sử dụng useState thay vì useRef để tránh lỗi của React Compiler
   // khi access vào .current trong quá trình render.
-  const [storeInstance] = useState(() => store);
+  const [storeInstance] = useState<AppStore>(() => makeStore());
 
   return <Provider store={storeInstance}>{children}</Provider>;
 }

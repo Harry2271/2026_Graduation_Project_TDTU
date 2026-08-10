@@ -57,10 +57,16 @@ FROM node:20-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user
+RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -s /bin/sh -m nodejs
+
 WORKDIR /app
 
 # Copy the standalone output (the only thing needed at runtime)
 COPY --from=builder /app/apps/web/.next/standalone/ ./
+
+# Fix ownership so non-root user can read app
+RUN chown -R nodejs:nodejs /app
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
@@ -68,5 +74,8 @@ ENV PORT=3000
 ENV NEXT_TELEMETRY_DISABLED=1
 
 EXPOSE 3000
+
+# Run as non-root
+USER nodejs
 
 CMD ["node", "apps/web/server.js"]

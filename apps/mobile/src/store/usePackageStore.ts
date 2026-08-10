@@ -15,6 +15,9 @@ type PackageStore = {
   finish: (id: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
   subscribe: () => () => void;
+  /** Clear all state — call from logout to avoid stale data leaking into
+   *  the next authenticated session. */
+  reset: () => void;
 };
 
 const errorMessage = (error: unknown) =>
@@ -44,18 +47,35 @@ export const usePackageStore = create<PackageStore>((set, get) => ({
   },
 
   assign: async (id, zoneCode) => {
-    await api.assignToZone(id, zoneCode);
+    set({ error: null });
+    try {
+      await api.assignToZone(id, zoneCode);
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
     await get().load();
   },
 
   finish: async (id) => {
-    await api.patchStatus(id, 'FINISHED');
+    set({ error: null });
+    try {
+      await api.patchStatus(id, 'FINISHED');
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
     await get().load();
   },
 
   remove: async (id) => {
-    await api.deletePackage(id);
-    set((state) => ({ packages: state.packages.filter((pkg) => pkg._id !== id) }));
+    set({ error: null });
+    try {
+      await api.deletePackage(id);
+    } catch (error) {
+      set({ error: errorMessage(error) });
+      throw error;
+    }
     await get().load();
   },
 
@@ -72,4 +92,6 @@ export const usePackageStore = create<PackageStore>((set, get) => ({
       disconnectSocket();
     };
   },
+
+  reset: () => set({ packages: [], stats: null, isLoading: false, error: null }),
 }));

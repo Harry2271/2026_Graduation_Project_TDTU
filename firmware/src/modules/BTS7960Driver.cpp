@@ -45,8 +45,13 @@ void BTS7960Driver::begin()
 
 void BTS7960Driver::enable()
 {
-    enabled_ = true;
+    // Always start from zero output so re-arm after an E-stop or brake
+    // never moves the motor at the previous duty.  coast() writes 0 to
+    // both PWM channels and resets state_/current_duty_ first, then EN
+    // is raised.
+    coast();
     gpio_set_level((gpio_num_t)en_pin_, 1);
+    enabled_ = true;
 }
 
 void BTS7960Driver::disable()
@@ -97,11 +102,14 @@ void BTS7960Driver::coast()
 
 void BTS7960Driver::brake()
 {
+    // Dynamic brake: drive exactly one H-bridge direction at the configured
+    // motor voltage limit.  Never drive RPWM and LPWM high together — that
+    // is neither coast nor a safe brake state for BTS7960 modules.
     state_ = MOTOR_BRAKE;
-    current_duty_ = PWM_MAX_DUTY;
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)rpwm_ch_, PWM_MAX_DUTY);
+    current_duty_ = MOTOR_MAX_DUTY;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)rpwm_ch_, MOTOR_MAX_DUTY);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)rpwm_ch_);
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)lpwm_ch_, PWM_MAX_DUTY);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)lpwm_ch_, 0);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)lpwm_ch_);
 }
 

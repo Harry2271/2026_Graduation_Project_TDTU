@@ -1,4 +1,4 @@
-import { BadRequestException, forwardRef,Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { ClientSession, Types } from 'mongoose';
 
 import { EventsGateway } from '../../gateway/events-gateway';
@@ -11,6 +11,7 @@ import { ISHELF_REPOSITORY } from './shelf.token';
 
 @Injectable()
 export class ShelfService implements IShelfService, OnModuleInit {
+  private readonly logger = new Logger(ShelfService.name);
   private readonly SHELF_CODES = ['S1', 'S2', 'S3', 'S4'];
   private readonly ROW_LETTERS = ['A', 'B', 'C', 'D'];
   private readonly ROWS = 4;
@@ -79,13 +80,10 @@ export class ShelfService implements IShelfService, OnModuleInit {
     const packageObjectId = new Types.ObjectId(packageId);
     await this.packageService.findById(packageId);
 
+    // Fail fast if the slot doesn't exist.
     const slot = await this.shelfRepository.findSlotByCode(slotCode);
     if (!slot) {
       throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
-    }
-
-    if (slot.status === SlotStatus.OCCUPIED) {
-      throw new BadRequestException(`Vị trí "${slotCode}" đã có hàng hóa`);
     }
 
     const alreadyAssigned = await this.shelfRepository.findSlotByPackageId(packageObjectId);
@@ -93,9 +91,18 @@ export class ShelfService implements IShelfService, OnModuleInit {
       throw new BadRequestException(`Package "${packageId}" đã được đặt tại vị trí "${alreadyAssigned.code}"`);
     }
 
+    // Atomic assign — repository filters on status: AVAILABLE so a
+    // concurrent assign race will fail instead of overwriting OCCUPIED.
     const updated = await this.shelfRepository.assignPackageToSlot(slotCode, packageObjectId);
     if (!updated) {
-      throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
+      // Either slot disappeared, or another writer beat us to it.
+      const current = await this.shelfRepository.findSlotByCode(slotCode);
+      if (!current) {
+        throw new NotFoundException(`Không tìm thấy vị trí "${slotCode}"`);
+      }
+      throw new ConflictException(
+        `Vị trí "${slotCode}" đã có hàng hóa hoặc không còn khả dụng (status=${current.status}).`,
+      );
     }
     this.eventsGateway.emitShelfUpdated(updated);
     return updated;
@@ -114,8 +121,20 @@ export class ShelfService implements IShelfService, OnModuleInit {
     if (!targetSlot) {
       throw new NotFoundException(`Không tìm thấy vị trí đích "${targetSlotCode}"`);
     }
-    if (targetSlot.status === SlotStatus.OCCUPIED) {
-      throw new BadRequestException(`Vị trí đích "${targetSlotCode}" đã có hàng hóa`);
+    if (targetSlot.status !== SlotStatus.AVAILABLE) {
+      throw new ConflictException(
+        `Vị trí đích "${targetSlotCode}" đã có hàng hóa hoặc không còn khả dụng (status=${targetSlot.status}).`,
+      );
+    }
+
+    // Reserve-then-move pattern — atomic guard on target slot prevents
+    // the previous "clear, then re-assign" sequence from leaving the
+    // package orphaned if the process crashes between the two writes.
+    const reserved = await this.shelfRepository.reserveSlotIfAvailable(targetSlotCode);
+    if (!reserved) {
+      throw new ConflictException(
+        `Vị trí đích "${targetSlotCode}" đã bị chiếm bởi một lệnh đồng thời.`,
+      );
     }
 
     const packageId = fromSlot.packageId;
@@ -144,7 +163,7 @@ export class ShelfService implements IShelfService, OnModuleInit {
       try {
         await this.packageService.markFinished(packageId);
       } catch (err) {
-        console.error(`Không thể cập nhật package ${packageId} sang FINISHED sau khi gỡ khỏi kệ ${slotCode}`, err);
+        this.logger.error(`Không thể cập nhật package ${packageId} sang FINISHED sau khi gỡ khỏi kệ ${slotCode}`, (err as Error).stack);
       }
     }
 
@@ -223,10 +242,17 @@ export class ShelfService implements IShelfService, OnModuleInit {
   async assignCoordinatesBatch(
     entries: { slotCode: string; slotX: number; slotY: number; facingTheta: number | null }[],
   ): Promise<ShelfSlot[]> {
+    // Bulk path — one bulkWrite to MongoDB, one WebSocket emit per affected
+    // slot. Previous implementation issued N round-trips and N emits; with
+    // 64 slots per calibrate session this was the slowest path in the app.
+    await this.shelfRepository.updateCoordinatesMany(entries);
     const updated: ShelfSlot[] = [];
     for (const entry of entries) {
-      const slot = await this.assignCoordinates(entry.slotCode, entry.slotX, entry.slotY, entry.facingTheta);
-      updated.push(slot);
+      const slot = await this.shelfRepository.findSlotByCode(entry.slotCode);
+      if (slot) {
+        updated.push(slot);
+        this.eventsGateway.emitShelfUpdated(slot);
+      }
     }
     return updated;
   }

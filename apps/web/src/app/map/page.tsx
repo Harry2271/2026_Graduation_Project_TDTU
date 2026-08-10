@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power } from 'lucide-react';
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power, Zap, Keyboard, Rocket, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Cpu } from 'lucide-react';
 import { Button, App, Tooltip } from 'antd';
 
 const WS_URL =
@@ -13,6 +13,9 @@ interface MapData { width: number; height: number; resolution: number; origin_x:
 
 interface PoseData { x: number; y: number; theta: number; }
 interface InfoData { lidar: boolean; map: boolean; pose: boolean; mode: string; coverage_pct?: number; }
+interface Esp32Status { estop?: boolean; mode?: string; max_pct?: number; st?: { imu?: boolean; pwr?: boolean; sharp?: number; obs?: boolean; tof_mm?: number; cyl?: string }; motors?: { t?: number; r?: number }[]; }
+interface DemoStatus { state?: string; action?: string; zone?: string; message?: string; error?: string; }
+interface ControlModeStatus { mode?: string; active_mode?: string; source?: string; reason?: string; }
 
 // ── Shared canvas helpers ─────────────────────────────────────────────────────
 
@@ -149,6 +152,19 @@ export default function MapPage() {
   const obstacleOffscreenRef = useRef<HTMLCanvasElement | null>(null);
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [scanCount, setScanCount] = useState(0);
+
+  // ── Robot control state ────────────────────────────────────────────
+  const [controlMode, setControlMode] = useState<'AUTO' | 'MANUAL'>('MANUAL');
+  const [controlModeStatus, setControlModeStatus] = useState<ControlModeStatus>({});
+  const [demoStatus, setDemoStatus] = useState<DemoStatus>({});
+  const [esp32Status, setEsp32Status] = useState<Esp32Status | null>(null);
+  const [ackLog, setAckLog] = useState<{ ts: number; type: string; data: unknown }[]>([]);
+  const [robotErrors, setRobotErrors] = useState<Array<{ ts: number; severity: string; code: string; message: string }>>([]);
+
+  // Keyboard state for teleop
+  const keysPressed = useRef<Set<string>>(new Set());
+  const teleopRef = useRef<{ vx: number; vy: number; omega: number } | null>(null);
+  const teleopSendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
   useEffect(() => { poseRef.current = pose; }, [pose]);
@@ -605,6 +621,21 @@ export default function MapPage() {
             }
             case 'info': setInfo(msg.data as InfoData); break;
             case 'mode': setInfo(prev => ({ ...prev, mode: msg.data as string })); break;
+            case 'esp32_status': setEsp32Status(msg.data as Esp32Status); break;
+            case 'demo_status': { const ds = msg.data as DemoStatus; setDemoStatus(ds); break; }
+            case 'control_mode_status': { const cms = msg.data as ControlModeStatus; setControlModeStatus(cms); const m = cms.mode ?? cms.active_mode; if (m === 'AUTO' || m === 'MANUAL') setControlMode(m); break; }
+            case 'ack': { const entry = { ts: Date.now(), type: msg.type, data: msg.data }; setAckLog(prev => [entry, ...prev].slice(0, 20)); break; }
+            case 'robot_error': {
+              const ed = (msg.data ?? {}) as { severity?: string; code?: string; message?: string; ts?: string };
+              const entry = {
+                ts: Date.now(),
+                severity: ed.severity ?? 'error',
+                code: ed.code ?? 'UNKNOWN',
+                message: ed.message ?? 'Robot reported an error',
+              };
+              setRobotErrors(prev => [entry, ...prev].slice(0, 50));
+              break;
+            }
           }
         }
         async function parse(data: ArrayBuffer | Blob | string) {
@@ -653,6 +684,39 @@ export default function MapPage() {
       if (pingRef.current) clearInterval(pingRef.current);
     };
   }, []);
+
+  // Surface robot errors as toasts the first time they arrive (notification API is one-shot per call).
+  const notifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (robotErrors.length === 0) return;
+    const newest = robotErrors[0];
+    const key = `${newest.ts}-${newest.code}-${newest.message}`;
+    if (notifiedRef.current.has(key)) return;
+    notifiedRef.current.add(key);
+    // Cap the dedupe set so it doesn't grow unbounded.
+    if (notifiedRef.current.size > 200) {
+      const arr = Array.from(notifiedRef.current);
+      notifiedRef.current = new Set(arr.slice(arr.length - 200));
+    }
+    const sev = newest.severity.toLowerCase();
+    const titleBySeverity: Record<string, string> = {
+      critical: '⛔ LỖI NGHIÊM TRỌNG',
+      error: '❌ LỖI ROBOT',
+      warning: '⚠️ CẢNH BÁO',
+    };
+    const title = titleBySeverity[sev] ?? '🤖 ROBOT';
+    const cfg: { message: string; description: string; type: 'error' | 'warning' | 'info' } =
+      sev === 'critical'
+        ? { message: title, description: `${newest.code}: ${newest.message}`, type: 'error' }
+        : sev === 'warning'
+        ? { message: title, description: `${newest.code}: ${newest.message}`, type: 'warning' }
+        : { message: title, description: `${newest.code}: ${newest.message}`, type: 'error' };
+    notification.open({
+      ...cfg,
+      placement: 'topRight',
+      duration: sev === 'critical' ? 0 : 8,
+    });
+  }, [robotErrors, notification]);
 
   const handleZoomIn = () => setZoom(v => Math.min(8, +(v + 0.5).toFixed(2)));
   const handleZoomOut = () => setZoom(v => Math.max(0.1, +(v - 0.5).toFixed(2)));
@@ -714,6 +778,115 @@ export default function MapPage() {
       onOk: handleResetMap,
     });
   };
+
+  // ── Robot command callbacks ────────────────────────────────────────
+  const sendWs = useCallback((obj: Record<string, unknown>) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      notification.warning({ title: 'Mất kết nối', description: 'Không thể gửi lệnh.', placement: 'topRight' });
+      connectWsRef.current(); return false;
+    }
+    wsRef.current.send(JSON.stringify(obj));
+    return true;
+  }, [notification]);
+
+  const sendEsp32 = useCallback((cmd: Record<string, unknown>) => {
+    if (sendWs({ type: 'esp32', cmd })) console.log('[WS] → esp32:', cmd);
+  }, [sendWs]);
+
+  const sendTeleop = useCallback((vx: number, vy: number, omega: number) => {
+    sendWs({ type: 'teleop', vx, vy, omega });
+  }, [sendWs]);
+
+  const sendCylinder = useCallback((action: 'extend' | 'retract' | 'stop') => {
+    if (sendWs({ type: 'cylinder', action })) {
+      console.log('[WS] → cylinder:', action);
+      notification.success({ title: 'Thành công', description: `Cylinder: ${action}`, placement: 'topRight' });
+    }
+  }, [sendWs, notification]);
+
+  const sendDemo = useCallback((action: string) => {
+    if (sendWs({ type: 'demo', action })) {
+      console.log('[WS] → demo:', action);
+      notification.success({ title: 'Thành công', description: `Demo ${action.toUpperCase()}`, placement: 'topRight' });
+    }
+  }, [sendWs, notification]);
+
+  const sendControlMode = useCallback((mode: 'AUTO' | 'MANUAL') => {
+    if (sendWs({ type: 'control_mode', mode })) {
+      console.log('[WS] → control_mode:', mode);
+      notification.success({ title: 'Thành công', description: `Chế độ: ${mode}`, placement: 'topRight' });
+    }
+  }, [sendWs, notification]);
+
+  const handleEStop = useCallback(() => {
+    modal.confirm({
+      title: '🛑 E-STOP KHẨN CẤP',
+      content: 'Ngay lập tức dừng tất cả động cơ và ngắt hệ thống điều khiển. Tiếp tục?',
+      okText: 'XÁC NHẬN E-STOP',
+      cancelText: 'Hủy',
+      centered: true,
+      okButtonProps: { danger: true, style: { borderRadius: '8px', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", background: '#ff3b5c', border: '2px solid #ff3b5c', boxShadow: '0 0 24px rgba(255,59,92,0.6)' } },
+      cancelButtonProps: { style: { borderRadius: '8px', fontFamily: "'JetBrains Mono', monospace" } },
+      styles: { body: { background: 'var(--bg-surface)', color: 'var(--text-primary)' }, mask: { backdropFilter: 'blur(4px)' } },
+      onOk: () => sendEsp32({ cmd: 'e_stop' }),
+    });
+  }, [modal, sendEsp32]);
+
+  const sendKeyboardMotion = useCallback(() => {
+    if (controlMode !== 'MANUAL') return;
+    const keys = keysPressed.current;
+    const speed = 120;
+    const vx = (keys.has('w') || keys.has('arrowup') ? speed : 0) + (keys.has('s') || keys.has('arrowdown') ? -speed : 0);
+    const vy = (keys.has('d') || keys.has('arrowright') ? speed : 0) + (keys.has('a') || keys.has('arrowleft') ? -speed : 0);
+    const omega = (keys.has('e') ? speed : 0) + (keys.has('q') ? -speed : 0);
+    const motion = { vx, vy, omega };
+    teleopRef.current = motion;
+    sendTeleop(vx, vy, omega);
+  }, [controlMode, sendTeleop]);
+
+  useEffect(() => {
+    const controlledKeys = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (!controlledKeys.has(key) || controlMode !== 'MANUAL') return;
+      event.preventDefault();
+      keysPressed.current.add(key);
+      sendKeyboardMotion();
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (!controlledKeys.has(key)) return;
+      event.preventDefault();
+      keysPressed.current.delete(key);
+      sendKeyboardMotion();
+    };
+    const stopOnBlur = () => {
+      keysPressed.current.clear();
+      teleopRef.current = null;
+      sendTeleop(0, 0, 0);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', stopOnBlur);
+    teleopSendTimerRef.current = setInterval(() => {
+      if (controlMode === 'MANUAL' && teleopRef.current) sendKeyboardMotion();
+    }, 50);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', stopOnBlur);
+      if (teleopSendTimerRef.current) clearInterval(teleopSendTimerRef.current);
+      teleopSendTimerRef.current = null;
+      keysPressed.current.clear();
+    };
+  }, [controlMode, sendKeyboardMotion, sendTeleop]);
+
+  const handleModeSwitch = useCallback((mode: 'AUTO' | 'MANUAL') => {
+    keysPressed.current.clear();
+    teleopRef.current = null;
+    sendEsp32({ cmd: 'stop' });
+    sendControlMode(mode);
+  }, [sendControlMode, sendEsp32]);
 
   const isOnline = wsStatus === 'connected';
   const isMapping = info.mode === 'mapping_idle' || info.mode === 'mapping_active' || info.mode === 'mapping';
@@ -971,6 +1144,293 @@ export default function MapPage() {
           </div>
         </div>
       </div>
+
+      {/* ─── Robot Control Panel ─────────────────────────────────────────── */}
+      <div
+        className="px-4 md:px-8 py-3 flex flex-wrap items-start justify-between gap-3 relative z-10"
+        style={{
+          background: 'rgba(8,11,16,0.95)',
+          borderTop: '1px solid var(--border-dim)',
+          boxShadow: 'inset 0 1px 0 rgba(0,212,255,0.08)',
+        }}
+      >
+        {/* Left: Mode + Drive + Cylinder */}
+        <div className="flex flex-col gap-3">
+          {/* Mode + Drive row */}
+          <div className="flex items-center gap-3">
+            {/* Mode toggle */}
+            <div className="flex items-center gap-1 p-1 rounded-xl" style={{ border: '1px solid var(--border-mid)' }}>
+              <button
+                onClick={() => handleModeSwitch('MANUAL')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
+                style={
+                  controlMode === 'MANUAL'
+                    ? { background: 'rgba(0,212,255,0.18)', color: 'var(--accent)', border: '1px solid rgba(0,212,255,0.4)', boxShadow: '0 0 12px rgba(0,212,255,0.15)' }
+                    : { background: 'transparent', color: 'var(--text-muted)', border: '1px solid transparent' }
+                }
+              >
+                <Keyboard size={13} />
+                MANUAL
+              </button>
+              <button
+                onClick={() => handleModeSwitch('AUTO')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
+                style={
+                  controlMode === 'AUTO'
+                    ? { background: 'rgba(0,255,136,0.18)', color: 'var(--success)', border: '1px solid rgba(0,255,136,0.4)', boxShadow: '0 0 12px rgba(0,255,136,0.15)' }
+                    : { background: 'transparent', color: 'var(--text-muted)', border: '1px solid transparent' }
+                }
+              >
+                <Rocket size={13} />
+                AUTO
+              </button>
+            </div>
+
+            {/* D-pad (manual only) */}
+            {controlMode === 'MANUAL' && (
+              <div className="grid grid-cols-3 gap-1 p-1.5 rounded-xl" style={{ border: '1px solid var(--border-mid)' }}>
+                <div />
+                <button
+                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
+                  onMouseDown={() => { keysPressed.current.add('w'); sendKeyboardMotion(); }}
+                  onMouseUp={() => { keysPressed.current.delete('w'); sendKeyboardMotion(); }}
+                  onMouseLeave={() => { keysPressed.current.delete('w'); sendKeyboardMotion(); }}
+                >
+                  <ChevronUp size={16} />
+                </button>
+                <div />
+                <button
+                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
+                  onMouseDown={() => { keysPressed.current.add('a'); sendKeyboardMotion(); }}
+                  onMouseUp={() => { keysPressed.current.delete('a'); sendKeyboardMotion(); }}
+                  onMouseLeave={() => { keysPressed.current.delete('a'); sendKeyboardMotion(); }}
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                  style={{ background: 'rgba(255,59,92,0.15)', border: '1px solid rgba(255,59,92,0.4)', color: 'var(--danger)' }}
+                  onMouseDown={() => { sendEsp32({ cmd: 'stop' }); }}
+                >
+                  ■
+                </button>
+                <button
+                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
+                  onMouseDown={() => { keysPressed.current.add('d'); sendKeyboardMotion(); }}
+                  onMouseUp={() => { keysPressed.current.delete('d'); sendKeyboardMotion(); }}
+                  onMouseLeave={() => { keysPressed.current.delete('d'); sendKeyboardMotion(); }}
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <div />
+                <button
+                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
+                  onMouseDown={() => { keysPressed.current.add('s'); sendKeyboardMotion(); }}
+                  onMouseUp={() => { keysPressed.current.delete('s'); sendKeyboardMotion(); }}
+                  onMouseLeave={() => { keysPressed.current.delete('s'); sendKeyboardMotion(); }}
+                >
+                  <ChevronDown size={16} />
+                </button>
+                <div />
+              </div>
+            )}
+
+            {/* Cylinder controls */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => sendCylinder('extend')}
+                className="px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
+                style={{ background: 'rgba(255,184,0,0.12)', border: '1px solid rgba(255,184,0,0.3)', color: 'var(--warning)' }}
+              >
+                ▲ NÂNG
+              </button>
+              <button
+                onClick={() => sendCylinder('stop')}
+                className="px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
+                style={{ background: 'rgba(156,163,175,0.12)', border: '1px solid rgba(156,163,175,0.3)', color: 'var(--text-secondary)' }}
+              >
+                ■
+              </button>
+              <button
+                onClick={() => sendCylinder('retract')}
+                className="px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
+                style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
+              >
+                ▼ HẠ
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Center: Demo controls (auto only) */}
+        <div className="flex items-center gap-2">
+          {['A', 'B', 'C', 'D'].map(zone => (
+            <button
+              key={zone}
+              onClick={() => sendDemo(zone)}
+              disabled={controlMode !== 'AUTO'}
+              className="px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
+              style={{
+                background: controlMode === 'AUTO' ? 'rgba(0,255,136,0.12)' : 'rgba(156,163,175,0.06)',
+                border: `1px solid ${controlMode === 'AUTO' ? 'rgba(0,255,136,0.35)' : 'rgba(156,163,175,0.15)'}`,
+                color: controlMode === 'AUTO' ? 'var(--success)' : 'var(--text-muted)',
+                opacity: controlMode === 'AUTO' ? 1 : 0.4,
+              }}
+            >
+              {zone}
+            </button>
+          ))}
+          <button
+            onClick={() => sendDemo('full')}
+            disabled={controlMode !== 'AUTO'}
+            className="px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
+            style={{
+              background: controlMode === 'AUTO' ? 'rgba(0,212,255,0.12)' : 'rgba(156,163,175,0.06)',
+              border: `1px solid ${controlMode === 'AUTO' ? 'rgba(0,212,255,0.35)' : 'rgba(156,163,175,0.15)'}`,
+              color: controlMode === 'AUTO' ? 'var(--accent)' : 'var(--text-muted)',
+              opacity: controlMode === 'AUTO' ? 1 : 0.4,
+            }}
+          >
+            FULL
+          </button>
+          <button
+            onClick={() => sendDemo('stop')}
+            className="px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
+            style={{ background: 'rgba(255,59,92,0.12)', border: '1px solid rgba(255,59,92,0.35)', color: 'var(--danger)' }}
+          >
+            STOP
+          </button>
+
+          {/* E-STOP (priority) */}
+          <button
+            onClick={handleEStop}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
+            style={{
+              background: 'linear-gradient(135deg, rgba(255,59,92,0.2), rgba(220,30,60,0.15))',
+              border: '2px solid var(--danger)',
+              color: 'var(--danger)',
+              boxShadow: '0 0 20px rgba(255,59,92,0.3), inset 0 1px 0 rgba(255,255,255,0.05)',
+              letterSpacing: '0.08em',
+            }}
+          >
+            🛑 E-STOP
+          </button>
+        </div>
+
+        {/* Right: ESP32 status panel */}
+        <div className="flex items-center gap-3">
+          {esp32Status && (
+            <div
+              className="flex flex-col gap-1 px-3 py-2 rounded-xl"
+              style={{ background: 'rgba(17,24,39,0.8)', border: '1px solid var(--border-dim)' }}
+            >
+              <div className="flex items-center gap-2">
+                <Cpu size={11} style={{ color: esp32Status.estop ? 'var(--danger)' : 'var(--success)' }} />
+                <span className="text-[9px] font-bold" style={{ color: esp32Status.estop ? 'var(--danger)' : 'var(--success)', letterSpacing: '0.08em' }}>
+                  {esp32Status.estop ? 'E-STOP' : esp32Status.mode?.toUpperCase() || 'IDLE'}
+                </span>
+              </div>
+              {esp32Status.st && (
+                <div className="flex items-center gap-2 text-[8px]" style={{ color: 'var(--text-muted)' }}>
+                  <span>TOF:{esp32Status.st.tof_mm ?? '?'}mm</span>
+                  <span>CYL:{esp32Status.st.cyl ?? '?'}</span>
+                  <span>OBS:{esp32Status.st.obs ? '●' : '○'}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {demoStatus.state && demoStatus.state !== 'idle' && (
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-xl"
+              style={{
+                background: 'rgba(0,255,136,0.06)',
+                border: '1px solid rgba(0,255,136,0.2)',
+              }}
+            >
+              <span className="text-[9px] font-bold" style={{ color: 'var(--success)', letterSpacing: '0.08em' }}>
+                DEMO: {demoStatus.state?.toUpperCase()} {demoStatus.action ? `→ ${demoStatus.action}` : ''}
+              </span>
+              {demoStatus.message && (
+                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{demoStatus.message}</span>
+              )}
+            </div>
+          )}
+
+          {controlModeStatus.source && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(17,24,39,0.8)', border: '1px solid var(--border-dim)' }}>
+              <span className="text-[9px] font-bold" style={{ color: controlMode === 'AUTO' ? 'var(--success)' : 'var(--accent)', letterSpacing: '0.08em' }}>
+                {controlMode} {controlModeStatus.reason ? `(${controlModeStatus.reason})` : ''}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ─── Robot error banner ──────────────────────────────────────────────── */}
+      {robotErrors.length > 0 && (() => {
+        const top = robotErrors[0];
+        const sev = top.severity.toLowerCase();
+        const cfgBySev: Record<string, { bg: string; border: string; icon: string; label: string }> = {
+          critical: { bg: 'rgba(220,30,60,0.18)', border: 'rgba(255,59,92,0.7)', icon: '⛔', label: 'LỖI NGHIÊM TRỌNG' },
+          error:    { bg: 'rgba(255,59,92,0.10)',  border: 'rgba(255,59,92,0.45)', icon: '❌', label: 'LỖI ROBOT' },
+          warning:  { bg: 'rgba(255,184,0,0.12)',  border: 'rgba(255,184,0,0.5)',  icon: '⚠️', label: 'CẢNH BÁO' },
+        };
+        const cfg = cfgBySev[sev] ?? cfgBySev.error;
+        const hidden = robotErrors.length - 1;
+        return (
+          <div
+            data-testid="robot-error-banner"
+            className="px-4 md:px-8 py-2 flex flex-wrap items-center justify-between gap-2 relative z-10"
+            style={{
+              background: cfg.bg,
+              borderTop: `1px solid ${cfg.border}`,
+              borderBottom: `1px solid ${cfg.border}`,
+              boxShadow: sev === 'critical' ? '0 0 24px rgba(255,59,92,0.35), inset 0 0 12px rgba(255,59,92,0.1)' : 'inset 0 0 8px rgba(0,0,0,0.2)',
+              animation: sev === 'critical' ? 'pulse-glow 1.4s ease-in-out infinite' : undefined,
+            }}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-base leading-none">{cfg.icon}</span>
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold tracking-widest" style={{ color: cfg.border, fontFamily: "'JetBrains Mono', monospace" }}>
+                    {cfg.label}
+                  </span>
+                  <span className="text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+                    {top.code}
+                  </span>
+                  {hidden > 0 && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md" style={{ background: cfg.border, color: '#060910', fontWeight: 700, letterSpacing: '0.06em' }}>
+                      +{hidden}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
+                  {top.message}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setRobotErrors([])}
+              className="px-2 py-1 rounded-md text-[10px] font-bold cursor-pointer transition-all"
+              style={{
+                background: 'rgba(8,11,16,0.6)',
+                border: `1px solid ${cfg.border}`,
+                color: cfg.border,
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.08em',
+              }}
+            >
+              ✕ XÓA
+            </button>
+          </div>
+        );
+      })()}
 
       {/* ─── Canvas viewer ───────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 p-2 md:p-5">

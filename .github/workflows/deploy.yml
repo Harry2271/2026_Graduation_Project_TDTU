@@ -49,11 +49,17 @@ jobs:
               - 'apps/api/**'
               - 'docker-compose.yml'
               - 'scripts/postinstall-hoist-next.js'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'turbo.json'
               - '.github/workflows/deploy.yml'
             web:
               - 'apps/web/**'
               - 'docker-compose.yml'
               - 'scripts/postinstall-hoist-next.js'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'turbo.json'
               - '.github/workflows/deploy.yml'
             robot:
               - 'services/robot/**'
@@ -72,7 +78,7 @@ jobs:
       - name: Write API env file
         run: |
           mkdir -p apps/api
-          cat > apps/api/.env << ENVEOF
+          cat > apps/api/.env <<'ENVEOF'
           API_PORT=${{ vars.API_PORT || '5000' }}
           PORT=${{ vars.API_PORT || '5000' }}
           MONGO_URI=${{ secrets.MONGO_URI }}

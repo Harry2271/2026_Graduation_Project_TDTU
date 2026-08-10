@@ -87,7 +87,8 @@ private:
     int16_t nav_omega_;
     int16_t ramped_speeds_[4];
     int16_t mecanum_targets_[4];
-    int8_t  kick_ticks_[4];   // per-wheel kick-start countdown (reused from main.cpp pattern)
+    int8_t  kick_ticks_[4];
+    int16_t prev_target_for_kick_[4];  // trigger kick only on target transitions
 
     bool estop_active_;
     bool pid_enabled_;

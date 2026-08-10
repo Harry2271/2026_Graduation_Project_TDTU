@@ -547,6 +547,16 @@ class RealEsp32Bridge:
 
     # ----- internals -----
 
+    async def send_command(self, cmd: dict) -> None:
+        """Public entrypoint for forwarding pre-parsed command dicts.
+
+        Used by the telemetry node gateway to forward validated commands
+        received from ROS topics (e.g. /esp32/cmd) directly to the ESP32
+        serial link.  The command dict is JSON-encoded and newline-terminated
+        in the same format as all other bridge methods.
+        """
+        await self._send_line(cmd)
+
     async def _send_line(self, cmd: dict) -> None:
         async with self._lock:
             line = _to_json_line(cmd)
@@ -718,6 +728,210 @@ class RealEsp32Bridge:
             fn(*args)
         except Exception:  # noqa: BLE001
             LOG.exception('callback %s raised', getattr(fn, '__name__', repr(fn)))
+
+
+# ---------- Mirror bridge (ROS-backed, no serial) -------------------------
+
+
+class MirrorBridge:
+    """ROS-backed Esp32Bridge implementation for Direction-A architecture.
+
+    Does NOT open any serial port.  All commands are published as JSON
+    strings on ``/esp32/cmd`` for the ``esp32_telemetry_node`` gateway to
+    forward to the real ESP32 over UART.
+
+    Telemetry (status, encoder, IMU, power, unload state, cargo) arrives
+    via ROS subscriptions and is dispatched to the same callback interface
+    that ``RealEsp32Bridge`` exposes.  Clients that depend on the bridge
+    Protocol need only swap the concrete class; no other code changes are
+    required.
+    """
+
+    def __init__(self, node: Any) -> None:
+        """
+        Args:
+            node: a ``rclpy.node.Node`` instance (brain_node, teleop_node, etc.)
+                  that owns the publishers and subscribers created here.
+        """
+        self._node = node
+
+        # ── publishers (commands → telemetry gateway) ──────────────────────
+        import rclpy  # noqa: F811 — local import avoids circular at module level
+        from std_msgs.msg import String as _String
+
+        self._cmd_pub = node.create_publisher(_String, '/esp32/cmd', 10)
+
+        # ── subscribers (telemetry ← gateway) ──────────────────────────────
+        node.create_subscription(_String, '/esp32/status',
+                                 self._on_status, 10)
+        node.create_subscription(_String, '/esp32/encoder',
+                                 self._on_encoder, 10)
+        node.create_subscription(_String, '/esp32/imu',
+                                 self._on_imu, 10)
+        node.create_subscription(_String, '/esp32/power',
+                                 self._on_power, 10)
+        node.create_subscription(_String, '/esp32/unload_state',
+                                 self._on_unload_state, 10)
+        node.create_subscription(_String, '/esp32/cargo',
+                                 self._on_cargo, 10)
+        node.create_subscription(_String, '/esp32/alive',
+                                 self._on_alive, 10)
+
+        self._connected = False
+
+        # Callback handles — same signature as RealEsp32Bridge
+        self.on_status_update:  Callable[[dict], None] = lambda _d: None
+        self.on_encoder_update: Callable[[list[dict]], None] = lambda _d: None
+        self.on_imu:            Callable[[dict], None] = lambda _d: None
+        self.on_power:          Callable[[dict], None] = lambda _d: None
+        self.on_e_stop:         Callable[[], None] = lambda: None
+        self.on_error:          Callable[[str], None] = lambda _m: None
+        self.on_alive:          Callable[[dict], None] = lambda _d: None
+        self.on_unload_state:   Callable[[dict], None] = lambda _d: None
+        self.on_cargo:          Callable[[dict], None] = lambda _d: None
+
+        # Cached state — populated by ROS subscribers
+        self._last_unload_state: dict = {}
+        self._last_cargo: dict = {}
+
+    # ── lifecycle (no-op — serial is managed by telemetry_node) ────────────
+
+    async def connect(self) -> None:
+        self._connected = True
+
+    async def disconnect(self) -> None:
+        self._connected = False
+
+    # ── command API — publishes JSON to /esp32/cmd ─────────────────────────
+
+    async def _send(self, cmd: dict) -> None:
+        from std_msgs.msg import String as _String  # noqa: F811
+        self._cmd_pub.publish(_String(data=json.dumps(cmd)))
+
+    async def move(self, vx: int, vy: int, omega: int) -> None:
+        await self._send({'cmd': 'move', 'vx': vx, 'vy': vy, 'omega': omega})
+
+    async def stop(self) -> None:
+        await self._send({'cmd': 'stop'})
+
+    async def e_stop(self) -> None:
+        await self._send({'cmd': 'e_stop'})
+
+    async def clear_e_stop(self) -> None:
+        await self._send({'cmd': 'e_stop_clear'})
+
+    async def heartbeat(self) -> None:
+        await self._send({'cmd': 'heartbeat'})
+
+    async def cylinder_extend(self) -> None:
+        await self._send({'cmd': 'cylinder_extend'})
+
+    async def cylinder_retract(self) -> None:
+        await self._send({'cmd': 'cylinder_retract'})
+
+    async def cylinder_stop(self) -> None:
+        await self._send({'cmd': 'cylinder_stop'})
+
+    async def get_status(self) -> dict:
+        return {'uptime_ms': 0, 'mode': 'NAV', 'e_stop': False}
+
+    async def get_encoder(self) -> list[dict]:
+        return []
+
+    async def begin_dock(self, tag_id: int, target_distance_mm: int,
+                         facing_theta_deg: float = -999.0,
+                         operation_id: str | None = None) -> None:
+        cmd: dict[str, Any] = {
+            'cmd': 'begin_dock',
+            'tag_id': tag_id,
+            'target_distance_mm': target_distance_mm,
+        }
+        if facing_theta_deg >= 0:
+            cmd['facing_theta'] = facing_theta_deg
+        if operation_id:
+            cmd['operation_id'] = operation_id
+        await self._send(cmd)
+
+    async def cancel_dock(self) -> None:
+        await self._send({'cmd': 'cancel_dock'})
+
+    async def get_unload_state(self) -> dict:
+        return dict(self._last_unload_state)
+
+    async def get_cargo(self) -> dict:
+        return dict(self._last_cargo)
+
+    def battery_pct(self) -> Optional[float]:
+        return None
+
+    def battery_voltage(self) -> Optional[float]:
+        return None
+
+    def battery_current(self) -> Optional[float]:
+        return None
+
+    def last_error(self) -> str:
+        return ''
+
+    # ── ROS subscribers → callback dispatch ────────────────────────────────
+
+    def _on_status(self, msg: Any) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._safe_call(self.on_status_update, data)
+
+    def _on_encoder(self, msg: Any) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._safe_call(self.on_encoder_update, data)
+
+    def _on_imu(self, msg: Any) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._safe_call(self.on_imu, data)
+
+    def _on_power(self, msg: Any) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._safe_call(self.on_power, data)
+
+    def _on_unload_state(self, msg: Any) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._last_unload_state = data
+        self._safe_call(self.on_unload_state, data)
+
+    def _on_cargo(self, msg: Any) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._last_cargo = data
+        self._safe_call(self.on_cargo, data)
+
+    def _on_alive(self, msg: Any) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._safe_call(self.on_alive, data)
+
+    def _safe_call(self, fn: Callable, *args: Any) -> None:
+        try:
+            fn(*args)
+        except Exception:
+            LOG.exception('MirrorBridge callback %s raised',
+                          getattr(fn, '__name__', repr(fn)))
 
 
 # ---------- Convenience factory ------------------------------------------

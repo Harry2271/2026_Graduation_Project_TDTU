@@ -38,6 +38,9 @@ FROM node:20-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user (nodejs user exists in node:slim but is locked)
+RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -s /bin/sh -m nodejs
+
 RUN corepack enable && corepack prepare yarn@1.22.22 --activate
 WORKDIR /app
 
@@ -56,9 +59,15 @@ RUN yarn install --production --frozen-lockfile --ignore-engines --ignore-script
 # Copy build output from builder
 COPY --from=builder /app/apps/api/dist apps/api/dist
 
+# Fix ownership so the non-root user can read the app
+RUN chown -R nodejs:nodejs /app
+
 WORKDIR /app/apps/api
 
 ENV NODE_ENV=production
 EXPOSE 5000
+
+# Run as non-root
+USER nodejs
 
 CMD ["node", "dist/main.js"]

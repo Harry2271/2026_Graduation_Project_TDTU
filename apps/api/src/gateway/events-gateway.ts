@@ -38,4 +38,8 @@ export class EventsGateway {
   emitRobotHealth(data: unknown) {
     this.server.emit('robot:health', data);
   }
+
+  emitRobotError(data: unknown) {
+    this.server.emit('robot:error', data);
+  }
 }

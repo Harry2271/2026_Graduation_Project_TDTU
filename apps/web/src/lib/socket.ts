@@ -1,7 +1,9 @@
 import { io, Socket } from "socket.io-client";
 
+// Prefer the dedicated WebSocket URL, then derive one from the API URL, then use the production fallback.
 const SOCKET_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/^http/, "ws") ||
+  process.env.NEXT_PUBLIC_WS_URL ??
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/^http/, "ws") ??
   "wss://api.nguyen-robot.io.vn";
 
 let socket: Socket | null = null;

@@ -7,6 +7,9 @@ import type {
 import type { AuthTokens, AuthRegisterResponse } from '@/types/auth';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL;
+if (!API_BASE && process.env.NODE_ENV !== 'test') {
+  console.warn('[api] EXPO_PUBLIC_API_BASE_URL is not set — all API calls will fail');
+}
 
 let getTokenFn: (() => string | null) | null = null;
 
@@ -15,6 +18,10 @@ export function setTokenGetter(fn: () => string | null) {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  if (!API_BASE) {
+    throw new Error('API chưa được cấu hình: thiếu EXPO_PUBLIC_API_BASE_URL.');
+  }
+
   const token = getTokenFn?.();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

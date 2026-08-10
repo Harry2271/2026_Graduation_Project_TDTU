@@ -37,8 +37,13 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 |--------|------|---------------|
 | Watchdog | `modules/Watchdog.{h,cpp}` | Heartbeat tracking, mode transitions (SAFE/NAV/MANUAL) |
 | ObstacleAvoidance | `modules/ObstacleAvoidance.{h,cpp}` | LiDAR dodge logic, obstacle event processing |
+| AvoidanceFSM | `modules/AvoidanceFSM.{h,cpp}` | Stateful avoidance FSM: tracks dodge direction, cooldown, and timer |
 | WebServer | `modules/WebServer.{h,cpp}` | WiFi + WebSocket manual control with embedded HTML UI |
 | ModeManager | `modules/ModeManager.{h,cpp}` | Central state machine, routes commands to motor outputs |
+| AutoRoam | `modules/AutoRoam.{h,cpp}` | Autonomous roam + warehouse unload sequence (begin_dock → extend → hold → retract → leave) |
+| HealthMonitor | `modules/HealthMonitor.{h,cpp}` | Periodic self-checks, health report JSON, uptime tracking |
+| JsonStatus | `modules/JsonStatus.{h,cpp}` | Assembles the full type-131 JSON status payload |
+| I2CBus | `modules/I2CBus.{h,cpp}` | Shared I2C bus manager (BNO055 + INA226 + VL53L0X) |
 
 ### Sensor Layer
 
@@ -48,12 +53,18 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 | INA226Sensor | `modules/INA226Sensor.{h,cpp}` | Bus voltage, shunt voltage, current, power, and battery SOC (0-100%) over I2C. 3S Li-ion voltage-to-SOC lookup with low/critical alerts. Type 133 @ 0.2Hz |
 | IRProximitySensor | `modules/IRProximitySensor.{h,cpp}` | 4× E18-D80NK digital IR proximity sensors (rear-left, rear-right, left, right). Debounced digital reads feeding ObstacleAvoidance. Type 135 on-demand |
 | SharpFrontSensor | `modules/SharpFrontSensor.{h,cpp}` | Sharp GP2Y0A21YK0F analog front distance sensor (10-80 cm). ADC oversampling, distance-to-obstacle mapping for close-range front detection. Type 136 on-demand |
+| VL53L0XSensor | `modules/VL53L0XSensor.{h,cpp}` | VL53L0X Time-of-Flight distance sensor (50-2000mm) over I2C. Used for cargo presence at dock. Reads mm distance and obstacle boolean. |
+| CargoSensor | `modules/CargoSensor.{h,cpp}` | Aggregates VL53L0X + cylinder state. Type 141 telemetry: `cargo=true` when an object is on the dock platform. |
+| CylinderActuator | `modules/CylinderActuator.{h,cpp}` | L298N H-Bridge controller for the electric cylinder (extend/retract/stop). Implements timed state transitions for `begin_dock` / `cancel_dock`. Emits type 140 state. |
 
 ### Communication
 
 | Module | File | Responsibility |
 |--------|------|---------------|
 | CommandParser | `modules/CommandParser.{h,cpp}` | JSON + ASCII command parsing from UART (Pi) and WebSocket |
+| BNO055_SPI | `modules/BNO055_SPI.{h,cpp}` | Low-level wire-mode I2C support for BNO055 (bypasses Wire library for 400kHz+ operation) |
+
+---
 
 ## System Modes
 

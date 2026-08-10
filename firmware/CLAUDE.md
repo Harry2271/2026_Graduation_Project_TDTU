@@ -17,7 +17,7 @@ An autonomous warehouse logistics robot capable of:
 ┌─────────────────────────────────────────────────────────────────┐
 │                   RASPBERRY PI 5 (Main Computer)                │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  ROS2 Humble + Nav2 + slam_toolbox                      │   │
+│  │  ROS2 Jazzy + Nav2 + slam_toolbox                       │   │
 │  │  • SLAM Mapping (occupancy grid)                        │   │
 │  │  • Path Planning & Navigation                           │   │
 │  │  • QR Code Processing (webcam)                          │   │
@@ -93,6 +93,10 @@ An autonomous warehouse logistics robot capable of:
 | 5DOF Robotic Arm | 3× MG996R + 3× SG90 servos, ~40cm reach |
 | MCU-055 BNO055 | 9-axis accelerometer module (9DOF IMU), integrated with an intelligent sensor processor, supports I2C/UART communication |
 | Sharp GP2Y0A21YK0F | Analog infrared distance sensor (10-80cm range), used for close-range obstacle detection and redundancy backup |
+| VL53L0X TOF Sensor | Time-of-flight distance sensor (50–2000mm), I2C, used for cargo presence detection at dock |
+| INA226 (CJMCU-226) | High-accuracy I2C power monitor for bus voltage, shunt current, and calculated SOC |
+| L298N Motor Driver | Dual H-Bridge for the electric cylinder actuator (dock/unload sequence) |
+| 4× E18-D80NK IR Proximity | Digital IR obstacle sensors (rear-left, rear-right, left, right), debounced inputs for ObstacleAvoidance |
 
 ### Power System
 | Component | Detail |
@@ -101,6 +105,14 @@ An autonomous warehouse logistics robot capable of:
 | Battery (Planned) | 3S3P 18650 (11.1V nom / 12.6V full) with 40A BMS |
 | Regulation | Buck converters: 21V→12V (motors), 21V→5V (logic) |
 | INA226 (CJMCU-226) | Low-error current and voltage sensor, supports I2C communication (for power/battery voltage monitoring) |
+
+### Warehouse Dock / Cylinder System
+| Component | Detail |
+|-----------|--------|
+| L298N H-Bridge | Controls a 12V electric cylinder (extend/retract/stop) |
+| VL53L0X TOF | Mounted near the dock; measures distance to determine cargo presence at dock station |
+| CargoSensor | I2C digital sensor; `high` when cargo is on the dock platform |
+
 ---
 
 ## Pin Mapping — ESP32-S3-WROOM-1U-N16R8
@@ -152,15 +164,26 @@ UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 
 | JSON Command | Description |
 |-------------|-------------|
+| `{"cmd":"move","vx":100,"vy":0,"omega":0}` | Mecanum velocity (PWM units) |
 | `{"cmd":"set_speed","motor_id":0,"speed":150}` | Set individual motor speed (-255 to 255) |
 | `{"cmd":"set_all_speed","speeds":[100,100,100,100]}` | Set all 4 motor speeds simultaneously |
 | `{"cmd":"stop"}` | Stop all motors (brake) |
-| `{"cmd":"e_stop"}` | Emergency stop (disables all drivers) |
+| `{"cmd":"e_stop"}` / `{"cmd":"e_stop_clear"}` | Emergency stop / clear e-stop |
+| `{"cmd":"heartbeat"}` | Reset watchdog timer (must send within 2s) |
 | `{"cmd":"get_encoder"}` | Request encoder data (counts + RPM) |
 | `{"cmd":"reset_encoder","motor_id":-1}` | Reset encoder counter (-1 = all) |
 | `{"cmd":"set_pid","motor_id":0,"kp":1.0,"ki":0.1,"kd":0.01}` | Set PID gains for a motor |
 | `{"cmd":"get_imu"}` | Request IMU heading (response type 134) |
 | `{"cmd":"get_power"}` | Request power telemetry (response type 133) |
+| `{"cmd":"cylinder_extend"}` | Extend electric cylinder (dock) |
+| `{"cmd":"cylinder_retract"}` | Retract electric cylinder |
+| `{"cmd":"cylinder_stop"}` | Stop cylinder immediately |
+| `{"cmd":"begin_dock"}` | Start full docking sequence (firmware state machine) |
+| `{"cmd":"cancel_dock"}` | Cancel docking sequence |
+| `{"cmd":"obstacle_left"}` | LiDAR dodge left |
+| `{"cmd":"obstacle_right"}` | LiDAR dodge right |
+| `{"cmd":"obstacle_front"}` | LiDAR dodge forward |
+| `{"cmd":"obstacle_clear"}` | Path is clear |
 
 ### Protocol — ESP32-S3 → Raspberry Pi 5 (Responses)
 
@@ -170,8 +193,13 @@ UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 | `{"type":129,"data":{"error":"..."}}` | ERROR | Error message |
 | `{"type":130,"data":{"encoders":[{...}]}}` | ENCODER | Encoder data for all 4 motors |
 | `{"type":131,"data":{...}}` | STATUS | Status telemetry |
-| `{"type":133,"data":{"bus_v":...,"current_a":...,"power_w":...}}` | POWER | Battery/power telemetry (INA226) |
+| `{"type":132,"data":{"seq":N,"status":"accepted"}}` | MOVE ACK | Ack for move commands with sequence ID |
+| `{"type":133,"data":{"bus_v":...,"current_a":...,"power_w":...,"soc_pct":...}}` | POWER | Battery/power telemetry (INA226 + SOC) — 0.2 Hz |
 | `{"type":134,"data":{"yaw":...,"pitch":...,"roll":...,"temp":...,"cal":{...}}}` | IMU | IMU heading (BNO055) — published at 20 Hz |
+| `{"type":135,"data":{"ir":[false,false,false,false]}}` | IR PROX | IR proximity sensor state (4× digital) |
+| `{"type":136,"data":{"distance_mm":...,"obstacle":true}}` | SHARP | Front distance sensor (Sharp GP2Y0A21YK0F) |
+| `{"type":140,"data":{"state":N,"error":false}}` | UNLOAD | Cylinder/unload sequence state (0=idle, 1=adjusting, 2=extending, 3=holding, 4=retracting, 5=done, 6=leave) |
+| `{"type":141,"data":{"cargo":true}}` | CARGO | VL53L0X cargo sensor status (true = cargo present) |
 
 ### Alternative Command Protocol (Simple Serial)
 
@@ -373,28 +401,54 @@ else:
 ## Project Structure
 
 ```
-project-root/
-├── AI/
-│   ├── esp32 connect/              # Initial ESP32 + Pi integration
-│   │   ├── esp32-s3-firmware/      # Basic motor control firmware
-│   │   └── raspberry-pi/           # Pi-side Python controller + LiDAR
-│   ├── ESP32S3/                    # ESP32 mecanum car firmware
-│   ├── esp32s3_full 4 driver_4 motor/  # Full 4-motor firmware with PID/calibration
-│   │   ├── include/                # Header files (config, drivers, encoders, PID)
-│   │   ├── src/                    # Source files
-│   │   ├── pc_control/             # PC monitor + test suite
-│   │   └── docs/                   # Wiring diagrams, power analysis
-│   ├── Final/                      # Consolidated final version
-│   │   ├── ESp32/                  # ESP32 firmware with OLED + ROS2 UART
-│   │   └── RASPBERRY PI 5/         # Pi 5 code (Lidar, mecanum robot)
-│   │       ├── Lidar/              # ROS2 LiDAR obstacle detection
-│   │       └── mecanum_robot/      # Robot driver + navigation
-│   ├── ESP32S3 test cánh tay/     # Robotic arm integration
-│   └── test motor/                 # Motor testing (BTS7960, PID, WiFi/BT)
-├── esp32-mecanum-fw/               # Alternative firmware with Web UI
-├── robot-controller/               # ROS2 package (SLAM, mapping)
-├── LIdar/                          # LiDAR testing scripts
-└── CLAUDE.md                       # This file
+firmware/
+├── include/
+│   ├── config.h                    # Pin definitions, PID defaults, motor specs
+│   ├── modules/
+│   │   ├── BNO055Sensor.h
+│   │   ├── INA226Sensor.h
+│   │   ├── IRProximitySensor.h
+│   │   ├── SharpFrontSensor.h
+│   │   ├── VL53L0XSensor.h
+│   │   ├── CargoSensor.h
+│   │   ├── CylinderActuator.h
+│   │   ├── HealthMonitor.h
+│   │   └── ...
+│   ├── BTS7960Driver.h
+│   ├── Encoder.h
+│   ├── PIDController.h
+│   ├── MecanumDrive.h
+│   ├── ModeManager.h
+│   ├── Watchdog.h
+│   └── CommandParser.h
+├── src/
+│   ├── main.cpp                    # setup() + loop(), module init, UART read/write
+│   ├── drivers/
+│   │   ├── bno055_wire_support.cpp # Low-level I2C for BNO055 wire-mode
+│   │   └── driver_ina226_interface.cpp # INA226 I2C register read
+│   └── modules/
+│       ├── BTS7960Driver.cpp
+│       ├── Encoder.cpp
+│       ├── PIDController.cpp
+│       ├── MecanumDrive.cpp
+│       ├── ModeManager.cpp
+│       ├── Watchdog.cpp
+│       ├── CommandParser.cpp
+│       ├── ObstacleAvoidance.cpp
+│       ├── AvoidanceFSM.cpp
+│       ├── AutoRoam.cpp
+│       ├── BNO055Sensor.cpp
+│       ├── INA226Sensor.cpp
+│       ├── IRProximitySensor.cpp
+│       ├── SharpFrontSensor.cpp
+│       ├── VL53L0XSensor.cpp
+│       ├── CargoSensor.cpp
+│       ├── CylinderActuator.cpp
+│       ├── I2CBus.cpp
+│       ├── HealthMonitor.cpp
+│       └── JsonStatus.cpp
+├── platformio.ini
+└── CLAUDE.md
 ```
 
 ---

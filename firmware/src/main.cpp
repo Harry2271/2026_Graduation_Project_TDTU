@@ -78,10 +78,13 @@ ObstacleAvoidance g_obstacle;
 // obstacle while the obstacle is present.
 static bool g_local_obstacle_stop = false;
 
-// Kick-start boost: applies extra PWM for first few ticks when motor starts
-#define KICK_BOOST_PWM     255     // Extra PWM to overcome static friction
-#define KICK_BOOST_TICKS   15      // Number of PID ticks (~300ms at 50Hz)
+// Kick-start boost constants live in config.h (single source of truth).
 int8_t g_kick_ticks[4] = {0, 0, 0, 0};
+
+// PID timing globals (used by both loop() and applySpeeds())
+static uint32_t g_last_pid_ms = 0;
+static uint32_t g_pid_dt_us   = 0;   // real elapsed PID interval (μs) for applySpeeds
+int16_t g_prev_target_for_kick[4] = {0, 0, 0, 0};
 
 // Direct motor test mode (bypasses PID + ramp, for hardware debugging)
 bool g_raw_test_mode = false;
@@ -375,11 +378,13 @@ void applySpeeds()
     }
 
     for (int i = 0; i < MOTOR_COUNT; i++) {
-        // Detect motor start: was stopped, now has a target
-        // Guard: only kick if no kick already active (prevents re-trigger on direction change)
-        if (g_ramped_speeds[i] == 0 && g_target_speeds[i] != 0 && g_kick_ticks[i] == 0) {
+        // Detect motor start: target transitions from 0 → non-zero.
+        // Track *target* (not ramped) so we only kick on genuine starts,
+        // not on every ramp-crossing-zero during direction changes.
+        if (g_prev_target_for_kick[i] == 0 && g_target_speeds[i] != 0 && g_kick_ticks[i] == 0) {
             g_kick_ticks[i] = KICK_BOOST_TICKS;
         }
+        g_prev_target_for_kick[i] = g_target_speeds[i];
 
         // Ramp toward target
         int16_t diff = g_target_speeds[i] - g_ramped_speeds[i];
@@ -394,25 +399,29 @@ void applySpeeds()
         float scale = g_max_speed_pct / 100.0f;
         int16_t limited = (int16_t)(g_ramped_speeds[i] * scale);
 
-        // Apply kick-start boost for first KICK_BOOST_TICKS after motor starts
-        if (g_kick_ticks[i] > 0) {
-            int16_t boost = (limited > 0) ? KICK_BOOST_PWM : -KICK_BOOST_PWM;
-            limited += boost;
-            limited = constrain(limited, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
-            g_kick_ticks[i]--;
-        }
-
         float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_MAX_DUTY);
 
         if (g_pid_enabled) {
-            // Use absolute encoder RPM so PID behaves identically for all
-            // motors regardless of dir.  Previously dir=-1 motors (FR/RR)
-            // saw a large phantom error and saturated, while dir=+1 motors
-            // (FL/RL) oscillated.  fabsf normalises both paths.
-            float actual_rpm = fabsf(g_encoders[i].getFilteredRPM());
-            int16_t correction = g_pid[i].compute(target_rpm, actual_rpm, PID_UPDATE_MS * 1000);
+            // Sign the measurement with the motor's hardware direction so the
+            // PID matches the wheel's physical rotation, not the encoder's
+            // raw polarity.  fabsf() previously destroyed this and let a
+            // mis-wired motor track the encoder while moving the chassis
+            // in the opposite direction.
+            float actual_rpm = g_encoders[i].getFilteredRPM() * (float)MOTOR_PINS[i].dir;
+            int16_t correction = g_pid[i].compute(target_rpm, actual_rpm, g_pid_dt_us);
             int16_t final_pwm = limited + correction;
             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
+
+            // Kick-start boost: applied AFTER the PID output, on top of the
+            // saturated final_pwm, with the same ±MOTOR_MAX_DUTY cap.  This
+            // keeps the boost independent of the PID target so the boost
+            // does not fight the controller during the first 300 ms.
+            if (g_kick_ticks[i] > 0) {
+                int16_t boost = (limited > 0) ? KICK_BOOST_PWM : -KICK_BOOST_PWM;
+                final_pwm = constrain(final_pwm + boost, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
+                g_kick_ticks[i]--;
+            }
+
             int16_t motor_cmd = final_pwm * MOTOR_PINS[i].dir;
             g_motors[i].setSpeed(motor_cmd);
 
@@ -472,10 +481,11 @@ void handleStop()
 
 void handleEStop()
 {
-    // Converted to soft stop — e-stop hardware latch disabled per
-    // operator decision. Drivers remain enabled, PWM goes to 0.
-    g_e_stop_active = false;
-    g_pid_enabled   = true;
+    // CRITICAL safety path — hardware disable of BTS7960 drivers.
+    // Pulls EN pin LOW on every driver so no PWM can produce torque,
+    // even if the firmware later writes PWM by mistake.
+    g_e_stop_active = true;
+    g_pid_enabled   = false;
     g_nav_vx    = 0;
     g_nav_vy    = 0;
     g_nav_omega = 0;
@@ -483,10 +493,11 @@ void handleEStop()
         g_target_speeds[i] = 0;
         g_ramped_speeds[i] = 0;
         g_kick_ticks[i] = 0;
-        g_motors[i].coast();
-        g_motors[i].enable();
+        // emergencyStop() pulls EN LOW and zeros PWM. Disarms until
+        // an explicit handleEStopClear() re-arms the drivers.
+        g_motors[i].emergencyStop();
     }
-    PiSerial.println("ACK: stop-soft (was E-STOP)");
+    PiSerial.println("ACK: E-STOP (hardware disabled)");
 }
 
 void handleEStopClear()
@@ -1077,7 +1088,6 @@ void setup()
     Serial.println();
 }
 
-static uint32_t g_last_pid_ms = 0;
 
 // ========================================================================
 // Poll IR + Sharp sensors → feed ObstacleAvoidance
@@ -1085,6 +1095,8 @@ static uint32_t g_last_pid_ms = 0;
 void pollLocalSensors(uint32_t now)
 {
     // ---- IR proximity sensors: debounce + always report current state ----
+    // `update` returns true only when a sensor pin changed; a stable reading
+    // also counts as a successful poll, so we always reportOk after the call.
     g_ir.update(now);
     g_health.reportOk(MOD_IR, now);
     {
@@ -1179,12 +1191,14 @@ void pollLocalSensors(uint32_t now)
     }
     if (enc_ok || !any_target) g_health.reportOk(MOD_ENCODERS, now);
 
-    // ---- Pi link health — only report if we actually checked recently ----
-    // Watchdog last_serial_activity is updated in readSerial().
-    if (now > 4000 && (now - g_modeManager.getLastSerialActivityMs()) < 4000) {
+    // ---- Pi link health — aligned with HEARTBEAT_TIMEOUT_MS ----
+    // The firmware watchdog transitions to AUTO_ROAM at 2 s; the health
+    // report should agree.  Report OK when the last serial activity is
+    // younger than the timeout; report stale otherwise.
+    const uint32_t pi_link_window_ms = HEARTBEAT_TIMEOUT_MS + 500;
+    if (now > 1000 && (now - g_modeManager.getLastSerialActivityMs()) < pi_link_window_ms) {
         g_health.reportOk(MOD_Pi_LINK, now);
-    } else if (now > 5000) {
-        // No activity for 5+ seconds — report stale
+    } else if (now > pi_link_window_ms) {
         g_health.reportError(MOD_Pi_LINK, 1, now);
     }
 }
@@ -1268,8 +1282,14 @@ void loop()
     g_health.reportOk(MOD_CYLINDER, now);
 
     if (now - g_last_pid_ms >= PID_UPDATE_MS) {
+        // Use the *measured* dt (capped) so the PID integrator and D-term
+        // see the actual elapsed time.  Without this, a single delayed
+        // loop iteration (Wire recovery, etc.) makes dt_us a lie and the
+        // controller integrates at the wrong rate.
         uint32_t dt = now - g_last_pid_ms;
+        if (dt > 100) dt = PID_UPDATE_MS;   // clamp first-tick / stall gaps
         uint32_t dt_us = dt * 1000;
+        g_pid_dt_us = dt_us;                // visible to applySpeeds
         g_last_pid_ms = now;
 
         for (int i = 0; i < MOTOR_COUNT; i++) {
