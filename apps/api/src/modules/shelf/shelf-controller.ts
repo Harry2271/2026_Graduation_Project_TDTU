@@ -79,7 +79,6 @@ export class ShelfController {
     @Body() dto: MovePackageDto,
   ): Promise<{ jobId: string }> {
     return this.jobService.dispatchMove({
-      fromSlotCode: slotCode.toUpperCase(),
       toSlotCode: dto.targetSlotCode.toUpperCase(),
     });
   }

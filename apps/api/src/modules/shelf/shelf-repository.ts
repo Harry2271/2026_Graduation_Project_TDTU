@@ -128,10 +128,16 @@ export class ShelfRepository implements IShelfRepository {
     const ops = entries.map((e) => ({
       updateOne: {
         filter: { code: e.slotCode },
-        update: { $set: { slotX: e.slotX, slotY: e.slotY, facingTheta: e.facingTheta } },
+        update: {
+          $set: {
+            slotX: e.slotX,
+            slotY: e.slotY,
+            facingTheta: e.facingTheta ?? undefined,
+          },
+        },
       },
     }));
-    await this.shelfSlotModel.bulkWrite(ops, { ordered: false }).exec();
+    await this.shelfSlotModel.bulkWrite(ops, { ordered: false });
   }
 
   async reserveSlotIfAvailable(slotCode: string): Promise<ShelfSlot | null> {
