@@ -53,6 +53,19 @@ export default function AuthenticatedLayout() {
           }}
         />
         <Tabs.Screen
+          name="map"
+          options={{
+            title: 'Bản đồ',
+            tabBarIcon: ({ color, size }) => (
+              <SymbolView
+                name={{ ios: 'location.viewfinder', android: 'radar', web: 'radar' }}
+                size={size}
+                tintColor={color}
+              />
+            ),
+          }}
+        />
+        <Tabs.Screen
           name="stats"
           options={{
             title: 'Thống kê',

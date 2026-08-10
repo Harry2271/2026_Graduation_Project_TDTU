@@ -162,8 +162,20 @@ void setupHardware()
     Serial.printf("  [INIT] I2C bus SDA=GPIO%d SCL=GPIO%d @ %u kHz...\n",
                   BNO055_SDA_PIN, BNO055_SCL_PIN,
                   BNO055_I2C_FREQ_HZ / 1000);
-    // Enable the ESP32's internal weak pull-ups as a diagnostic fallback
-    // for a bare CJMCU-055 bus.  External 2.2k-4.7k pull-ups are required
+
+    // ── Pull-up diagnostic — read SDA/SCL BEFORE Wire.begin() ──
+    // If external 4.7kΩ pull-ups are soldered correctly, both pins read HIGH
+    // even with internal pull-up disabled. If pull-up is missing/broken, both
+    // pins read LOW (no pull-up source). Print BEFORE Wire takes over.
+    pinMode(BNO055_SDA_PIN, INPUT);
+    pinMode(BNO055_SCL_PIN, INPUT);
+    delayMicroseconds(10);
+    int sda_raw = digitalRead(BNO055_SDA_PIN);
+    int scl_raw = digitalRead(BNO055_SCL_PIN);
+    Serial.printf("  [DIAG] SDA=%d SCL=%d (no internal pullup — test your external 4.7kΩ)\n",
+                  sda_raw, scl_raw);
+
+    // Now enable internal pull-up as fallback. External pull-up is required
     // for reliable operation with multiple devices or long wires.
     pinMode(BNO055_SDA_PIN, INPUT_PULLUP);
     pinMode(BNO055_SCL_PIN, INPUT_PULLUP);
