@@ -434,12 +434,18 @@ class MapCanvas(QWidget):
 
         # ── LiDAR scan in world frame ─────────────────────────────────────
         stale = (time.monotonic() - self.state.scan_ts) > 8.0
-        if self.state.scan_points and not stale and self.state.pose:
-            px = float(self.state.pose.get('x', 0))
-            py = float(self.state.pose.get('y', 0))
-            th = float(self.state.pose.get('theta', 0))
+        # Scan points are robot-frame.  Pose is normally available, but keep
+        # rendering around the map origin while TF is temporarily unavailable
+        # so the operator can still see that LiDAR data is arriving.
+        if self.state.scan_points and not stale:
+            if self.state.pose:
+                px = float(self.state.pose.get('x', 0))
+                py = float(self.state.pose.get('y', 0))
+                th = float(self.state.pose.get('theta', 0))
+            else:
+                px, py, th = 0.0, 0.0, 0.0
             ct, st = math.cos(th), math.sin(th)
-            step = max(1, len(self.state.scan_points) // 360)
+            step = max(1, len(self.state.scan_points) // 720)
             p.setPen(QPen(QColor('#00d4ff'), 1.5))
             for i in range(0, len(self.state.scan_points), step):
                 lx, ly = self.state.scan_points[i]
@@ -449,7 +455,7 @@ class MapCanvas(QWidget):
                 if 0 <= sx <= W and 0 <= sy <= H:
                     p.drawEllipse(int(sx) - 1, int(sy) - 1, 2, 2)
 
-        # ── Waypoints ─────────────────────────────────────────────────────
+        # ── Waypoints + AprilTag zones ──────────────────────────────────────
         nav_goal = self.state.nav_goal or {}
         nav_label = nav_goal.get('label', '')
         next_id = -1
@@ -463,16 +469,57 @@ class MapCanvas(QWidget):
                 is_nav = nav_label in (str(wp.get('label', '')),
                                        f'survey-wp-{wp_id}')
                 is_next = self.state.survey_running and wp_id == next_id
+                is_warehouse = wp.get('kind') == 'warehouse'
+                tag_id = wp.get('tag_id', 0)
+                # A warehouse is "detected" if its tag_id appears in detected_tags
+                tag_detected = is_warehouse and tag_id and tag_id in self.state.detected_tags
                 is_detected = wp_id in self.state.detected_tags
+
                 # Fill color
                 if is_next:
                     fill = QColor('#ff8800')
                 elif is_nav:
                     fill = QColor('#ffdd00')
+                elif tag_detected:
+                    fill = QColor('#00ff88')
                 elif is_detected:
                     fill = QColor('#00ff88')
                 else:
                     fill = QColor('#00d4ff')
+
+                # ── AprilTag warehouse zone (prominent when detected) ──
+                if tag_detected:
+                    # Outer detection zone — large cyan ring
+                    p.setPen(QPen(QColor('#00d4ff'), 2.5))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    r_zone = int(28 * ppm / 10)
+                    p.drawEllipse(int(sx) - r_zone, int(sy) - r_zone,
+                                  r_zone * 2, r_zone * 2)
+                    # Inner glow — green dashed ring
+                    p.setPen(QPen(QColor('#00ff88'), 1.5, Qt.PenStyle.DashLine))
+                    r_inner = int(20 * ppm / 10)
+                    p.drawEllipse(int(sx) - r_inner, int(sy) - r_inner,
+                                  r_inner * 2, r_inner * 2)
+                    # Tag ID label — bold, prominent
+                    p.setFont(QFont('Consolas', 10, QFont.Weight.Bold))
+                    p.setPen(QPen(QColor('#00ff88')))
+                    p.drawText(int(sx) + r_zone + 4, int(sy) + 4,
+                               f'🎯 #{tag_id}')
+
+                # ── Warehouse badge (always visible for warehouses) ─────
+                elif is_warehouse and tag_id:
+                    # Smaller detection zone — yellow ring for configured but undetected
+                    p.setPen(QPen(QColor('#886600'), 1.5, Qt.PenStyle.DashLine))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    r_zone = int(22 * ppm / 10)
+                    p.drawEllipse(int(sx) - r_zone, int(sy) - r_zone,
+                                  r_zone * 2, r_zone * 2)
+                    # Tag badge — yellow
+                    p.setFont(QFont('Consolas', 9, QFont.Weight.Bold))
+                    p.setPen(QPen(QColor('#ddaa00')))
+                    p.drawText(int(sx) + r_zone + 4, int(sy) + 4,
+                               f'📦 #{tag_id}')
+
                 # Glow rings
                 if is_nav:
                     p.setPen(QPen(QColor('#ffdd00'), 1, Qt.PenStyle.DashLine))
@@ -503,6 +550,32 @@ class MapCanvas(QWidget):
                 p.setPen(QPen(QColor('#ffffff')))
                 p.drawText(int(sx) + r + 3, int(sy) - r + 4,
                            str(wp.get('label', wp_id)))
+
+        # ── Unmatched detected tags (camera sees but no warehouse waypoint) ──
+        warehouse_tag_ids = {
+            wp.get('tag_id', 0)
+            for wp in (self.state.waypoints or [])
+            if wp.get('kind') == 'warehouse' and wp.get('tag_id', 0)
+        }
+        for t_id, t_data in (self.state.detected_tags or {}).items():
+            if t_id in warehouse_tag_ids:
+                continue  # already drawn above
+            # Place at robot pose (unknown world location) with a floating marker
+            if self.state.pose:
+                rpx = float(self.state.pose.get('x', 0))
+                rpy = float(self.state.pose.get('y', 0))
+            else:
+                rpx, rpy = 0.0, 0.0
+            sx, sy = self._world_to_screen(rpx, rpy)
+            # Small orange floating tag icon offset to avoid overlap
+            r_dot = int(6 * ppm / 10)
+            p.setPen(QPen(QColor('#ff6600'), 1.5))
+            p.setBrush(QColor('#ff880033'))
+            p.drawEllipse(int(sx) + 20, int(sy) - 20, r_dot * 2, r_dot * 2)
+            p.setFont(QFont('Consolas', 8, QFont.Weight.Bold))
+            p.setPen(QPen(QColor('#ff8800')))
+            p.drawText(int(sx) + 22, int(sy) - 20 + r_dot + 4,
+                       f'👁 #{t_id} (chưa map)')
 
         # ── Home marker ───────────────────────────────────────────────────
         if self.state.home_pose:

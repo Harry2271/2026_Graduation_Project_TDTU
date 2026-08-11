@@ -189,10 +189,13 @@ enum MotorState {
 #define BNO055_SPI_MOSI_PIN    4        // CONFLICTS with RL encoder CHA - DO NOT USE
 #define BNO055_SPI_CS_PIN      21       // CONFLICTS with RR encoder CHB - DO NOT USE
 #define BNO055_SPI_SPEED_HZ    1000000  // UNUSED - I2C mode only
-#define I2C_TRANSACTION_TIMEOUT_MS  50   // ms — keep a failing optional bus from stalling control
-#define I2C_DEVICE_RETRY_COUNT      3
-#define I2C_DEVICE_RETRY_DELAY_MS  100
-#define I2C_EXTERNAL_PULLUP_OHMS  4700  // Required on SDA/SCL for stable shared bus
+#define I2C_TRANSACTION_TIMEOUT_MS  100  // ms — controller transaction timeout
+#define I2C_READ_TIMEOUT_MS         100  // ms — bounded wait for requested bytes
+#define I2C_BOOT_SETTLE_MS          100  // ms — sensor/bus settle after first Wire.begin()
+#define I2C_RECOVERY_SETTLE_MS       50  // ms — settle after STOP + recovery init
+#define I2C_DEVICE_RETRY_COUNT        2  // initial probe plus one controlled recovery retry
+#define I2C_DEVICE_RETRY_DELAY_MS   100  // ms — delay before retrying after recovery
+#define I2C_EXTERNAL_PULLUP_OHMS    4700 // Required on SDA/SCL for stable shared bus
 #define IMU_PUBLISH_MS         50       // Publish heading at 20 Hz
 
 // ============================================================

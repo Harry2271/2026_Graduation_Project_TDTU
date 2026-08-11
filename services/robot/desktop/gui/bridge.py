@@ -8,6 +8,7 @@ import queue
 import socket
 import threading
 import time
+import urllib.parse
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal
@@ -25,6 +26,13 @@ RECONNECT_BACKOFF = (1.0, 2.0, 4.0, 8.0, 16.0)
 PING_INTERVAL = 5.0
 
 
+def resolve_token() -> str:
+    """Read WS auth token from environment (WS_AUTH_TOKEN → ROBOT_BRAIN_TOKEN)."""
+    import os
+    return (os.environ.get('WS_AUTH_TOKEN', '').strip()
+            or os.environ.get('ROBOT_BRAIN_TOKEN', '').strip())
+
+
 class BridgeClient(QThread):
     """WebSocket client running its asyncio loop outside the Qt GUI thread.
 
@@ -37,9 +45,10 @@ class BridgeClient(QThread):
     connection_changed = Signal(bool, str)
     log_message = Signal(str, bool)
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, auth_token: str = '') -> None:
         super().__init__()
         self.url = url
+        self.auth_token = auth_token
         self._stop = threading.Event()
         self._connected = threading.Event()
         self._outgoing: queue.Queue[dict] = queue.Queue(maxsize=100)
@@ -51,9 +60,14 @@ class BridgeClient(QThread):
         attempt = 0
         while not self._stop.is_set():
             try:
+                # Append auth token to URL when present.
+                connect_url = self.url
+                if self.auth_token and 'token=' not in connect_url:
+                    sep = '&' if '?' in connect_url else '?'
+                    connect_url = f'{connect_url}{sep}token={urllib.parse.quote(self.auth_token)}'
                 self.log_message.emit(f'WS connecting {self.url}', False)
                 async with websockets.connect(
-                    self.url, ping_interval=None, open_timeout=5.0,
+                    connect_url, ping_interval=None, open_timeout=5.0,
                     close_timeout=1.0,
                 ) as ws:
                     attempt = 0

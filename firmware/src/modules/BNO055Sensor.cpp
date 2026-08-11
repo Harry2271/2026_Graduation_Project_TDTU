@@ -1,5 +1,4 @@
 #include "BNO055Sensor.h"
-#include "BNO055_SPI.h"
 #include "config.h"
 #include "I2CBus.h"
 #include <Arduino.h>
@@ -122,47 +121,43 @@ bool BNO055Sensor::begin(uint8_t address)
     addr_ = address;
     operational_ = false;
 
-    Serial.println("[BNO055] Init — trying SPI first, then I2C fallback...");
+    // I2C-only mode. config.h marks BNO055 SPI pins (GPIO 4/15/21/36) as
+    // CONFLICTS with motor PWM and encoder inputs — attempting SPI would
+    // corrupt motor output and encoder reads. The Pololu VL53L0X library
+    // and INA226 LibDriver both live on the shared I2C bus (GPIO10/11).
+    Serial.println("[BNO055] Init — I2C only (GPIO10 SDA / GPIO11 SCL @ 100 kHz)...");
 
     // Bosch datasheet: 650 ms power-on delay before first transaction
     delay(650);
 
-    bool probe_ok = false;
-
-    // ── 1. Attempt SPI ──
-    if (BNO055_SPI_init(addr_)) {
-        Serial.println("[BNO055] SPI ready — using SPI mode");
-        probe_ok = true;
-    }
-    // ── 2. SPI failed → fallback I2C ──
-    else if (I2CBus::probeWithRecovery(BNO055_SDA_PIN, BNO055_SCL_PIN,
-                                       addr_, BNO055_I2C_FREQ_HZ)) {
-        Serial.println("[BNO055] I2C ready — using I2C fallback");
-        probe_ok = true;
-
-        // Verify chip ID via I2C
-        uint8_t chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
-        if (chipId != BNO055_CHIP_ID_VALUE) {
-            delay(1000);
-            chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
-        }
-        if (chipId != BNO055_CHIP_ID_VALUE) {
-            Serial.println("[BNO055] I2C chip ID wrong — module damaged");
-            return false;
-        }
-    }
-    else {
-        Serial.println("[BNO055] FAILED: neither SPI nor I2C available");
-        Serial.println("[BNO055] SPI checklist:");
-        Serial.println("[BNO055]   PS1 = HIGH (3.3V), PS0 = LOW or floating");
-        Serial.println("[BNO055]   SDO/SDA → GPIO36 (MISO), SDA/SDI → GPIO4 (MOSI)");
-        Serial.println("[BNO055]   SCL/SCK → GPIO15 (SCK), CS → GPIO21");
+    // ── Probe I2C with bus recovery ──
+    // Returns 0 on ACK, nonzero on error — must test != 0, not !result.
+    int probe_err = I2CBus::probeWithRecovery(BNO055_SDA_PIN, BNO055_SCL_PIN,
+                                               addr_, BNO055_I2C_FREQ_HZ);
+    if (probe_err != 0) {
+        Serial.printf("[BNO055] FAILED: no ACK on I2C at 0x%02X (%s)\n",
+                      addr_, I2CBus::errorName(probe_err));
         Serial.println("[BNO055] I2C checklist:");
         Serial.println("[BNO055]   SDA = GPIO10, SCL = GPIO11");
-        Serial.println("[BNO055]   ADR = GND (0x28), PS1 = LOW (I2C mode)");
-        Serial.println("[BNO055]   Pull-ups 2.2k-4.7k on SDA/SCL to 3.3V");
+        Serial.println("[BNO055]   ADR = GND (0x28), PS0/PS1 = LOW (I2C mode)");
+        Serial.println("[BNO055]   3.3V power, common GND with ESP32");
+        Serial.println("[BNO055]   4.7kΩ pull-ups on SDA/SCL to 3.3V");
         return false;
     }
+
+    Serial.println("[BNO055] I2C ACK — verifying chip ID...");
+
+    // Verify chip ID via I2C
+    uint8_t chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
+    if (chipId != BNO055_CHIP_ID_VALUE) {
+        delay(1000);
+        chipId = readReg(addr_, BNO055_CHIP_ID_ADDR);
+    }
+    if (chipId != BNO055_CHIP_ID_VALUE) {
+        Serial.printf("[BNO055] I2C chip ID wrong (got 0x%02X, expected 0xA0)\n", chipId);
+        return false;
+    }
+    Serial.printf("[BNO055] Chip ID OK: 0x%02X\n", chipId);
 
     // ── 3. CONFIG mode + set axis remap ──
     uint8_t mode = readReg(addr_, BNO055_OPR_MODE_ADDR);

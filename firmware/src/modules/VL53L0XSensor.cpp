@@ -22,31 +22,36 @@ VL53L0XSensor::VL53L0XSensor()
 
 bool VL53L0XSensor::begin()
 {
-    // Probe with bus-idle guard + retry + auto bus-reset on NACK.
-    if (!I2CBus::probeWithRecovery(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN,
-                                    VL53L0X_I2C_ADDR, VL53L0X_I2C_FREQ_HZ)) {
-        Serial.printf("  [WARN] VL53L0X no ACK at 0x%02X after %d retries — sensor absent\n",
-                      VL53L0X_I2C_ADDR, I2C_DEVICE_RETRY_COUNT);
+    // Probe with bus-idle guard + controlled recovery retry on timeout.
+    // NACK (err=2) returns immediately — no bus reset, since that would
+    // disrupt the BNO055 and INA226 sitting on the same bus.
+    int probe_err = I2CBus::probeWithRecovery(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN,
+                                               VL53L0X_I2C_ADDR, VL53L0X_I2C_FREQ_HZ);
+    if (probe_err != 0) {
+        Serial.printf("  [WARN] VL53L0X %s at 0x%02X — sensor absent\n",
+                      I2CBus::errorName(probe_err), VL53L0X_I2C_ADDR);
         return false;
     }
     Serial.printf("  [OK]   VL53L0X ACK at 0x%02X\n", VL53L0X_I2C_ADDR);
 
     sensor_ = new VL53L0X();
     sensor_->setBus(&Wire);
+    // Bound the Pololu library's internal read timeout so a flaky bus
+    // cannot stall the loop. Mirrors Wire.setTimeout().
+    sensor_->setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
 
-    // Pololu init can also hang on ESP32 if the bus is flaky — retry
-    // up to I2C_DEVICE_RETRY_COUNT times with a fresh bus reset between.
+    // Pololu init can hang on ESP32 if the bus is flaky — retry up to
+    // I2C_DEVICE_RETRY_COUNT times with a centralized bus recovery
+    // between attempts. Only triggers a real recovery when init() fails
+    // (which means the bus is misbehaving), never on simple missing sensor.
     bool init_ok = false;
     for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; attempt++) {
         if (sensor_->init()) { init_ok = true; break; }
         Serial.printf("  [WARN] VL53L0X init attempt %d failed\n", attempt + 1);
-        I2CBus::busReset(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN);
-        delay(I2C_DEVICE_RETRY_DELAY_MS);
-        // Re-init the device after bus reset (VL53L0X loses its config)
-        Wire.begin(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN);
-        Wire.setClock(VL53L0X_I2C_FREQ_HZ);
-        Wire.setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+        I2CBus::reinitializeBus(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN, VL53L0X_I2C_FREQ_HZ);
         sensor_->setBus(&Wire);
+        sensor_->setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+        delay(I2C_DEVICE_RETRY_DELAY_MS);
     }
     if (!init_ok) {
         Serial.println("  [WARN] VL53L0X init failed — sensor disabled");

@@ -738,13 +738,11 @@ class WSServer:
             print(f'[WS] - {addr}')
 
     async def broadcast_loop(self) -> None:
+        loop = asyncio.get_running_loop()
         while self.running:
-            batch = []
-            while True:
-                try:
-                    batch.append(self.msg_q.get_nowait())
-                except queue.Empty:
-                    break
+            # Drain the queue in a thread so we never block the async event loop.
+            batch: list[dict] = await loop.run_in_executor(
+                None, self._drain_queue)
             if batch and self.clients:
                 for ws in list(self.clients):
                     for m in batch:
@@ -757,6 +755,16 @@ class WSServer:
                         except Exception:
                             self.clients.discard(ws)
             await asyncio.sleep(0.05)
+
+    def _drain_queue(self) -> list[dict]:
+        """Synchronously drain all messages from msg_q (runs in executor)."""
+        items: list[dict] = []
+        while True:
+            try:
+                items.append(self.msg_q.get_nowait())
+            except queue.Empty:
+                break
+        return items
 
     async def run(self) -> None:
         import websockets
@@ -805,8 +813,14 @@ class WSServer:
             if provided and hmac.compare_digest(provided, expected_token):
                 return None  # accept
 
-            print(f'[WS] + rejected {addr} — invalid or missing token',
-                  file=sys.stderr)
+            # Debug: show first/last 4 chars of both tokens to diagnose mismatch.
+            def _tok_hint(t: str) -> str:
+                return f'{t[:4]}…{t[-4:]}' if len(t) > 8 else repr(t)
+            print(
+                f'[WS] + rejected {addr} — token mismatch '
+                f'(got={_tok_hint(provided or "")} expected={_tok_hint(expected_token)})',
+                file=sys.stderr,
+            )
             return _unauthorized('invalid or missing auth token')
 
         async with websockets.serve(

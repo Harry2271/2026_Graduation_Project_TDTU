@@ -43,7 +43,7 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 | AutoRoam | `modules/AutoRoam.{h,cpp}` | Autonomous roam + warehouse unload sequence (begin_dock → extend → hold → retract → leave) |
 | HealthMonitor | `modules/HealthMonitor.{h,cpp}` | Periodic self-checks, health report JSON, uptime tracking |
 | JsonStatus | `modules/JsonStatus.{h,cpp}` | Assembles the full type-131 JSON status payload |
-| I2CBus | `modules/I2CBus.{h,cpp}` | Shared I2C bus manager (BNO055 + INA226 + VL53L0X) |
+| I2CBus | `modules/I2CBus.{h,cpp}` | Shared I2C bus manager (BNO055 + INA226 + VL53L0X). Owns Wire bring-up, 9-clock+STOP bus reset, `linesIdle()` guard, `probe()`/`probeWithRecovery()`, and safe read/write wrappers. All I²C traffic must go through this layer — direct `Wire.*` calls on the shared GPIO10/11 bus risk detaching the peripheral and freezing `Wire.endTransmission()`. |
 
 ### Sensor Layer
 
@@ -62,7 +62,7 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 | Module | File | Responsibility |
 |--------|------|---------------|
 | CommandParser | `modules/CommandParser.{h,cpp}` | JSON + ASCII command parsing from UART (Pi) and WebSocket |
-| BNO055_SPI | `modules/BNO055_SPI.{h,cpp}` | Low-level wire-mode I2C support for BNO055 (bypasses Wire library for 400kHz+ operation) |
+| BNO055_SPI | `modules/BNO055_SPI.{h,cpp}` | **DEPRECATED — not used.** Software SPI bit-bang driver for BNO055. Originally planned for faster clock, but SPI pins (GPIO 4/15/21) conflict with motor PWM and encoder inputs. `BNO055Sensor.cpp` uses `I2CBus` instead. Kept for archival; not compiled into `main.cpp`. |
 
 ---
 

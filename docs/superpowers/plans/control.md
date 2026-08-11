@@ -167,6 +167,27 @@ filter: EMA alpha = 0.3
 | VL53L0X | 0x29 | 100 kHz | distance_mm (rear, 30–2000 mm) | Unload alignment (target 40 mm) |
 | INA226 | 0x40 | 100 kHz | voltage, current, power | Battery SOC, low-battery e-stop |
 
+### I2C bus management — `I2CBus` module
+
+All I²C traffic on GPIO10/11 **must** go through `I2CBus` (`src/modules/I2CBus.{h,cpp}`).
+Direct `Wire.*` calls on the shared bus risk:
+- Detaching the GPIO matrix from the I²C peripheral (calling `pinMode()` after `Wire.begin()`)
+- Leaving the bus in a stuck state (slave holds SDA low, `endTransmission()` blocks forever)
+
+**Boot sequence:**
+1. `I2CBus::initialize(SDA, SCL, 100000)` — first-time `Wire.begin()` (no `Wire.end()` first — matches proven test project behavior)
+2. `I2CBus::probe()` — returns raw Wire error code (0 = ACK, 2 = NACK, 5 = timeout)
+3. Sensor `begin()` methods call `I2CBus::probeWithRecovery()` — always performs ONE full bus recovery on first failure, then retries
+4. Runtime reads use `I2CBus::safeReadReg/safeReadBurst/safeWriteReg` — check `linesIdle()` before every transaction
+
+**Bus recovery (`reinitializeBus()`):**
+1. `busReset()` — 9-clock SCL pulses + STOP condition (SDA LOW → HIGH while SCL HIGH)
+2. `Wire.end()` — detach peripheral
+3. `Wire.begin()` + `setClock()` + `setTimeout()` — reattach
+4. Verify both lines read HIGH (`linesIdle()`)
+
+**Return value convention:** `probe()` and `probeWithRecovery()` return `int` (Wire error code, **0 = success**). Always check with `!= 0`, never with `!result` (the `!` operator inverts 0 to true, treating success as failure).
+
 ### I2C bus requirements
 - **External pull-ups: REQUIRED** — ESP32-S3 internal (~45 kΩ) are too weak for 3 devices
 - Pull 2.2 kΩ–4.7 kΩ from SDA → 3.3V and SCL → 3.3V (one pair, shared)
@@ -191,6 +212,19 @@ ESP32-S3 3.3V (internal regulator)
 ```
 
 **INA226 note:** The INA226 shunt resistor must be wired IN SERIES with the load (between VIN+ and VIN−). If VIN+/VIN− are shorted or not connected to the actual power rail, the current reading will show a false offset (~8 A ghost current). Firmware now checks `bus_voltage < 0.05 V` and reports 0/0 in that case.
+
+---
+
+### I2C timing constants (`config.h`)
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `I2C_TRANSACTION_TIMEOUT_MS` | 100 ms | Wire controller timeout per transaction |
+| `I2C_READ_TIMEOUT_MS` | 100 ms | Max wait for Wire.requestFrom() bytes |
+| `I2C_BOOT_SETTLE_MS` | 100 ms | Bus settle after first Wire.begin() |
+| `I2C_RECOVERY_SETTLE_MS` | 50 ms | Bus settle after STOP + recovery reinit |
+| `I2C_DEVICE_RETRY_COUNT` | 2 | Initial probe + one controlled recovery retry |
+| `I2C_DEVICE_RETRY_DELAY_MS` | 100 ms | Delay before retrying after recovery |
 
 ---
 

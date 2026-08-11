@@ -33,7 +33,7 @@ from .geo import (
     point_in_polygon, distance_to_polygon_edge,
     snap_line_endpoints, build_polygon_from_lines,
 )
-from .bridge import BridgeClient, UDPDiscovery, DEFAULT_URL
+from .bridge import BridgeClient, UDPDiscovery, DEFAULT_URL, resolve_token
 from .canvas import MapCanvas, MinimapCanvas
 from .panels.control import ControlPanel
 from .panels.survey import SurveyPanel
@@ -101,7 +101,7 @@ class OperatorWindow(QMainWindow):
         self._bind_shortcuts()
 
         # ── WebSocket ────────────────────────────────────────────────
-        self.bridge = BridgeClient(url)
+        self.bridge = BridgeClient(url, auth_token=resolve_token())
         self.bridge.message_received.connect(self._handle, Qt.ConnectionType.QueuedConnection)
         self.bridge.connection_changed.connect(self._on_connection_changed, Qt.ConnectionType.QueuedConnection)
         self.bridge.log_message.connect(lambda m, e: self._log(m, e), Qt.ConnectionType.QueuedConnection)
@@ -263,8 +263,8 @@ class OperatorWindow(QMainWindow):
         view_layout = QHBoxLayout(view_group)
         view_layout.setContentsMargins(6, 2, 6, 2)
         self.btn_robot_view = QPushButton('F1  Robot view')
-        self.btn_design = QPushButton('F2  Thiết kế bản đồ')
-        self.btn_waypoint_mode = QPushButton('F3  Cấu hình kho')
+        self.btn_design = QPushButton('F2  Bản đồ / Vẽ tường')
+        self.btn_waypoint_mode = QPushButton('F3  Kho / Vị trí')
         for btn, mode in [
             (self.btn_robot_view, 'robot'),
             (self.btn_design, 'design'),
@@ -275,31 +275,25 @@ class OperatorWindow(QMainWindow):
             view_layout.addWidget(btn)
         top_layout.addWidget(view_group)
 
-        # Row 2 — map design and persistence tools
-        map_group = QGroupBox('BẢN ĐỒ / TƯỜNG / GEOFENCE')
-        map_layout = QHBoxLayout(map_group)
-        map_layout.setContentsMargins(6, 2, 6, 2)
+        # Row 2 — combined map design + waypoint/warehouse tools
+        merged_group = QGroupBox('BẢN ĐỒ / VỊ TRÍ / GEOFENCE')
+        merged_layout = QHBoxLayout(merged_group)
+        merged_layout.setContentsMargins(6, 2, 6, 2)
         btn_save = QPushButton('💾 Lưu bản đồ')
         btn_save.clicked.connect(self._save_map)
-        map_layout.addWidget(btn_save)
+        merged_layout.addWidget(btn_save)
         btn_geofence = QPushButton('🛡 Áp dụng geofence')
         btn_geofence.clicked.connect(self._apply_walls_as_geofence)
-        map_layout.addWidget(btn_geofence)
+        merged_layout.addWidget(btn_geofence)
         btn_edit_wall = QPushButton('✎ Sửa line đã chọn')
         btn_edit_wall.clicked.connect(self._edit_selected_wall)
-        map_layout.addWidget(btn_edit_wall)
+        merged_layout.addWidget(btn_edit_wall)
         btn_clear = QPushButton('🗑 Xóa bản đồ')
         btn_clear.setStyleSheet('color:#ff6b6b;')
         btn_clear.clicked.connect(self._confirm_clear_map)
-        map_layout.addWidget(btn_clear)
-        map_layout.addStretch(1)
-        top_layout.addWidget(map_group)
-
-        # Row 3 — waypoint/warehouse placement tools
-        wp_group = QGroupBox('ĐẶT VỊ TRÍ')
-        wp_layout = QHBoxLayout(wp_group)
-        wp_layout.setContentsMargins(6, 2, 6, 2)
-        wp_layout.addWidget(QLabel('Loại điểm:'))
+        merged_layout.addWidget(btn_clear)
+        merged_layout.addWidget(QLabel('|'))
+        merged_layout.addWidget(QLabel('Loại điểm:'))
         self.btn_wp_waypoint = QPushButton('📍 Waypoint thường')
         self.btn_wp_warehouse = QPushButton('📦 Kho + AprilTag')
         for btn, kind in [
@@ -308,10 +302,10 @@ class OperatorWindow(QMainWindow):
         ]:
             btn.setCheckable(True)
             btn.clicked.connect(lambda _, k=kind: self._set_waypoint_kind(k))
-            wp_layout.addWidget(btn)
-        wp_layout.addWidget(QLabel('Chọn loại rồi click canvas để đặt'))
-        wp_layout.addStretch(1)
-        top_layout.addWidget(wp_group)
+            merged_layout.addWidget(btn)
+        merged_layout.addWidget(QLabel('Chọn loại rồi click canvas để đặt'))
+        merged_layout.addStretch(1)
+        top_layout.addWidget(merged_group)
 
         # Row 4 — automatic survey controls
         survey_group = QGroupBox('AUTO / KHẢO SÁT KHO')
@@ -615,6 +609,8 @@ class OperatorWindow(QMainWindow):
             return
         if self.bridge.send({'type': 'control_mode', 'mode': mode}):
             self._log(f'→ mode:{mode}')
+            # Optimistically update local state — server ack will confirm.
+            self.state.control_mode = mode
 
     def _send_cmd(self, command: str) -> None:
         if self.bridge.send({'type': 'cmd', 'command': command}):
@@ -835,9 +831,30 @@ class OperatorWindow(QMainWindow):
             self._check_geofence(data.get('x', 0), data.get('y', 0))
             return
         if t == 'scan':
-            pts = data.get('points') or []
-            self.state.scan_points = [(p['x'], p['y']) for p in pts]
+            # The bridge sends robot-frame points as {x, y}; accept the
+            # occasional [x, y] shape too so one malformed point cannot
+            # discard the entire scan frame.
+            raw_points = data.get('points') if isinstance(data, dict) else data
+            points: list[tuple[float, float]] = []
+            for point in (raw_points or []):
+                try:
+                    if isinstance(point, dict):
+                        points.append((float(point['x']), float(point['y'])))
+                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                        points.append((float(point[0]), float(point[1])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            self.state.scan_points = points
             self.state.scan_ts = time.monotonic()
+            # Log first scan + periodic updates for debugging.
+            n = len(points)
+            if not getattr(self, '_scan_logged', False) or n == 0:
+                self._log(f'📡 scan: {n} pts (age 0s)')
+                self._scan_logged = True
+            elif getattr(self, '_scan_count_log', 0) % 20 == 0:
+                age = time.monotonic() - self.state.scan_ts
+                self._log(f'📡 scan: {n} pts (age {age:.1f}s)')
+            self._scan_count_log = getattr(self, '_scan_count_log', 0) + 1
             return
         if t == 'detected_tags':
             if isinstance(data, dict):
@@ -903,6 +920,12 @@ class OperatorWindow(QMainWindow):
             err = safe_get(data, 'error', default=None)
             self._log(f'{"✓" if accepted else "✗"} {cmd}' +
                       (f' — {err}' if err else ''), error=not accepted)
+            # Revert optimistic mode update if server rejected it.
+            if not accepted and cmd.startswith('mode:'):
+                rejected_mode = cmd.split(':', 1)[1].upper()
+                if rejected_mode in ('AUTO', 'MANUAL'):
+                    prev = 'MANUAL' if rejected_mode == 'AUTO' else 'AUTO'
+                    self.state.control_mode = prev
             return
         if t == 'pong':
             return
@@ -1266,10 +1289,13 @@ class OperatorWindow(QMainWindow):
         ws_url = device.get('ws_url', '')
         hostname = device.get('hostname', device.get('ip', '?'))
         self._log(f'✓ tìm thấy: {hostname} — {ws_url}')
+        # Skip if already connected to this URL (avoid duplicate connections).
+        if self.bridge.is_connected() and self.bridge.url == ws_url:
+            return
         if not self.bridge.is_connected():
             self._log(f'→ tự động kết nối {ws_url} …')
             self.bridge.close()
-            self.bridge = BridgeClient(ws_url)
+            self.bridge = BridgeClient(ws_url, auth_token=resolve_token())
             self.bridge.message_received.connect(self._handle, Qt.ConnectionType.QueuedConnection)
             self.bridge.connection_changed.connect(self._on_connection_changed, Qt.ConnectionType.QueuedConnection)
             self.bridge.log_message.connect(lambda m, e: self._log(m, e), Qt.ConnectionType.QueuedConnection)
@@ -1280,7 +1306,7 @@ class OperatorWindow(QMainWindow):
         if dlg.exec() == ConnectDialog.DialogCode.Accepted:
             url = dlg.get_url()
             self.bridge.close()
-            self.bridge = BridgeClient(url)
+            self.bridge = BridgeClient(url, auth_token=resolve_token())
             self.bridge.message_received.connect(self._handle, Qt.ConnectionType.QueuedConnection)
             self.bridge.connection_changed.connect(self._on_connection_changed, Qt.ConnectionType.QueuedConnection)
             self.bridge.log_message.connect(lambda m, e: self._log(m, e), Qt.ConnectionType.QueuedConnection)
