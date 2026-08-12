@@ -239,3 +239,5 @@ pm2 restart nexus-robot-esp32-telemetry
 # Trình duyệt báo lỗi CORS camera
 pm2 restart nexus-robot-camera
 ```
+cd actions-runner
+sudo ./svc.sh start

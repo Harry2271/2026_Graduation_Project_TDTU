@@ -259,25 +259,31 @@ void setupHardware()
     }
 
     // ---- I2C sensors (with progress logging) ----
-    // Wire bus is already initialised (lines 185-192).  Init sensors
-    // sequentially without busReset/reinitialize between them — the
-    // test_i2c_sensors project proved that busReset() between inits
-    // causes the scan to fail on a shared bus with 3 devices.
-    // Init order: BNO055 first (has 650 ms power-up delay), then
-    // VL53L0X (Pololu library does NOT call Wire.begin()), then INA226.
-    // Addresses must not overlap: BNO055=0x28, VL53L0X=0x29, INA226=0x40.
+    // Only initialize peripherals when the shared bus passed Wire.begin()
+    // and the post-settle line check. Continuing after a failed bus init
+    // would cause avoidable Wire timeouts during boot.
+    bool imu_ok = false;
+    bool tof_ok = false;
+    bool pwr_ok = false;
+    if (i2c_ok) {
+        // Wire bus is already initialised. Init sensors sequentially without
+        // busReset/reinitialize between them — the test_i2c_sensors project
+        // proved that reset between inits can disturb a shared 3-device bus.
+        // Init order: BNO055 → VL53L0X → INA226.
+        Serial.println("  [INIT] BNO055 IMU...");
+        imu_ok = g_imu.begin(BNO055_I2C_ADDR);
+        Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
 
-    Serial.println("  [INIT] BNO055 IMU...");
-    bool imu_ok = g_imu.begin(BNO055_I2C_ADDR);
-    Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
+        Serial.println("  [INIT] VL53L0X TOF sensor (Pololu)...");
+        tof_ok = g_tof.begin();
+        Serial.printf("  [%s] VL53L0X\n", tof_ok ? "OK  " : "WARN");
 
-    Serial.println("  [INIT] VL53L0X TOF sensor (Pololu)...");
-    bool tof_ok = g_tof.begin();
-    Serial.printf("  [%s] VL53L0X\n", tof_ok ? "OK  " : "WARN");
-
-    Serial.println("  [INIT] INA226 power monitor...");
-    bool pwr_ok = g_power.begin(INA226_I2C_ADDR);
-    Serial.printf("  [%s] INA226\n", pwr_ok ? "OK  " : "WARN");
+        Serial.println("  [INIT] INA226 power monitor...");
+        pwr_ok = g_power.begin(INA226_I2C_ADDR);
+        Serial.printf("  [%s] INA226\n", pwr_ok ? "OK  " : "WARN");
+    } else {
+        Serial.println("  [WARN] I2C sensors SKIPPED — bus initialization failed");
+    }
 
     // Wire sensors into ModeManager for AUTO_ROAM (Pi-less) operation
     g_modeManager.attachSensors(&g_imu, &g_ir, &g_sharp, &g_power, &g_tof, &g_cylinder);

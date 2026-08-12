@@ -216,10 +216,23 @@ bool AutoRoam::compute(uint32_t now_ms,
                     return false;
                 }
 
-                // Compute heading error for the gate
+                // Compute heading error for the gate.
+                // Heading is only trustworthy when the BNO055 magnetometer and
+                // system fusion have reached at least mid-level calibration
+                // (level 2).  Without this check, an uncalibrated BNO055 can
+                // report ±5-10° error and the cylinder extends while the robot
+                // is facing the wrong direction.
                 if (imu_ && imu_->isOperational() && has_heading_) {
                     heading_err_deg_ = headingError(hold_heading_, imu_->getHeading());
-                    heading_ok_ = (fabs(heading_err_deg_) <= HEADING_GATE_DEG);
+                    bool heading_err_ok = (fabs(heading_err_deg_) <= HEADING_GATE_DEG);
+                    bool cal_ok = (imu_->getCalMag() >= 2 && imu_->getCalSys() >= 2);
+                    heading_ok_ = heading_err_ok && cal_ok;
+                    if (heading_err_ok && !cal_ok) {
+                        Serial.printf("[UNLOAD] Heading gate: angle OK (%.1f°) but IMU "
+                                      "not calibrated (mag=%u sys=%u) — waiting\n",
+                                      heading_err_deg_,
+                                      imu_->getCalMag(), imu_->getCalSys());
+                    }
                 } else {
                     heading_err_deg_ = 0.0f;
                     heading_ok_ = true;  // no IMU — skip gate

@@ -36,9 +36,13 @@ bool VL53L0XSensor::begin()
 
     sensor_ = new VL53L0X();
     sensor_->setBus(&Wire);
-    // Bound the Pololu library's internal read timeout so a flaky bus
-    // cannot stall the loop. Mirrors Wire.setTimeout().
-    sensor_->setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+    // Bound the Pololu library's internal read timeout.  Use 200 ms instead
+    // of I2C_TRANSACTION_TIMEOUT_MS (100 ms) because the shared I2C bus
+    // routinely blocks for the duration of a BNO055 Euler burst read
+    // (6-byte + ACK sequence), and a tight 100 ms triggers spurious timeout
+    // returns (8190 mm) every time the bus is busy with the IMU.
+    constexpr uint16_t VL53L0X_LIB_TIMEOUT_MS = 200;
+    sensor_->setTimeout(VL53L0X_LIB_TIMEOUT_MS);
 
     // Pololu init can hang on ESP32 if the bus is flaky — retry up to
     // I2C_DEVICE_RETRY_COUNT times with a centralized bus recovery
@@ -50,7 +54,7 @@ bool VL53L0XSensor::begin()
         Serial.printf("  [WARN] VL53L0X init attempt %d failed\n", attempt + 1);
         I2CBus::reinitializeBus(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN, VL53L0X_I2C_FREQ_HZ);
         sensor_->setBus(&Wire);
-        sensor_->setTimeout(I2C_TRANSACTION_TIMEOUT_MS);
+        sensor_->setTimeout(VL53L0X_LIB_TIMEOUT_MS);
         delay(I2C_DEVICE_RETRY_DELAY_MS);
     }
     if (!init_ok) {

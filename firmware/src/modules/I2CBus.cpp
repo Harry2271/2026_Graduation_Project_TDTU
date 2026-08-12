@@ -130,14 +130,35 @@ bool I2CBus::reinitializeBus(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz)
 {
     Serial.printf("[I2C] Bus recovery on SDA=%u SCL=%u\n", sda_pin, scl_pin);
 
-    // 1. GPIO-level reset + STOP (Wire is NOT driving the pins here)
+    // 1. GPIO-level reset + STOP.  This deliberately happens before
+    //    Wire.end(): busReset() takes ownership of the pins and clocks out
+    //    any slave that is stuck mid-transaction.  Do not issue a general-call
+    //    (0x00) transaction here — that address can have side effects on some
+    //    I2C peripherals and an absent-device NACK is not a recovery signal.
     busReset(sda_pin, scl_pin);
 
     // 2. Detach Wire peripheral
     Wire.end();
     delay(10);
 
-    // 3. Re-attach
+    // 3. Verify lines are released before re-attaching
+    //    If SDA is still stuck LOW after Wire.end(), the bus has a
+    //    hardware-level problem (missing pull-up, slave fault) — abort.
+    pinMode(sda_pin, INPUT);
+    pinMode(scl_pin, INPUT);
+    delayMicroseconds(10);
+    if (digitalRead(sda_pin) == LOW) {
+        Serial.printf("[I2C] SDA stuck LOW after Wire.end() — check pull-ups / slave fault\n");
+        // Attempt one more aggressive reset before giving up
+        busReset(sda_pin, scl_pin);
+        delay(50);
+        if (digitalRead(sda_pin) == LOW) {
+            Serial.println("[I2C] SDA still stuck — bus recovery FAILED");
+            return false;
+        }
+    }
+
+    // 5. Re-attach Wire
     bool ok = Wire.begin(sda_pin, scl_pin);
     if (!ok) {
         Serial.println("[I2C] Recovery Wire.begin FAILED");

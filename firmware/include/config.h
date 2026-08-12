@@ -104,7 +104,12 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 // ============================================================
 #define PID_UPDATE_RATE_HZ  50
 #define PID_UPDATE_MS       (1000 / PID_UPDATE_RATE_HZ)
-#define PID_INTEGRAL_LIMIT  400.0f
+// Reduced from 400 → 200: the old limit allowed integral contribution up to
+// Ki×400 = 0.2×400 = 80 PWM (~16% of 511 max duty) — aggressive for small
+// geared motors and caused visible overshoot after stall recovery.  At 200
+// the max integral term is 40 PWM (~8%), still enough to correct steady-state
+// error without hunting.
+#define PID_INTEGRAL_LIMIT  200.0f
 #define PID_OUTPUT_LIMIT    (float)MOTOR_MAX_DUTY
 
 #define DEFAULT_KP  2.5f
