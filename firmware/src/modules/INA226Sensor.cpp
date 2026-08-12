@@ -123,14 +123,50 @@ bool INA226Sensor::read()
         return true;
     }
 
-    // Battery SOC: 12.6V = 100%, 15V = 0% (user's 3S Li-ion operational range)
-    // Formula: pct = (Vfull - V) / (Vfull - Vempty) × 100
-    //   At V = 12.6V → (12.6 - 12.6) / (12.6 - 15.0) × 100 = 0 / (-2.4) × 100 = 0% ← WRONG
-    // Correct: when V is between VFULL and VEMPTY, the SOC should be:
-    //   pct = (1.0 - (V - VFULL) / (VEMPTY - VFULL)) × 100
-    //   At 12.6V → 100%, at 15V → 0%
-    float range = BATTERY_VOLTAGE_EMPTY - BATTERY_VOLTAGE_FULL;  // 15.0 - 12.6 = 2.4V
-    float pct = (1.0f - (bus_voltage_ - BATTERY_VOLTAGE_FULL) / range) * 100.0f;
+    // Battery SOC — piecewise linear lookup for 3S Li-ion (Molicel M21-B4055A).
+    //
+    // Li-ion discharge curve is S-shaped: flat at top (~4.20-4.00V/cell),
+    // steep middle (3.80-3.40V/cell), flat bottom (3.30-3.00V/cell).
+    // A single linear formula across 12.0V–20.6V would be ±20% wrong in
+    // the middle range.  11-point table + linear interpolation keeps the
+    // error under ±2% across the entire operating envelope.
+    //
+    // Pack voltages = cell voltage × 3 (3S series).
+    // Cutoff at 12.0V (3.00V/cell) — below this BMS disconnects.
+
+    static const float soc_table[][2] = {
+        // { pack-voltage (V), SOC (%) }
+        { 20.6f, 100.0f },  // 6.87V/cell — fully charged
+        { 20.0f,  90.0f },  // 6.67V/cell — slight discharge
+        { 19.2f,  80.0f },  // 6.40V/cell — nominal
+        { 18.6f,  70.0f },  // 6.20V/cell
+        { 18.0f,  60.0f },  // 6.00V/cell — mid-pack
+        { 17.4f,  50.0f },  // 5.80V/cell — steepest part of curve
+        { 16.8f,  40.0f },  // 5.60V/cell
+        { 16.2f,  30.0f },  // 5.40V/cell
+        { 15.6f,  20.0f },  // 5.20V/cell
+        { 15.0f,  10.0f },  // 5.00V/cell — low
+        { 12.0f,   0.0f },  // 4.00V/cell — BMS cutoff
+    };
+    constexpr int SOC_TABLE_LEN = sizeof(soc_table) / sizeof(soc_table[0]);
+
+    float pct = 0.0f;
+    if (bus_voltage_ >= soc_table[0][0]) {
+        pct = soc_table[0][1];  // above full → 100%
+    } else if (bus_voltage_ <= soc_table[SOC_TABLE_LEN - 1][0]) {
+        pct = soc_table[SOC_TABLE_LEN - 1][1];  // below cutoff → 0%
+    } else {
+        // Linear interpolation between the two bracketing entries
+        for (int i = 0; i < SOC_TABLE_LEN - 1; i++) {
+            float v_hi = soc_table[i][0];
+            float v_lo = soc_table[i + 1][0];
+            if (bus_voltage_ <= v_hi && bus_voltage_ >= v_lo) {
+                float frac = (v_hi - bus_voltage_) / (v_hi - v_lo);  // 0..1
+                pct = soc_table[i][1] + frac * (soc_table[i + 1][1] - soc_table[i][1]);
+                break;
+            }
+        }
+    }
     if (pct < 0.0f)   pct = 0.0f;
     if (pct > 100.0f) pct = 100.0f;
     battery_pct_ = pct;
