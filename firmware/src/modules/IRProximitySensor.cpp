@@ -50,6 +50,8 @@ bool IRProximitySensor::update(uint32_t now_ms)
 {
     bool changed = false;
 
+    static const char* ir_names[] = {"rear_left", "rear_right", "left", "right"};
+
     for (int i = 0; i < 4; i++) {
         // E18-D80NK: LOW = obstacle detected, HIGH = clear
         bool raw = (digitalRead(PINS_[i]) == LOW);
@@ -63,13 +65,20 @@ bool IRProximitySensor::update(uint32_t now_ms)
             }
         } else {
             readings_[i].changed_ms = now_ms;
-            // Do not infer that a sensor is absent from a stable reading.
-            // A stationary robot with no obstacle legitimately holds HIGH,
-            // while an obstacle can legitimately hold LOW for minutes.  The
-            // old timeout marked both cases absent and disabled hard-stop
-            // protection after five seconds.  Keep every configured input
-            // safety-active; wiring faults fail safe as an obstacle only when
-            // the input is actually LOW.
+
+            // ---- Sustained-detect warning ----
+            // A sensor stuck LOW for >15 s continuously is almost certainly
+            // a wiring fault, not a real obstacle.  Real obstacles move.
+            // Surface this so the user can diagnose and fix it, rather than
+            // silently locking the robot into perpetual evasion.
+            static uint32_t last_ir_warn_ms[4] = {0, 0, 0, 0};
+            if (readings_[i].detected &&
+                (now_ms - readings_[i].level_ms) > 15000 &&
+                (now_ms - last_ir_warn_ms[i]) >= 30000) {
+                Serial.printf("[IR] WARNING: %s stuck LOW for %lu s — check wiring, potentiometer, or physically clear path\n",
+                    ir_names[i], (unsigned long)(now_ms - readings_[i].level_ms) / 1000);
+                last_ir_warn_ms[i] = now_ms;
+            }
         }
     }
 

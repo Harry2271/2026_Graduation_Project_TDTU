@@ -110,6 +110,7 @@ class RobotTelemetryPanel(QWidget):
         tl = QVBoxLayout(g_tag)
         tl.setContentsMargins(8, 4, 8, 4)
         self._lbl_tags = _mono_label('(chưa phát hiện)')
+        self._lbl_tags.setWordWrap(True)
         self._lbl_tags.setStyleSheet('color:#9ece6a;')
         tl.addWidget(self._lbl_tags)
         root.addWidget(g_tag)
@@ -262,13 +263,23 @@ class RobotTelemetryPanel(QWidget):
 
         # ── AprilTag ────────────────────────────────────────────────
         tags = s.detected_tags
+        # Build warehouse tag map: tag_id → waypoint label
+        wh_map = {}
+        for wp in (s.waypoints or []):
+            if wp.get('kind') == 'warehouse' and wp.get('tag_id', 0):
+                wh_map[wp['tag_id']] = wp.get('label', f'wp-{wp.get("id", "?")}')
+
         if tags:
-            parts = []
+            lines = []
             for tid, td in sorted(tags.items()):
-                t_age = ts_now - s.detected_tag_ts
-                parts.append(f'#{tid}  conf={td.get("confidence", 0):.2f}')
-            self._lbl_tags.setText(
-                '  '.join(parts) + f'  (age {t_age:.0f}s)' if parts else '')
+                conf = td.get('confidence', 0)
+                if tid in wh_map:
+                    lines.append(f'🎯 #{tid}  conf={conf:.2f}  → {wh_map[tid]}')
+                else:
+                    lines.append(f'👁 #{tid}  conf={conf:.2f}  (chưa map)')
+            t_age = ts_now - s.detected_tag_ts
+            lines.append(f'  (age {t_age:.0f}s)')
+            self._lbl_tags.setText('\n'.join(lines))
             self._lbl_tags.setStyleSheet('color:#9ece6a;')
         else:
             self._lbl_tags.setText('(chưa phát hiện)')

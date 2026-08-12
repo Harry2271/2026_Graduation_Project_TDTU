@@ -20,25 +20,50 @@
 
 class I2CBus {
 public:
-    /// Toggle SCL 9 times to release any slave holding SDA low.
+    /// First-time Wire peripheral bring-up. Does NOT call Wire.end() (which
+    /// would crash on an uninitialised Wire on ESP32-S3). Returns true only
+    /// if Wire.begin() succeeded and both SDA/SCL read HIGH afterwards.
+    static bool initialize(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz);
+
+    /// Full bus recovery + Wire reinit. Calls busReset (with STOP), then
+    /// Wire.end()/Wire.begin()/setClock/setTimeout. Returns true if the
+    /// controller re-attached cleanly.
+    static bool reinitializeBus(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz);
+
+    /// Toggle SCL up to 9 times then emit a STOP to release any slave
+    /// holding SDA low. Uses bare GPIO — call only when Wire is NOT driving
+    /// the pins.
     static void busReset(uint8_t sda_pin, uint8_t scl_pin);
 
-    /// Re-init Wire peripheral.  Calls busReset() first, then Wire.begin().
-    /// Returns true on success.
+    /// Re-init Wire peripheral (legacy).  Calls busReset() first, then
+    /// Wire.begin(). Returns true on success.
     static bool reinitialize(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz);
 
     /// Best-effort: digitalRead(SDA)==LOW for >100ms = hung.
     static bool isHung(uint8_t sda_pin);
 
-    /// Verify SDA + SCL are HIGH before Wire.beginTransmission().
+    /// Passive level check: returns true if both SDA and SCL read HIGH
+    /// without modifying their pin mode. Safe to call any time, including
+    /// while the I2C peripheral owns the pins.
     static bool linesIdle(uint8_t sda_pin, uint8_t scl_pin);
 
-    /// Single-address ACK probe. Does NOT reset the bus.
-    static bool probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr);
+    /// Single-address probe. Returns the raw Wire error code:
+    ///   0 = ACK (device present)
+    ///   1 = data too long
+    ///   2 = NACK on address (device absent)
+    ///   3 = NACK on data
+    ///   4 = other controller error
+    ///   5 = timeout
+    static int probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr);
 
-    /// Probe + auto bus reset + retry on NACK.
-    static bool probeWithRecovery(uint8_t sda_pin, uint8_t scl_pin,
-                                   uint8_t addr, uint32_t freq_hz);
+    /// Probe with one controlled bus-recovery retry on timeout. Returns the
+    /// final Wire error code. Does NOT reset the bus for ordinary NACK — that
+    /// is the expected response from an absent optional device.
+    static int probeWithRecovery(uint8_t sda_pin, uint8_t scl_pin,
+                                  uint8_t addr, uint32_t freq_hz);
+
+    /// Human-readable name for a Wire error code (for boot logs).
+    static const char* errorName(int err);
 
     // ── Safe Wire wrappers ──
     //

@@ -25,11 +25,13 @@ bool INA226Sensor::begin(uint8_t address)
     //    plus a generous margin for shared I2C bus to stabilise.
     delay(50);
 
-    // 2. Probe I2C with bus-idle guard + retry + auto bus-reset.
-    if (!I2CBus::probeWithRecovery(INA226_SDA_PIN, INA226_SCL_PIN,
-                                    address, INA226_I2C_FREQ_HZ)) {
-        Serial.printf("[INA226] No device at 0x%02X after %d retries\n",
-                      address, I2C_DEVICE_RETRY_COUNT);
+    // 2. Probe I2C with bus-idle guard + one controlled recovery retry
+    //    on timeout. NACK (device absent) returns immediately — no reset.
+    int probe_err = I2CBus::probeWithRecovery(INA226_SDA_PIN, INA226_SCL_PIN,
+                                               address, INA226_I2C_FREQ_HZ);
+    if (probe_err != 0) {
+        Serial.printf("[INA226] No device at 0x%02X (%s)\n",
+                      address, I2CBus::errorName(probe_err));
         Serial.println("[INA226] Check: SDA/SCL wiring, 3.3V power, address jumper (A0/A1)");
         Serial.println("[INA226] Add 4.7kΩ pull-ups on SDA and SCL to 3.3V");
         return false;
@@ -107,6 +109,17 @@ bool INA226Sensor::read()
         power_        = 0.0f;
         battery_pct_  = 0.0f;
         battery_status_ = 0;        // unknown / no-load
+
+        // Do not silently present this as a valid empty battery. A zero
+        // bus reading means VIN+/VIN- is not measuring the pack (usually
+        // shunt terminals disconnected, reversed, or no common ground).
+        static uint32_t last_zero_log_ms = 0;
+        uint32_t now = millis();
+        if (now - last_zero_log_ms >= 5000) {
+            last_zero_log_ms = now;
+            Serial.printf("[INA226] WARNING: bus voltage=%.3f V — no pack voltage detected; check VIN+→battery+, VIN−→battery−, shunt path and common GND\n",
+                          bus_voltage_);
+        }
         return true;
     }
 

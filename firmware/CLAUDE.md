@@ -403,7 +403,7 @@ else:
 ```
 firmware/
 ├── include/
-│   ├── config.h                    # Pin definitions, PID defaults, motor specs
+│   ├── config.h                    # Pin definitions, PID defaults, motor specs, I2C timing
 │   ├── modules/
 │   │   ├── BNO055Sensor.h
 │   │   ├── INA226Sensor.h
@@ -413,6 +413,7 @@ firmware/
 │   │   ├── CargoSensor.h
 │   │   ├── CylinderActuator.h
 │   │   ├── HealthMonitor.h
+│   │   ├── I2CBus.h               # ← NEW: centralized I2C bus manager
 │   │   └── ...
 │   ├── BTS7960Driver.h
 │   ├── Encoder.h
@@ -424,8 +425,8 @@ firmware/
 ├── src/
 │   ├── main.cpp                    # setup() + loop(), module init, UART read/write
 │   ├── drivers/
-│   │   ├── bno055_wire_support.cpp # Low-level I2C for BNO055 wire-mode
-│   │   └── driver_ina226_interface.cpp # INA226 I2C register read
+│   │   ├── bno055_wire_support.cpp # Low-level I2C for BNO055 wire-mode (DEPRECATED)
+│   │   └── driver_ina226_interface.cpp # INA226 I2C register read (uses I2CBus guards)
 │   └── modules/
 │       ├── BTS7960Driver.cpp
 │       ├── Encoder.cpp
@@ -437,19 +438,75 @@ firmware/
 │       ├── ObstacleAvoidance.cpp
 │       ├── AvoidanceFSM.cpp
 │       ├── AutoRoam.cpp
-│       ├── BNO055Sensor.cpp
-│       ├── INA226Sensor.cpp
+│       ├── BNO055Sensor.cpp       # Uses I2CBus::probeWithRecovery + safeRead/write
+│       ├── INA226Sensor.cpp       # Uses I2CBus::probeWithRecovery + linesIdle guard
 │       ├── IRProximitySensor.cpp
 │       ├── SharpFrontSensor.cpp
-│       ├── VL53L0XSensor.cpp
+│       ├── VL53L0XSensor.cpp      # Uses I2CBus::probeWithRecovery + reinitializeBus
 │       ├── CargoSensor.cpp
 │       ├── CylinderActuator.cpp
-│       ├── I2CBus.cpp
+│       ├── I2CBus.cpp             # ← NEW: bus init, recovery, safe wrappers
 │       ├── HealthMonitor.cpp
 │       └── JsonStatus.cpp
+├── test_i2c_sensors/               # Standalone I2C diagnostic (for reference)
+│   └── src/main.cpp
 ├── platformio.ini
 └── CLAUDE.md
 ```
+
+---
+
+## I2C Bus Management
+
+The shared I2C bus (GPIO10 SDA / GPIO11 SCL) carries three devices: BNO055 (0x28), VL53L0X (0x29), INA226 (0x40). All I²C traffic on this bus must go through `I2CBus` (`include/modules/I2CBus.h`, `src/modules/I2CBus.cpp`).
+
+### Why direct Wire calls are dangerous on ESP32-S3
+
+The ESP32-S3's `Wire.begin()` claims GPIO10/11 via the GPIO matrix.  After that:
+- Calling `pinMode()` on those pins detaches the peripheral → all subsequent transactions fail with err=5 (timeout)
+- `Wire.endTransmission()` does NOT honor `Wire.setTimeout()` — it blocks forever if a slave holds SDA low
+- Calling `Wire.end()` mid-flight without full reinit can leave the peripheral in an undefined state
+
+### Boot sequence (`main.cpp setupHardware()`)
+
+```
+1. Pre-Wire diagnostic:  pinMode(INPUT) → digitalRead(SDA/SCL) → confirms pull-ups
+2. I2CBus::initialize(10, 11, 100000)   — Wire.begin() without Wire.end()
+   → returns false if Wire.begin() fails or lines stuck after settle
+3. I2CBus::probe() scan (0x28, 0x29, 0x40)  — prints which devices ACK
+4. Sensor begin() in order: BNO055 → VL53L0X → INA226
+   — each uses I2CBus::probeWithRecovery() then safe read/write wrappers
+```
+
+### `I2CBus` API
+
+| Method | Returns | Purpose |
+|--------|---------|---------|
+| `initialize(sda, scl, freq)` | `bool` | First-time Wire bring-up. No `Wire.end()` first. |
+| `reinitializeBus(sda, scl, freq)` | `bool` | Full recovery: busReset + STOP + Wire.end/begin + verify. |
+| `busReset(sda, scl)` | `void` | 9-clock SCL pulse + I²C STOP (SDA LOW→HIGH while SCL HIGH). |
+| `probe(sda, scl, addr)` | `int` | Raw Wire error: 0=ACK, 2=NACK, 5=timeout. |
+| `probeWithRecovery(sda, scl, addr, freq)` | `int` | Probe with ONE full bus recovery on any failure, then retry. |
+| `linesIdle(sda, scl)` | `bool` | Passive level check — `digitalRead()` only, no `pinMode()`. |
+| `safeReadReg(...)` | `bool` | linesIdle guard + time-bounded Wire.read. |
+| `safeReadBurst(...)` | `bool` | Burst version of safeReadReg. |
+| `safeWriteReg(...)` | `bool` | linesIdle guard + Wire write. |
+| `errorName(err)` | `const char*` | Human-readable error string for boot logs. |
+
+### Return value convention
+
+`probe()` and `probeWithRecovery()` return `int` — **0 means success (ACK), nonzero means error**. When checking, always use `!= 0`, never `!result` (the `!` operator inverts 0 to true, treating success as failure). This was a critical bug in BNO055 init that was fixed in August 2026.
+
+### Bus recovery policy
+
+- **NACK (err=2):** device absent → do NOT reset bus, other devices are fine
+- **Timeout (err=5) or any error:** perform ONE controlled recovery via `reinitializeBus()` then retry
+- **Max 2 attempts total** (initial probe + 1 recovery retry)
+
+### Hardware requirements
+
+- External 2.2kΩ–4.7kΩ pull-ups on SDA and SCL to 3.3V (mandatory for 3-device bus)
+- Bus clock: 100 kHz (not 400 kHz) — BNO055 CJMCU-055 clones clock-stretch
 
 ---
 

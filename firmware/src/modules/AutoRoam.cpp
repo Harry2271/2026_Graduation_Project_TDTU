@@ -179,9 +179,12 @@ bool AutoRoam::compute(uint32_t now_ms,
 {
     out_vx = out_vy = out_omega = 0;
 
-    // ----- 1) Read IMU and capture reference heading once we have a sample -----
+    // ----- 1) Capture reference heading once we have a sample -----
+    // IMU is now read at 20 Hz by the main loop (readSensorsSlow) —
+    // do NOT call imu_->read() here.  This avoids I2C contention between
+    // the PID loop and the main sensor read, and ensures the cached
+    // heading value is fresh when we read it.
     if (imu_ && imu_->isOperational()) {
-        imu_->read();
         float h = imu_->getHeading();
         if (!has_heading_) {
             hold_heading_ = wrap360(h);

@@ -104,6 +104,7 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
         pwr["battery_status"]=
             power->getBatteryStatus() == 2 ? "critical" :
             power->getBatteryStatus() == 1 ? "low" : "ok";
+        pwr["noload"] = (power->getBusVoltage() < 0.05f);
     } else {
         pwr["ok"] = false;
     }
@@ -315,6 +316,9 @@ size_t JsonStatus::emitPower(char* buf, size_t bufsize, INA226Sensor* power)
         data["battery_status"]=
             power->getBatteryStatus() == 2 ? "critical" :
             power->getBatteryStatus() == 1 ? "low" : "ok";
+        // Signal to the frontend that VIN+/VIN- is not measuring a real
+        // pack: SOC percentages are meaningless in this state.
+        data["noload"] = (power->getBusVoltage() < 0.05f);
     } else {
         data["ok"] = false;
     }
