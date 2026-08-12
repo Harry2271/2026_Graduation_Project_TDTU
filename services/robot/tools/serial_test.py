@@ -56,7 +56,7 @@ except ImportError:
 def _print_frame(prefix: str, msg: dict) -> None:
     t = msg.get('type')
     d = msg.get('data') or {}
-    if t == 141:  # alive
+    if t == 144:  # alive
         print(f"  [alive] #{d.get('alive')} mode={d.get('mode')} "
               f"e_stop={d.get('e_stop')} uptime={d.get('uptime_ms')}ms",
               flush=True)
@@ -160,7 +160,7 @@ class SerialTester:
                     msg = json.loads(text)
                 except Exception:
                     continue
-                if msg.get('type') == 141:
+                if msg.get('type') == 144:
                     self._alive_count += 1
                     self._last_alive_t = time.monotonic()
                 _print_frame('rx', msg)

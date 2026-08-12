@@ -38,7 +38,7 @@
 1. `rplidar_ros2` — RPLidar driver (apt package `ros-jazzy-rplidar-ros2`), publishes `/scan`
 2. `slam_toolbox` (online_async) — scan-matching, TF, map building
 3. `my_robot_controller/map_manager` — state machine, obstacle awareness zone
-4. `my_robot_controller/esp32_telemetry_node` — opens `/dev/ttyACM0`, forwards ESP32 type-130/131/133/134/140/141 frames to ROS topics
+4. `my_robot_controller/esp32_telemetry_node` — opens `/dev/ttyACM0`, forwards ESP32 type-130/131/133/134/140/144/145 frames to ROS topics
 5. `my_robot_controller/web_bridge` — WebSocket server on port 9091 (token auth required)
 6. `my_robot_controller/brain_node` — high-level state machine (EXPLORE, MAPPING_DONE, IDLE, JOB_*, WAREHOUSE_*, E_STOP), drives ESP32 via `esp32_telemetry_node`
 7. `my_robot_controller/odom_node` — odometry fusion (encoders + IMU) published on `/odom`
@@ -400,7 +400,8 @@ The brain sends `move` JSON to the ESP32 via `esp32_telemetry_node`'s `/esp32/cm
 | `/esp32/imu` | serial → ROS | ESP32 type-134 BNO055 IMU data (20 Hz) |
 | `/esp32/power` | serial → ROS | ESP32 type-133 INA226 power telemetry (0.2 Hz) |
 | `/esp32/unload_state` | serial → ROS | ESP32 type-140 unload sequence state |
-| `/esp32/cargo` | serial → ROS | ESP32 type-141 cargo sensor status |
+| `/esp32/cargo` | serial → ROS | ESP32 type-145 cargo sensor status (on-demand) |
+| `/esp32/alive` | serial → ROS | ESP32 type-144 alive heartbeat (500 ms) |
 | `/esp32/alive` | serial → ROS | ESP32 heartbeat liveness flag |
 | `/esp32/cmd_status` | ROS | Command accepted/rejected/queue-overflow status |
 

@@ -84,7 +84,7 @@ def main() -> int:
                     msg = json.loads(text)
                 except json.JSONDecodeError:
                     continue
-                if msg.get("type") != 141:
+                if msg.get("type") != 144:
                     if not args.quiet:
                         d = msg.get("data", {})
                         print(f"  [{msg.get('type')}] {str(d)[:100]}", flush=True)

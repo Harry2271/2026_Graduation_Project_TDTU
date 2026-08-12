@@ -30,8 +30,10 @@ class AutoRoam;
 // 136 = Sharp front
 // 138 = TOF distance
 // 140 = unload / docking state (transition notify + query response)
-// 141 = alive heartbeat (500 ms)
+// 141 = cargo sensor (presence-only, mapped from VL53L0X/CargoSensor)
 // 142 = module health report (1 s periodic + on-change)
+// 144 = alive heartbeat (500 ms)
+// 145 = cargo sensor on-demand query (CMD_GET_CARGO response)
 class JsonStatus {
 public:
     /// Emit the full status bundle as a single multi-line JSON

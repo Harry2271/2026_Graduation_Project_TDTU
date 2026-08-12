@@ -13,9 +13,8 @@
 //   NO connected between GPIO36 and GND.
 //   Switch open (no cargo) → pull-up → HIGH (logic 1)
 //   Switch pressed by cargo → shorted to GND → LOW  (logic 0)
-// User requires: HIGH = cargo present on bed.
-// Therefore cargo_present = (raw == HIGH).
-#define CARGO_PRESENT_LEVEL      HIGH
+// Therefore cargo_present = (raw == LOW).
+#define CARGO_PRESENT_LEVEL      LOW
 
 CargoSensor::CargoSensor()
     : pin_(CARGO_SENSOR_PIN),

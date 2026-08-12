@@ -199,7 +199,8 @@ UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 | `{"type":135,"data":{"ir":[false,false,false,false]}}` | IR PROX | IR proximity sensor state (4× digital) |
 | `{"type":136,"data":{"distance_mm":...,"obstacle":true}}` | SHARP | Front distance sensor (Sharp GP2Y0A21YK0F) |
 | `{"type":140,"data":{"state":N,"error":false}}` | UNLOAD | Cylinder/unload sequence state (0=idle, 1=adjusting, 2=extending, 3=holding, 4=retracting, 5=done, 6=leave) |
-| `{"type":141,"data":{"cargo":true}}` | CARGO | VL53L0X cargo sensor status (true = cargo present) |
+| `{"type":144,"data":{"uptime_ms":N,"alive":N,"e_stop":bool,"mode":"..."}}` | ALIVE | Alive heartbeat every 500 ms; Pi uses this to detect firmware liveness (was type 141 before Aug 2026) |
+| `{"type":145,"data":{"present":true,"debounce_ms":N}}` | CARGO | Cargo bed presence query (on-demand via `get_cargo` cmd) |
 
 ### Alternative Command Protocol (Simple Serial)
 

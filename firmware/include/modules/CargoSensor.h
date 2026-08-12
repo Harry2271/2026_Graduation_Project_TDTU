@@ -6,8 +6,8 @@
  * CargoSensor — microswitch (limit switch) on the cargo bed.
  *
  * Wired to a digital GPIO with internal pull-up (INPUT_PULLUP):
- *   LOW  = cargo present (switch pressed by package weight)
- *   HIGH = cargo bed empty
+ *   LOW  = cargo present (NO switch pressed by package weight → GND)
+ *   HIGH = cargo bed empty (NO switch open → pull-up)
  *
  * The sensor is polled every PID tick (20 ms) with a 100 ms debounce
  * filter to prevent chatter during vibration.
