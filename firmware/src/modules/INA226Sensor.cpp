@@ -109,6 +109,17 @@ bool INA226Sensor::read()
         power_        = 0.0f;
         battery_pct_  = 0.0f;
         battery_status_ = 0;        // unknown / no-load
+
+        // Do not silently present this as a valid empty battery. A zero
+        // bus reading means VIN+/VIN- is not measuring the pack (usually
+        // shunt terminals disconnected, reversed, or no common ground).
+        static uint32_t last_zero_log_ms = 0;
+        uint32_t now = millis();
+        if (now - last_zero_log_ms >= 5000) {
+            last_zero_log_ms = now;
+            Serial.printf("[INA226] WARNING: bus voltage=%.3f V — no pack voltage detected; check VIN+→battery+, VIN−→battery−, shunt path and common GND\n",
+                          bus_voltage_);
+        }
         return true;
     }
 

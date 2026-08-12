@@ -1,5 +1,6 @@
 #include "Encoder.h"
 #include "config.h"
+#include <Arduino.h>
 #include <driver/pcnt.h>
 #include <driver/gpio.h>
 #include <math.h>
@@ -67,6 +68,14 @@ void Encoder::resume()
     cumulative_count_ = 0;
     last_filtered_rpm_ = 0.0f;
     pcnt_counter_resume(unit_);
+}
+
+void Encoder::readRawPins(bool& cha_high, bool& chb_high) const
+{
+    // Important: do NOT change pinMode here. PCNT peripheral owns the
+    // GPIO matrix — same caveat as I2CBus::linesIdle(). Just read.
+    cha_high = (digitalRead(cha_pin_) == HIGH);
+    chb_high = (digitalRead(chb_pin_) == HIGH);
 }
 
 int32_t Encoder::readCount()

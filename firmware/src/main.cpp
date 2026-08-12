@@ -85,6 +85,12 @@ static uint32_t g_last_pid_ms = 0;
 static uint32_t g_pid_dt_us   = 0;   // real elapsed PID interval (μs) for applySpeeds
 int16_t g_prev_target_for_kick[4] = {0, 0, 0, 0};
 
+// ---- Encoder stall detector (runtime) ----
+// Track encoder count per tick. If motor is commanded (ramped speed != 0)
+// but the cumulative count never moves, the encoder hardware is broken.
+static int32_t g_prev_encoder_count[4] = {0, 0, 0, 0};
+static bool    g_encoder_stall_warned[4] = {false, false, false, false};
+
 // Direct motor test mode (bypasses PID + ramp, for hardware debugging)
 bool g_raw_test_mode = false;
 int16_t g_raw_test_speeds[4] = {0};
@@ -101,10 +107,12 @@ AutoRoam::UnloadState g_last_unload_state = AutoRoam::UNLOAD_IDLE;
 // transport-level error occurred.
 static uint32_t g_alive_counter = 0;
 
-// Slow sensor read timer — keeps I2C off the 500 ms hot path so a
-// stuck sensor cannot wedge the publish loop.
+// Sensor read timers. BNO055 heading is part of the control/odometry loop
+// and must be refreshed at 20 Hz; INA226 is deliberately kept at 1 Hz.
 static uint32_t g_last_sensor_read_ms = 0;
+static uint32_t g_last_imu_read_ms    = 0;
 #define SLOW_SENSOR_READ_MS  1000
+#define IMU_READ_MS            50
 
 // ========================================================================
 // LEDC Timer Setup
@@ -226,6 +234,24 @@ void setupHardware()
 
     for (int i = 0; i < MOTOR_COUNT; i++) {
         g_encoders[i].begin();
+    }
+
+    // ---- Boot-time encoder hardware sanity check ----
+    // At this point motors are stationary (just enabled, coast).
+    // Log raw GPIO levels + PCNT count. If CHA+CHB are stuck HIGH
+    // (pull-up present, encoder output not toggling), or PCNT has
+    // residual count from a previous boot, the wiring is suspect.
+    Serial.println("  [DIAG] Encoder GPIO + PCNT snapshot (motors stationary):");
+    for (int i = 0; i < MOTOR_COUNT; i++) {
+        bool cha_h = false, chb_h = false;
+        g_encoders[i].readRawPins(cha_h, chb_h);
+        int32_t cnt = g_encoders[i].getCumulativeCount();
+        Serial.printf("    %s: CHA=%s CHB=%s cnt=%ld %s\n",
+            MOTOR_NAMES[i],
+            cha_h ? "HIGH" : "LOW ",
+            chb_h ? "HIGH" : "LOW ",
+            (long)cnt,
+            cnt != 0 ? "WARN residual (check wiring)" : "ok");
     }
 
     for (int i = 0; i < MOTOR_COUNT; i++) {
@@ -415,6 +441,23 @@ void applySpeeds()
 
             int16_t motor_cmd = final_pwm * MOTOR_PINS[i].dir;
             g_motors[i].setSpeed(motor_cmd);
+
+            // A motor can spin while its encoder remains electrically dead.
+            // Report this once per motor so FL/RL failures are actionable;
+            // do not stop the motor here because this is diagnostic only.
+            int32_t count_now = g_encoders[i].getCumulativeCount();
+            if (abs(g_ramped_speeds[i]) > 30 && count_now == g_prev_encoder_count[i]) {
+                if (!g_encoder_stall_warned[i]) {
+                    Serial.printf("[FAULT] Encoder %s stalled: command=%d raw_pins=%u/%u; check 5V/3.3V, GND, CHA=%u, CHB=%u and connector\n",
+                        MOTOR_NAMES[i], g_ramped_speeds[i],
+                        g_encoders[i].getChaPin(), g_encoders[i].getChbPin(),
+                        ENCODER_PINS[i].cha, ENCODER_PINS[i].chb);
+                    g_encoder_stall_warned[i] = true;
+                }
+            } else if (count_now != g_prev_encoder_count[i]) {
+                g_encoder_stall_warned[i] = false;
+            }
+            g_prev_encoder_count[i] = count_now;
 
             // Debug: print every motor's signal path (once per second per motor)
             static uint32_t last_debug_ms[4] = {0, 0, 0, 0};
@@ -877,20 +920,25 @@ void printStatus(uint32_t /*now_ms*/)
 // tick will retry.
 static void readSensorsSlow(uint32_t now_ms)
 {
+    // BNO055 is refreshed independently at 20 Hz. Its cached values are
+    // consumed by AutoRoam heading-hold and emitted as type-134 below.
+    // Keeping this outside the 1 Hz block prevents 19/20 stale IMU frames.
+    if (now_ms - g_last_imu_read_ms >= IMU_READ_MS) {
+        g_last_imu_read_ms = now_ms;
+        if (g_imu.isOperational()) {
+            if (g_imu.read()) {
+                g_health.reportOk(MOD_IMU, now_ms);
+            } else {
+                g_health.reportError(MOD_IMU, 1, now_ms);
+            }
+        }
+    }
+
+    // INA226 is intentionally read at 1 Hz; battery state does not need
+    // the IMU's 20 Hz cadence and this leaves I2C bandwidth available.
     if (now_ms - g_last_sensor_read_ms < SLOW_SENSOR_READ_MS) return;
     g_last_sensor_read_ms = now_ms;
 
-    // IMU read — Bosch driver does ~7 I2C transactions per call.  If
-    // BNO055 hangs on the bus (e.g. motor-induced glitch), the
-    // surrounding "if operational" gate won't help — we only added
-    // the slow timer to keep this OFF the publish hot path.
-    if (g_imu.isOperational()) {
-        if (g_imu.read()) {
-            g_health.reportOk(MOD_IMU, now_ms);
-        } else {
-            g_health.reportError(MOD_IMU, 1, now_ms);
-        }
-    }
     if (g_power.isOperational()) {
         if (g_power.read()) {
             g_health.reportOk(MOD_BATTERY, now_ms);
