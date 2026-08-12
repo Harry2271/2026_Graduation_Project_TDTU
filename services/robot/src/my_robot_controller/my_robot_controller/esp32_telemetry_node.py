@@ -3,7 +3,7 @@
 Sits on the Pi 5 and acts as the **sole owner** of the ESP32 UART link
 (`/dev/robot-esp32` or `/dev/ttyACM0`).  This node runs two jobs:
 
-1. **Telemetry mirror (read side).**  ESP32 type-130/131/133/134/140/141
+1. **Telemetry mirror (read side).**  ESP32 type-130/131/133/134/140/144/145
    frames received from the bridge are republished as ROS `std_msgs/String`
    JSON messages on `/esp32/status`, `/esp32/encoder`, `/esp32/imu`,
    `/esp32/power`, `/esp32/unload_state`, `/esp32/cargo`, `/esp32/alive`
@@ -164,7 +164,7 @@ class Esp32TelemetryNode(Node):
         self._cargo_pub.publish(String(data=json.dumps(data)))
 
     def on_alive(self, data: dict) -> None:
-        """Forward type-141 alive heartbeat to /esp32/alive."""
+        """Forward type-144 alive heartbeat to /esp32/alive."""
         self._alive_pub.publish(String(data=json.dumps(data)))
         # CPS freshness heartbeat: alive message from firmware means serial
         # link is still up.  This is the canonical "CPS alive" indicator

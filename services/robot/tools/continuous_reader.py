@@ -31,7 +31,7 @@ except ImportError:
 def _summarise(msg: dict) -> str:
     t = msg.get("type")
     d = msg.get("data") or {}
-    if t == 141:
+    if t == 144:
         return (f"alive={d.get('alive')} uptime={d.get('uptime_ms')}ms "
                 f"mode={d.get('mode')} e_stop={d.get('e_stop')}")
     if t == 131:
@@ -110,7 +110,7 @@ def main() -> int:
                     json_count += 1
                     try:
                         msg = json.loads(text)
-                        if msg.get("type") == 141:
+                        if msg.get("type") == 144:
                             alive_count += 1
                             if last_alive_t:
                                 alive_gaps.append(now - last_alive_t)

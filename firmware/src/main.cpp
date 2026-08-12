@@ -905,7 +905,7 @@ void printStatus(uint32_t /*now_ms*/)
 {
     // Intentionally empty: full status type-131 was causing heap
     // fragmentation when running >10 minutes (ESP32 silently rebooted,
-    // Pi saw "ESP32 stopped sending data").  Use type-141 (alive) and
+    // Pi saw "ESP32 stopped sending data").  Use type-144 (alive) and
     // the 500 ms tick from publishSensors() instead — same fields,
     // no extra alloc path.
 }
@@ -956,7 +956,7 @@ static void readSensorsSlow(uint32_t now_ms)
 
 // Reliable fire-every-500ms tick.  Even if I2C wedges, this still
 // emits a small JSON frame so the host sees motion and knows the
-// firmware is alive.  Type 141 is a custom "alive" frame.
+// firmware is alive.  Type 144 is a custom "alive" frame.
 static void publishAlive(uint32_t now_ms)
 {
     static uint32_t last_ms = 0;
@@ -967,7 +967,7 @@ static void publishAlive(uint32_t now_ms)
     // Emit JSON manually (no I2C, no encoder reads, no locks) so this
     // cannot block.  ~120 bytes per line at 500 ms = ~240 B/s.
     int n = snprintf(g_json_buf, sizeof(g_json_buf),
-        "{\"type\":141,\"data\":{\"uptime_ms\":%lu,\"alive\":%lu,"
+        "{\"type\":144,\"data\":{\"uptime_ms\":%lu,\"alive\":%lu,"
         "\"e_stop\":%s,\"mode\":\"%s\"}}\n",
         (unsigned long)now_ms,
         (unsigned long)g_alive_counter,
@@ -1091,6 +1091,20 @@ void publishSensors(uint32_t now_ms)
                                           now_ms, g_e_stop_active, mode_name);
         PiSerial.write(g_json_buf, n);
         yield();
+    }
+
+    // ---- BNO055 calibration warning (every 10s if heading is unreliable) ----
+    // System fusion (cal_sys) must be ≥ 2 for the heading to be trustworthy
+    // in dock/heading-hold.  If it hasn't reached that level after 30s of
+    // uptime, print a prominent warning so the user performs figure-8 motion.
+    static uint32_t last_cal_warn_ms = 0;
+    if (g_imu.isOperational() && now_ms > 30000 &&
+        g_imu.getCalSys() < 2 &&
+        (now_ms - last_cal_warn_ms) >= 10000) {
+        last_cal_warn_ms = now_ms;
+        Serial.printf("[CAL] WARNING: BNO055 cal_sys=%u (need ≥2) — "
+                      "heading unreliable.  Move robot in figure-8 for ~30s\n",
+                      g_imu.getCalSys());
     }
 }
 

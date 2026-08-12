@@ -144,7 +144,8 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `135` | `{"type":135,"data":{"ir":[bool,bool,bool,bool]}}` — IR proximity sensor state |
 | `136` | `{"type":136,"data":{"distance_mm":...,"obstacle":bool}}` — front Sharp distance sensor |
 | `140` | `{"type":140,"data":{"state":N,"error":bool}}` — cylinder unload state (0-6, see firmware/AutoRoam) |
-| `141` | `{"type":141,"data":{"cargo":bool}}` — VL53L0X cargo sensor (true = cargo present at dock) |
+| `144` | `{"type":144,"data":{"uptime_ms":N,"alive":N,"e_stop":bool,"mode":"..."}}` — alive heartbeat every 500 ms; Pi uses this to detect firmware liveness (was type 141 before Aug 2026) |
+| `145` | `{"type":145,"data":{"present":bool,"debounce_ms":N}}` — cargo bed presence (on-demand via `get_cargo` cmd) |
 
 **ASCII fallback (one command per line, useful for `pio device monitor` and the web UI):**
 

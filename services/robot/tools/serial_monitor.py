@@ -36,7 +36,7 @@ def _summarise(msg: dict[str, Any]) -> str:
     """One-line human summary of a parsed ESP32 frame."""
     t = msg.get("type")
     d = msg.get("data") or {}
-    if t == 141:
+    if t == 144:
         # Alive heartbeat — the "is firmware still ticking" frame.
         return (
             f"alive={d.get('alive')} "
@@ -126,7 +126,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     continue
 
                 # Track alive frames for liveness check.
-                if msg.get("type") == 141:
+                if msg.get("type") == 144:
                     alive_seen += 1
                     if last_alive_t > 0:
                         alive_gaps.append(now - last_alive_t)

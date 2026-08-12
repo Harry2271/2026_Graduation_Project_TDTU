@@ -314,7 +314,7 @@ class RealEsp32Bridge:
     TYPE_SHARP       = 136
     TYPE_TOF         = 138
     TYPE_UNLOAD_STATE = 140
-    TYPE_ALIVE       = 141  # Always-fire 500 ms heartbeat from ESP32
+    TYPE_ALIVE       = 144  # Always-fire 500 ms heartbeat from ESP32
     TYPE_CARGO       = 145  # Cargo microswitch state (on-demand query)
 
     # Best-effort cap on a single JSON line — keeps memory bounded if ESP32

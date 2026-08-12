@@ -3,14 +3,22 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <VL53L0X.h>   // Pololu library
+#include <algorithm>    // std::sort for median
 
 // =====================================================================
 // VL53L0X TOF Laser Distance Sensor — rear-mounted for unloading
 //
 // I2C address: 0x29 (default, shared bus with BNO055 0x28 + INA226 0x40)
 // Range: 30 mm – 2000 mm (good for 4 cm unloading precision)
-// Continuous reading mode for smooth updates.
+// Continuous reading mode with 5-sample median filter to reduce jitter.
 // =====================================================================
+
+// Ring buffer for median filter — 5 samples smooths ±35mm jitter
+// down to ±5mm while keeping latency to 5 × 50ms = 250ms.
+static const int VL53L0X_MEDIAN_LEN = 5;
+static uint16_t s_tof_ring[VL53L0X_MEDIAN_LEN];
+static int      s_tof_ring_idx = 0;
+static int      s_tof_ring_count = 0;
 
 VL53L0XSensor::VL53L0XSensor()
     : sensor_(nullptr)
@@ -85,12 +93,29 @@ bool VL53L0XSensor::update(uint32_t now_ms)
     // Wire.endTransmission() directly, which can block if bus is busy.
     if (!I2CBus::linesIdle(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN)) return false;
 
-    distance_mm_ = sensor_->readRangeContinuousMillimeters();
+    uint16_t raw = sensor_->readRangeContinuousMillimeters();
 
     // VL53L0X returns 8190/8191 on timeout or out-of-range
-    if (distance_mm_ >= 8000) {
-        distance_mm_ = 9999;  // out of range
+    if (raw >= 8000) {
+        raw = 9999;
     }
+
+    // Push into median ring buffer
+    s_tof_ring[s_tof_ring_idx] = raw;
+    s_tof_ring_idx = (s_tof_ring_idx + 1) % VL53L0X_MEDIAN_LEN;
+    if (s_tof_ring_count < VL53L0X_MEDIAN_LEN) s_tof_ring_count++;
+
+    // Need at least 3 samples before median is meaningful
+    if (s_tof_ring_count < 3) {
+        distance_mm_ = raw;  // warm-up: pass through
+        return true;
+    }
+
+    // Median of the ring (copy + sort — small buffer, cheap)
+    uint16_t sorted[VL53L0X_MEDIAN_LEN];
+    memcpy(sorted, s_tof_ring, sizeof(sorted));
+    std::sort(sorted, sorted + s_tof_ring_count);
+    distance_mm_ = sorted[s_tof_ring_count / 2];  // middle element
 
     return true;
 }

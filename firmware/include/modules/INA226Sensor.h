@@ -25,7 +25,10 @@ public:
     float getCurrent()       const { return current_; }         // A
     float getPower()         const { return power_; }           // W
     float getBatteryPct()    const { return battery_pct_; }     // 0-100 %
-    uint8_t getBatteryStatus() const { return battery_status_; } // 0=ok, 1=low, 2=critical
+    uint8_t getBatteryStatus() const { return battery_status_; } // 0=ok, 1=low, 2=critical, 3=unknown/no-load
+
+    /// True when the sensor reports ~0V (shunt disconnected / not wired).
+    bool isNoLoad() const { return noload_; }
 
     /// Print JSON telemetry (type 133).
     void printTelemetry() const;
@@ -41,6 +44,7 @@ private:
     float battery_pct_;    // 0-100 %
     uint8_t battery_status_;
     bool operational_;
+    bool noload_;          // true when shunt disconnected (voltage ≈ 0)
     uint8_t addr_;
     uint32_t last_read_ms_;
 };

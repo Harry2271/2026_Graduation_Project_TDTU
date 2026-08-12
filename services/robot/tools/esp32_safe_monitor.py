@@ -120,7 +120,7 @@ def main():
                     msg = json.loads(text)
                 except:
                     continue
-                if msg.get("type") != 141:
+                if msg.get("type") != 144:
                     continue
                 alive += 1
                 last_alive_t = now

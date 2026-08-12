@@ -51,7 +51,7 @@ def main():
                 t = msg.get("type")
                 d = msg.get("data", {})
 
-                if t == 141:
+                if t == 144:
                     alive += 1
                     ec = d.get("alive", -1)
                     if last_alive_counter >= 0 and ec != last_alive_counter + 1:
