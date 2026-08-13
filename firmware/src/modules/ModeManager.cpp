@@ -95,13 +95,16 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
             pid_enabled_ = false;
             nav_vx_ = nav_vy_ = nav_omega_ = 0;
             for (int i = 0; i < 4; i++) { ramped_speeds_[i] = 0; kick_ticks_[i] = 0; }
-            Serial.println("[ModeManager] E-STOP activated");
+            obstacle_.clearObstacles(now_ms);
+            Serial.println("[ModeManager] E-STOP activated; obstacle state cleared");
             break;
 
         case CMD_E_STOP_CLEAR:
             estop_active_ = false;
             pid_enabled_ = true;
-            Serial.println("[ModeManager] E-STOP cleared");
+            obstacle_.clearObstacles(now_ms);
+            auto_roam_.reset();
+            Serial.println("[ModeManager] E-STOP cleared; avoidance state reset");
             break;
 
         case CMD_FORCE_AUTO_ROAM:
@@ -111,19 +114,67 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
             break;
 
         case CMD_OBSTACLE_LEFT:
-            obstacle_.onObstacleEvent(ObstacleDirection::LEFT, now_ms);
+            obstacle_.onObstacleEvent(ObstacleDirection::LEFT, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
             break;
 
         case CMD_OBSTACLE_RIGHT:
-            obstacle_.onObstacleEvent(ObstacleDirection::RIGHT, now_ms);
+            obstacle_.onObstacleEvent(ObstacleDirection::RIGHT, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
             break;
 
         case CMD_OBSTACLE_FRONT:
-            obstacle_.onObstacleEvent(ObstacleDirection::FRONT, now_ms);
+            obstacle_.onObstacleEvent(ObstacleDirection::FRONT, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
+            break;
+
+        case CMD_OBSTACLE_FRONT_LEFT:
+            obstacle_.onObstacleEvent(ObstacleDirection::FRONT_LEFT, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
+            break;
+
+        case CMD_OBSTACLE_FRONT_RIGHT:
+            obstacle_.onObstacleEvent(ObstacleDirection::FRONT_RIGHT, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
+            break;
+
+        case CMD_OBSTACLE_REAR:
+            obstacle_.onObstacleEvent(ObstacleDirection::REAR, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
+            break;
+
+        case CMD_OBSTACLE_REAR_LEFT:
+            obstacle_.onObstacleEvent(ObstacleDirection::REAR_LEFT, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
+            break;
+
+        case CMD_OBSTACLE_REAR_RIGHT:
+            obstacle_.onObstacleEvent(ObstacleDirection::REAR_RIGHT, now_ms,
+                                      cmd.obstacle_has_payload,
+                                      cmd.obstacle_distance_m,
+                                      cmd.obstacle_severity);
             break;
 
         case CMD_OBSTACLE_CLEAR:
             obstacle_.clearObstacles(now_ms);
+            // Explicit Pi clear is also the only non-e-stop route to reset
+            // the latched AUTO_ROAM avoidance FSM.  Local IR/Sharp are still
+            // polled independently and can reassert the hard stop immediately.
+            auto_roam_.reset();
             break;
 
         case CMD_SET_MAX_SPEED:

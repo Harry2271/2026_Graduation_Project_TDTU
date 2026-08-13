@@ -27,10 +27,10 @@
 
 | Motor | Role | RPWM | LPWM | EN | Direction | LEDC Ch |
 |-------|------|------|------|----|-----------|---------|
-| **FL** | Front-Left | GPIO **12** | GPIO **13** | GPIO **3** | +1 (normal) | RPWM=ch0, LPWM=ch4 |
-| **FR** | Front-Right | GPIO **14** | GPIO **15** | GPIO **7** | -1 (reversed) | RPWM=ch1, LPWM=ch5 |
-| **RL** | Rear-Left | GPIO **16** | GPIO **17** | GPIO **48** | +1 (normal) | RPWM=ch2, LPWM=ch6 |
-| **RR** | Rear-Right | GPIO **38** | GPIO **39** | GPIO **47** | -1 (reversed) | RPWM=ch3, LPWM=7 |
+| **FL** | Front-Left | GPIO **12** | GPIO **13** | GPIO **3** | -1 (reversed) | RPWM=ch0, LPWM=ch4 |
+| **FR** | Front-Right | GPIO **14** | GPIO **15** | GPIO **7** | +1 (normal) | RPWM=ch1, LPWM=ch5 |
+| **RL** | Rear-Left | GPIO **16** | GPIO **17** | GPIO **48** | -1 (reversed) | RPWM=ch2, LPWM=ch6 |
+| **RR** | Rear-Right | GPIO **38** | GPIO **39** | GPIO **47** | +1 (normal) | RPWM=ch3, LPWM=ch7 |
 
 ### BTS7960 Wiring Per Driver
 
@@ -281,7 +281,7 @@
 |-----------|-------|
 | I2C Address | **0x40** |
 | Shunt Resistor | **10 mΩ** |
-| Publish Rate | **0.2 Hz** (every 5 s) |
+| Publish Rate | **1 Hz** (every 1 s) |
 | Measures | Bus voltage, current, power |
 
 ---
@@ -379,7 +379,7 @@ idle → adjusting → extending → holding → retracting → done →
 | **21** | Encoder RR CHB | INPUT | PCNT unit 3 |
 | **22-25** | — | N/A | **Not available on WROOM-1U module** |
 | **35** | L298N IN2 (cylinder retract) | OUTPUT | Cylinder pull down |
-| **36** | — | Free | ⚠ INPUT-ONLY (no output driver) |
+| **36** | Cargo limit switch | INPUT | Microswitch NO (INPUT_PULLUP) |
 | **37** | — | Free | ⚠ INPUT-ONLY (no output driver) |
 | **38** | Motor RR RPWM | OUTPUT | BTS7960 PWM forward |
 | **39** | Motor RR LPWM | OUTPUT | BTS7960 PWM reverse |
@@ -393,7 +393,7 @@ idle → adjusting → extending → holding → retracting → done →
 | **47** | Motor RR EN | OUTPUT | BTS7960 enable |
 | **48** | Motor RL EN | OUTPUT | BTS7960 enable |
 
-**Summary:** 30 GPIO used, 2 free input-only (36, 37), 4 unavailable (22-25). All 8 LEDC channels consumed by 4 motors.
+**Summary:** 31 GPIO used, 1 free input-only (37), 4 unavailable (22-25). All 8 LEDC channels consumed by 4 motors.
 
 ---
 
@@ -428,3 +428,39 @@ idle → adjusting → extending → holding → retracting → done →
 | Battery (planned) | **11.1V nom** (3S 18650) | Replace 21V PSU |
 
 > ⚠️ **ALL modules MUST share a common ground** — ESP32, Pi, all BTS7960s, all sensors, all power supplies.
+
+---
+
+## Cargo Limit Switch — Microswitch on Cargo Bed
+
+| Function | GPIO | Notes |
+|----------|------|-------|
+| **Signal** | GPIO **36** | ⚠ INPUT-ONLY (no output driver) |
+
+| Parameter | Value |
+|-----------|-------|
+| Switch type | NO (normally open) |
+| Wiring | One side → GPIO 36, other side → GND |
+| INPUT_PULLUP | Enabled internally |
+| Active state | **LOW = cargo present** (NO switch pressed by package weight → GND) |
+| Debounce | 100 ms |
+| Poll rate | 50 Hz (every PID tick, 20 ms) |
+| Telemetry | Type 131 (compact) + Type 145 (on-demand `get_cargo`) |
+
+### Cargo Limit Switch Wiring
+
+```
+          ESP32-S3
+            │
+  GPIO 36 ◄─┤ INPUT_PULLUP (internal)
+            │
+          Microswitch (NO)
+            │
+  Signal ◄───┤ Common (one terminal)
+            │
+          GND ◄───── Other terminal (shorts to GPIO 36 when pressed)
+```
+
+> ⚠️ **GPIO 36 is INPUT-ONLY on ESP32-S3** — cannot drive output. Use only
+> as a digital input. The internal pull-up replaces the external one,
+> simplifying the wiring to a 2-wire connection (signal + GND).

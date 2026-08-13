@@ -8,6 +8,7 @@
 #include "Encoder.h"
 #include "config.h"
 #include <Arduino.h>
+#include <math.h>
 
 // =====================================================================
 // AutoRoam — autonomous sensor-based driving + dock/unload sequence
@@ -69,6 +70,11 @@ void AutoRoam::reset()
     last_obstacle_ms_  = 0;
     sharp_clear_ms_    = 0;
     drive_start_ms_    = 0;  // re-arm Sharp boot-skip on next AUTO_ROAM entry
+
+    // Reset the embedded avoidance FSM latch (STATE_E_STOPPED is a one-way
+    // trap until reset() is called; without this, a single latched condition
+    // would lock the chassis out of AUTO_ROAM forever).
+    avoidance_fsm_.reset();
 
     // Reset unloading sequence
     unload_state_ = UNLOAD_IDLE;
@@ -185,10 +191,15 @@ bool AutoRoam::compute(uint32_t now_ms,
     // the PID loop and the main sensor read, and ensures the cached
     // heading value is fresh when we read it.
     if (imu_ && imu_->isOperational()) {
-        float h = imu_->getHeading();
-        if (!has_heading_) {
-            hold_heading_ = wrap360(h);
-            has_heading_  = true;
+        const float h = imu_->getHeading();
+        if (isfinite(h) && h >= 0.0f && h < 360.0f) {
+            if (!has_heading_) {
+                hold_heading_ = wrap360(h);
+                has_heading_  = true;
+                heading_integral_ = 0.0f;
+            }
+        } else {
+            has_heading_ = false;
             heading_integral_ = 0.0f;
         }
     }
@@ -223,7 +234,12 @@ bool AutoRoam::compute(uint32_t now_ms,
                 // report ±5-10° error and the cylinder extends while the robot
                 // is facing the wrong direction.
                 if (imu_ && imu_->isOperational() && has_heading_) {
-                    heading_err_deg_ = headingError(hold_heading_, imu_->getHeading());
+                    const float hh = imu_->getHeading();
+                    if (isfinite(hh) && hh >= 0.0f && hh < 360.0f) {
+                        heading_err_deg_ = headingError(hold_heading_, hh);
+                    } else {
+                        heading_err_deg_ = 0.0f;
+                    }
                     bool heading_err_ok = (fabs(heading_err_deg_) <= HEADING_GATE_DEG);
                     bool cal_ok = (imu_->getCalMag() >= 2 && imu_->getCalSys() >= 2);
                     heading_ok_ = heading_err_ok && cal_ok;
@@ -348,7 +364,14 @@ bool AutoRoam::compute(uint32_t now_ms,
 
                 // Heading-hold while reversing (PI on leave_target_heading_)
                 if (imu_ && imu_->isOperational() && has_heading_) {
-                    float err = headingError(leave_target_heading_, imu_->getHeading());
+                    const float lh = imu_->getHeading();
+                    if (!isfinite(lh) || lh < 0.0f || lh >= 360.0f) {
+                        // Invalid heading: stop angular correction instead of
+                        // sending a wrapped/NaN omega during leave-dock.
+                        heading_err_deg_ = 0.0f;
+                        out_omega = 0;
+                    } else {
+                    float err = headingError(leave_target_heading_, lh);
                     heading_err_deg_ = err;
                     if (err > -60.0f && err < 60.0f) {
                         heading_integral_ += err * 0.02f;
@@ -357,6 +380,7 @@ bool AutoRoam::compute(uint32_t now_ms,
                     }
                     float omega_f = heading_kp_ * err + heading_ki_ * heading_integral_;
                     out_omega = (int16_t)constrain(omega_f, -120.0f, 120.0f);
+                    }
                 }
 
                 // Reverse at LEAVE_DOCK_SPEED
@@ -426,7 +450,17 @@ bool AutoRoam::compute(uint32_t now_ms,
         }
     }
     if (imu_ && imu_->isOperational()) {
-        avoidance_fsm_.feedHeading(imu_->getHeading());
+        const float heading = imu_->getHeading();
+        if (isfinite(heading) && heading >= 0.0f && heading < 360.0f) {
+            avoidance_fsm_.feedHeading(heading);
+        } else {
+            // Invalid I2C/IMU sample must never enter rotate or heading-hold
+            // math.  Feed no new heading; the FSM will use its timeout and
+            // bounded fallback rather than integrating NaN.
+            Serial.println("[AUTO_ROAM] invalid BNO055 heading — hold disabled");
+            has_heading_ = false;
+            heading_integral_ = 0.0f;
+        }
     }
 
     // ----- Base forward speed (with battery + Sharp slow-down logic) -----
@@ -445,14 +479,20 @@ bool AutoRoam::compute(uint32_t now_ms,
     // ----- Heading-hold PI (produces small omega correction) -----
     int16_t nav_vy = 0, nav_omega = 0;
     if (imu_ && imu_->isOperational() && has_heading_) {
-        float err = headingError(hold_heading_, imu_->getHeading());
-        if (err > -60.0f && err < 60.0f) {
-            heading_integral_ += err * 0.02f;
-            if (heading_integral_ >  100.0f) heading_integral_ =  100.0f;
-            if (heading_integral_ < -100.0f) heading_integral_ = -100.0f;
+        const float heading = imu_->getHeading();
+        if (isfinite(heading) && heading >= 0.0f && heading < 360.0f) {
+            float err = headingError(hold_heading_, heading);
+            if (err > -60.0f && err < 60.0f) {
+                heading_integral_ += err * 0.02f;
+                if (heading_integral_ >  100.0f) heading_integral_ =  100.0f;
+                if (heading_integral_ < -100.0f) heading_integral_ = -100.0f;
+            }
+            float omega_f = heading_kp_ * err + heading_ki_ * heading_integral_;
+            nav_omega = (int16_t)constrain(omega_f, -120.0f, 120.0f);
+        } else {
+            // Invalid heading sample: zero omega to avoid integrating NaN.
+            nav_omega = 0;
         }
-        float omega_f = heading_kp_ * err + heading_ki_ * heading_integral_;
-        nav_omega = (int16_t)constrain(omega_f, -120.0f, 120.0f);
     }
 
     // Tick FSM — it can override base motion based on sensors

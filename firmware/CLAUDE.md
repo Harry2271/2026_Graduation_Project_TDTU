@@ -180,10 +180,12 @@ UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 | `{"cmd":"cylinder_stop"}` | Stop cylinder immediately |
 | `{"cmd":"begin_dock"}` | Start full docking sequence (firmware state machine) |
 | `{"cmd":"cancel_dock"}` | Cancel docking sequence |
-| `{"cmd":"obstacle_left"}` | LiDAR dodge left |
-| `{"cmd":"obstacle_right"}` | LiDAR dodge right |
-| `{"cmd":"obstacle_front"}` | LiDAR dodge forward |
-| `{"cmd":"obstacle_clear"}` | Path is clear |
+| `{"cmd":"obstacle_left", "distance_m": 0.9, "severity": 0.4}` | LiDAR obstacle on left; optional distance/severity payload |
+| `{"cmd":"obstacle_right", "distance_m": 0.9, "severity": 0.4}` | LiDAR obstacle on right; optional distance/severity payload |
+| `{"cmd":"obstacle_front"}` | LiDAR front hard-stop (explicit clear required) |
+| `{"cmd":"obstacle_front_left"}` / `obstacle_front_right` | Compound front-corner dodge events |
+| `{"cmd":"obstacle_rear"}` / `obstacle_rear_left` / `obstacle_rear_right` | Rear and rear-corner events |
+| `{"cmd":"obstacle_clear"}` | Explicitly clear Pi obstacle state and reset avoidance latch |
 
 ### Protocol — ESP32-S3 → Raspberry Pi 5 (Responses)
 

@@ -67,6 +67,7 @@ public:
     [[nodiscard]] bool isPIDEnabled() const { return pid_enabled_; }
     [[nodiscard]] uint8_t getMaxSpeedPct() const { return max_speed_pct_; }
     [[nodiscard]] const AutoRoam& getAutoRoam() const { return auto_roam_; }
+    [[nodiscard]] const ObstacleAvoidance& getObstacleAvoidance() const { return obstacle_; }
 
     /// Per-wheel ramped speeds (after acceleration ramp + speed limit).
     /// Used by printStatus to show the *actual* speed sent to each motor.

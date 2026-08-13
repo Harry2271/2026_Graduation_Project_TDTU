@@ -59,6 +59,8 @@ NODES=(
     "${SERVICE_NAME_PREFIX}-map-manager"
     "${SERVICE_NAME_PREFIX}-web-bridge"
     "${SERVICE_NAME_PREFIX}-esp32-telemetry"
+    "${SERVICE_NAME_PREFIX}-odom"
+    "${SERVICE_NAME_PREFIX}-teleop"
     "${SERVICE_NAME_PREFIX}-brain"
     "${SERVICE_NAME_PREFIX}-vision"
     "${SERVICE_NAME_PREFIX}-camera"
@@ -122,6 +124,11 @@ start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller sl
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
 start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
 start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
+# Encoder + IMU odometry must run in production so Nav2 has odom→base_footprint.
+start_ros_node "${SERVICE_NAME_PREFIX}-odom" "ros2 run my_robot_controller odom"
+# Sole ROS velocity-to-ESP32 command consumer.  It forwards both MANUAL and
+# AUTO/Nav2 /cmd_vel; teleop_node enforces its one-second command timeout.
+start_ros_node "${SERVICE_NAME_PREFIX}-teleop" "ros2 run my_robot_controller teleop_node"
 
 # Brain (exp backoff + max restarts)
 BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBOT_BRAIN_TOKEN=${ROBOT_BRAIN_TOKEN:-}"

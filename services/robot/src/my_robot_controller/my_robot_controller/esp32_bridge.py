@@ -52,6 +52,10 @@ class Esp32Bridge(Protocol):
     async def cancel_dock(self) -> None: ...
     async def get_unload_state(self) -> dict: ...
     async def get_cargo(self) -> dict: ...
+    async def push_obstacle(self, direction: str,
+                            distance_m: float | None = None,
+                            severity: float | None = None) -> None: ...
+    async def push_obstacle_clear(self) -> None: ...
     def battery_pct(self) -> Optional[float]: ...
     def battery_voltage(self) -> Optional[float]: ...
     def battery_current(self) -> Optional[float]: ...
@@ -65,6 +69,21 @@ class Esp32Bridge(Protocol):
     on_error: Callable[[str], None]
     on_alive: Callable[[dict], None]
     on_unload_state: Callable[[dict], None]
+
+
+# Names of supported obstacle directions.  Mirrors the firmware enum
+# (NONE/FRONT/LEFT/RIGHT/FRONT_LEFT/FRONT_RIGHT/REAR/REAR_LEFT/REAR_RIGHT)
+# and maps to the JSON command names the ESP32 CommandParser understands.
+OBSTACLE_COMMAND_NAMES: dict[str, str] = {
+    'front':         'obstacle_front',
+    'left':          'obstacle_left',
+    'right':         'obstacle_right',
+    'front_left':    'obstacle_front_left',
+    'front_right':   'obstacle_front_right',
+    'rear':          'obstacle_rear',
+    'rear_left':     'obstacle_rear_left',
+    'rear_right':    'obstacle_rear_right',
+}
 
 
 # ---------- Helpers ------------------------------------------------------
@@ -221,6 +240,23 @@ class FakeEsp32Bridge:
 
     async def get_cargo(self) -> dict:
         return {}
+
+    async def push_obstacle(self, direction: str,
+                            distance_m: float | None = None,
+                            severity: float | None = None) -> None:
+        """Fake-side: record the obstacle push so tests can assert it."""
+        cmd = OBSTACLE_COMMAND_NAMES.get(direction)
+        if cmd is None:
+            return
+        payload: dict = {'cmd': cmd}
+        if distance_m is not None:
+            payload['distance_m'] = float(distance_m)
+        if severity is not None:
+            payload['severity'] = float(severity)
+        self._commands.append(payload)
+
+    async def push_obstacle_clear(self) -> None:
+        self._commands.append({'cmd': 'obstacle_clear'})
 
     def battery_pct(self) -> Optional[float]:
         return None
@@ -466,6 +502,23 @@ class RealEsp32Bridge:
         """
         await self._send_line({'cmd': 'get_cargo'})
         return dict(self._last_cargo)
+
+    async def push_obstacle(self, direction: str,
+                            distance_m: float | None = None,
+                            severity: float | None = None) -> None:
+        cmd = OBSTACLE_COMMAND_NAMES.get(direction)
+        if cmd is None:
+            LOG.warning('ignoring unknown obstacle direction: %s', direction)
+            return
+        payload: dict = {'cmd': cmd}
+        if distance_m is not None:
+            payload['distance_m'] = max(0.0, min(float(distance_m), 12.0))
+        if severity is not None:
+            payload['severity'] = max(0.0, min(float(severity), 1.0))
+        await self._send_line(payload)
+
+    async def push_obstacle_clear(self) -> None:
+        await self._send_line({'cmd': 'obstacle_clear'})
 
     @property
     def last_cargo(self) -> dict:
@@ -860,6 +913,23 @@ class MirrorBridge:
 
     async def get_cargo(self) -> dict:
         return dict(self._last_cargo)
+
+    async def push_obstacle(self, direction: str,
+                            distance_m: float | None = None,
+                            severity: float | None = None) -> None:
+        cmd = OBSTACLE_COMMAND_NAMES.get(direction)
+        if cmd is None:
+            LOG.warning('ignoring unknown obstacle direction: %s', direction)
+            return
+        payload: dict = {'cmd': cmd}
+        if distance_m is not None:
+            payload['distance_m'] = float(distance_m)
+        if severity is not None:
+            payload['severity'] = float(severity)
+        await self._send(payload)
+
+    async def push_obstacle_clear(self) -> None:
+        await self._send({'cmd': 'obstacle_clear'})
 
     def battery_pct(self) -> Optional[float]:
         return None

@@ -195,12 +195,27 @@ class BrainNode(Node):
         self._lidar_last_update = 0.0
         self._obstacle_detected = False
         self._obstacle_direction = 'none'  # front/left/right/rear/none
+        # LiDAR → ESP32 event hysteresis.  Only publish a zone transition or
+        # a meaningful distance change; a 10 Hz scan must not flood the serial
+        # command queue with identical obstacle frames.
+        self._lidar_zone_sent: str = 'none'
+        self._lidar_zone_sent_distance = float('inf')
+        self._lidar_zone_candidate: str = 'none'
+        self._lidar_zone_candidate_since = 0.0
+        self._LIDAR_EVENT_THRESHOLD_M = 1.5
+        self._LIDAR_EVENT_CLEAR_M = 1.7
+        self._LIDAR_EVENT_DEBOUNCE_S = 0.15
+        self._LIDAR_EVENT_DISTANCE_STEP_M = 0.20
 
         self._scan_sub = self.create_subscription(
             LaserScan, '/scan', self._on_scan, 10)
 
         # ESP32 telemetry — IR + Sharp status
         self._esp32_status: dict = {}
+        self._esp32_status_last_update: float = 0.0
+        self._bridge_health: str = 'UNKNOWN'
+        self._active_navigator: BasicNavigator | None = None
+        self._nav_cancel_requested: bool = False
         self._esp32_sub = self.create_subscription(
             String, '/esp32/status', self._on_esp32_status, 10)
 
@@ -388,6 +403,18 @@ class BrainNode(Node):
             self._bridge = FakeEsp32Bridge()
             self._bridge_connected = True
 
+    def _get_robot_pose(self) -> tuple[float, float, float] | None:
+        """Return current map-frame robot pose, or None while TF is unavailable."""
+        try:
+            tf = self._tf_buffer.lookup_transform('map', 'base_footprint', Time())
+            t = tf.transform.translation
+            q = tf.transform.rotation
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            return (t.x, t.y, math.atan2(siny_cosp, cosy_cosp))
+        except Exception:
+            return None
+
     def _try_capture_home_pose(self) -> None:
         """Poll TF until AMCL converges, then save home pose (once)."""
         if self._home_pose_captured:
@@ -426,8 +453,20 @@ class BrainNode(Node):
             self.get_logger().warn(f'ESP32 bridge disconnect error: {e}')
         self._bridge_connected = False
 
+    def _cancel_nav_goal(self) -> None:
+        """Cancel the active Nav2 action, if one is running."""
+        self._nav_cancel_requested = True
+        navigator = self._active_navigator
+        if navigator is None:
+            return
+        try:
+            navigator.cancelTask()
+            self.get_logger().warn('Active Nav2 goal cancelled by safety supervisor')
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f'Nav2 cancelTask failed: {exc}')
+
     def navigate_to(self, x: float, y: float, theta: float) -> bool:
-        """Send a navigation goal to Nav2. Blocks until done.
+        """Send a navigation goal to Nav2 with cancellation and progress watchdog.
 
         Args:
             x: X coordinate in the map frame (meters).
@@ -438,8 +477,10 @@ class BrainNode(Node):
             True if the goal was reached, False on failure or cancellation.
         """
         navigator: BasicNavigator | None = None
+        self._nav_cancel_requested = False
         try:
             navigator = BasicNavigator()
+            self._active_navigator = navigator
             navigator.waitUntilNav2Active()
 
             goal_pose = PoseStamped()
@@ -451,7 +492,26 @@ class BrainNode(Node):
             goal_pose.pose.orientation.w = math.cos(theta / 2.0)
 
             navigator.goToPose(goal_pose)
+            start = time.monotonic()
+            last_progress = start
+            last_pose: tuple[float, float] | None = None
             while not navigator.isGoalReached():
+                if self._nav_cancel_requested or self._is_motion_locked():
+                    navigator.cancelTask()
+                    return False
+                now = time.monotonic()
+                if now - start > 300.0 or now - last_progress > 10.0:
+                    self.get_logger().error('Nav2 goal timed out or made no progress')
+                    navigator.cancelTask()
+                    return False
+                pose = self._get_robot_pose()
+                if pose is not None:
+                    current = (pose[0], pose[1])
+                    if last_pose is None or math.hypot(
+                            current[0] - last_pose[0],
+                            current[1] - last_pose[1]) >= 0.10:
+                        last_pose = current
+                        last_progress = now
                 time.sleep(0.1)
 
             return navigator.isGoalReached()
@@ -460,6 +520,8 @@ class BrainNode(Node):
             return False
         finally:
             if navigator is not None:
+                if self._active_navigator is navigator:
+                    self._active_navigator = None
                 navigator.lifecycleShutdown()
 
     async def _drive(self, vx: float, vy: float, omega: float) -> None:
@@ -1310,11 +1372,11 @@ class BrainNode(Node):
                     f'dist={tag.get("z", 0):.2f}m')
                 return tag
 
-            # No obstacle → drive forward
+            # No obstacle → drive forward only with fresh trusted sensors.
             if not self._obstacle_blocking():
                 await self._drive(EXPLORE_FWD_SPEED, 0.0, 0.0)
                 await asyncio.sleep(0.1)
-                dodge_attempts = 0  # reset on clear driving
+                dodge_attempts = 0
                 continue
 
             # ── Obstacle detected: active dodge ──
@@ -1325,7 +1387,10 @@ class BrainNode(Node):
                 self.get_logger().error(
                     f'Exploration stuck after {dodge_attempts} dodge attempts '
                     f'(>{self._DODGE_MAX_ATTEMPTS}) → E-STOP, abort exploration')
-                await self._bridge.stop()
+                self._e_stop_latched = True
+                self._cancel_nav_goal()
+                await self._bridge.e_stop()
+                self.transition_to(BrainState.E_STOP, 'obstacle escape exhausted')
                 return None
 
             escaped = await self._active_dodge()
@@ -1349,7 +1414,10 @@ class BrainNode(Node):
 
         if direction == 'e_stop':
             self.get_logger().error('All directions blocked — e_stop')
-            await self._bridge.stop()
+            self._e_stop_latched = True
+            self._cancel_nav_goal()
+            await self._bridge.e_stop()
+            self.transition_to(BrainState.E_STOP, 'all escape directions blocked')
             return False
 
         vx, vy, omega = self._velocity_for_direction(direction)
@@ -1357,21 +1425,21 @@ class BrainNode(Node):
             f'Dodge: dir={direction} score={score:.2f} → '
             f'vx={vx:.0f} vy={vy:.0f} omega={omega:.0f}')
 
-        # Apply the escape maneuver
+        # Apply the escape maneuver and require measurable pose progress.
+        before = self._get_robot_pose()
         await self._drive(vx, vy, omega)
         await asyncio.sleep(0.5)
+        after = self._get_robot_pose()
+        progressed = (before is not None and after is not None and
+                      math.hypot(after[0] - before[0], after[1] - before[1]) >= 0.03)
 
         # Re-evaluate: is the path actually clear now?
         cleared = not self._obstacle_blocking()
-        if cleared:
+        if cleared and (before is None or after is None or progressed):
             return True
 
-        # Still blocked — rotate toward the freeest LiDAR zone
-        _, post_score = self._score_escape_directions()
-        if post_score > score:
-            # Second iteration found a better path
-            return True
-
+        # A better score is not clearance.  The caller must keep the bounded
+        # attempt count and only resume once all safety predicates are clear.
         return False
 
     async def _drive_reverse_distance(self, distance_m: float, speed: int,
@@ -1475,28 +1543,25 @@ class BrainNode(Node):
                         best = r
             return best
 
-        # Sector bounds (radians, robot frame)
-        # Front is split into 3 sub-zones for directional awareness:
-        #   front_left:   [-45°, -15°]  — detects obstacles at FL corner
-        #   front_center: [-15°, +15°]  — detects obstacles directly ahead
-        #   front_right:  [+15°, +45°]  — detects obstacles at FR corner
-        # Left   [+45°, +135°]
-        # Rear   [+135°, -135°]  (wraps through ±π)
-        # Right  [-135°, -45°]
+        # Sector bounds (radians, robot frame).  RPLIDAR convention used by
+        # this node: 0° = forward and positive angles turn left.
+        # Front is split into 3 sub-zones for directional awareness.  Keep
+        # the names aligned with the physical side, otherwise a front-left
+        # event would command the wrong escape direction.
         import math as _m
         q = _m.pi / 4.0          # 45°
         q3 = q / 3.0             # 15°
 
         # Front sub-zones (non-overlapping, contiguous from -45° to +45°)
-        fl  = _min_in_sector(-q,    -q3)    # front-left:  [-45°, -15°]
-        fc  = _min_in_sector(-q3,   +q3)    # front-center: [-15°, +15°]
-        fr  = _min_in_sector(+q3,   +q)     # front-right: [+15°, +45°]
+        fl  = _min_in_sector(+q3, +q)       # front-left:  [+15°, +45°]
+        fc  = _min_in_sector(-q3, +q3)       # front-center: [-15°, +15°]
+        fr  = _min_in_sector(-q, -q3)        # front-right: [-45°, -15°]
 
-        l = _min_in_sector(+q, 3 * q)       # left:  [+45°, +135°]
+        l = _min_in_sector(+q, 3 * q)        # left:  [+45°, +135°]
         r = _min_in_sector(-3 * q, -q)       # right: [-135°, -45°]
-        # Rear zone wraps: handle by reading both halves
-        rear_a = _min_in_sector(3 * q, 0)
-        rear_b = _min_in_sector(-_m.pi, -3 * q)
+        # Rear wraps across -pi/+pi; sample both halves explicitly.
+        rear_a = _min_in_sector(3 * q, _m.pi)       # +135°..+180°
+        rear_b = _min_in_sector(-_m.pi, -3 * q)     # -180°..-135°
         rear = min(rear_a, rear_b)
 
         self._lidar_min_front_left = fl
@@ -1507,6 +1572,72 @@ class BrainNode(Node):
         self._lidar_min_right = r
         self._lidar_min_rear = rear
         self._lidar_last_update = time.time()
+        self._update_lidar_esp32_event()
+
+    def _update_lidar_esp32_event(self) -> None:
+        """Publish a debounced LiDAR zone event to the ESP32 gateway.
+
+        The brain still owns the velocity-level dodge planner.  This event is
+        a low-level directional hint/safety layer only.  It is intentionally
+        edge-triggered and hysteretic so a 10 Hz scan cannot fill the command
+        queue.  A clear is sent only when local IR/Sharp telemetry is clear;
+        local physical sensors remain the higher-priority safety source.
+        """
+        now = time.time()
+        # LiDAR is considered fresh if the most recent scan arrived within
+        # the last 0.5 s.  Outside that window, refuse to emit a new event so
+        # stale data cannot override a later physical-sensor state.
+        if self._lidar_last_update > 0.0 and (now - self._lidar_last_update) > 0.5:
+            return
+
+        zones = {
+            'front_left': self._lidar_min_front_left,
+            'front': self._lidar_min_front_center,
+            'front_right': self._lidar_min_front_right,
+            'left': self._lidar_min_left,
+            'right': self._lidar_min_right,
+            'rear': self._lidar_min_rear,
+        }
+        active = [(name, dist) for name, dist in zones.items()
+                  if dist <= self._LIDAR_EVENT_THRESHOLD_M]
+        if active:
+            direction, distance = min(active, key=lambda item: item[1])
+        else:
+            direction, distance = 'none', float('inf')
+
+        # Clear only after leaving the hysteresis band and when local sensors
+        # are not reporting a physical obstacle.
+        local_blocked = self._esp32_obstacle_blocking()
+        if direction == 'none' and self._lidar_zone_sent != 'none':
+            if local_blocked:
+                return
+            if min(zones.values()) < self._LIDAR_EVENT_CLEAR_M:
+                return
+
+        if direction != self._lidar_zone_candidate:
+            self._lidar_zone_candidate = direction
+            self._lidar_zone_candidate_since = now
+            return
+        if (now - self._lidar_zone_candidate_since) < self._LIDAR_EVENT_DEBOUNCE_S:
+            return
+
+        if direction == self._lidar_zone_sent:
+            if direction == 'none':
+                return
+            if abs(distance - self._lidar_zone_sent_distance) < self._LIDAR_EVENT_DISTANCE_STEP_M:
+                return
+
+        self._lidar_zone_sent = direction
+        self._lidar_zone_sent_distance = distance
+        if direction == 'none':
+            self._schedule_async(self._bridge.push_obstacle_clear())
+            return
+
+        severity = max(0.0, min(1.0,
+            (self._LIDAR_EVENT_THRESHOLD_M - distance) /
+            self._LIDAR_EVENT_THRESHOLD_M))
+        self._schedule_async(self._bridge.push_obstacle(
+            direction, distance_m=distance, severity=severity))
 
     def _on_esp32_status(self, msg: String) -> None:
         """Cache ESP32 type-131 status for IR + Sharp.
@@ -1516,6 +1647,7 @@ class BrainNode(Node):
         """
         try:
             self._esp32_status = json.loads(msg.data)
+            self._esp32_status_last_update = time.monotonic()
         except Exception:
             pass
 
@@ -1535,6 +1667,7 @@ class BrainNode(Node):
         if self._e_stop_latched:
             return  # already handled — debounce
         self._e_stop_latched = True
+        self._cancel_nav_goal()
         self.get_logger().error(
             'ESP32 e-stop edge event received — locking to E_STOP')
         self._schedule_async(self._handle_e_stop())
@@ -1570,7 +1703,8 @@ class BrainNode(Node):
             payload = json.loads(msg.data)
         except Exception:
             return
-        health = payload.get('health', 'HEALTHY')
+        health = payload.get('health', 'STALE')
+        self._bridge_health = health
         if health == 'HEALTHY':
             if self._bridge_stale_latched:
                 self.get_logger().info('ESP32 bridge recovered — clearing stale latch')
@@ -1580,6 +1714,8 @@ class BrainNode(Node):
         if self._bridge_stale_latched:
             return  # already handled — debounce
         self._bridge_stale_latched = True
+        self._e_stop_latched = True
+        self._cancel_nav_goal()
         self.get_logger().warn(
             f'ESP32 bridge STALE (alive_age={payload.get("last_alive_age_s")}s, '
             f'status_age={payload.get("last_status_age_s")}s) — stopping')
@@ -1629,8 +1765,10 @@ class BrainNode(Node):
           < 15cm  → hard stop (front too close)
           < 60cm  → obstacle detected (slowing zone — must react)
         """
-        if not self._esp32_status:
-            return False
+        status_age = (time.monotonic() - self._esp32_status_last_update
+                      if self._esp32_status_last_update else float('inf'))
+        if not self._esp32_status or status_age > 1.0 or self._bridge_health == 'STALE':
+            return True
         st = self._esp32_status.get('st', {})
         # Sharp: trigger at BOTH hard-stop AND slow-down zones
         sharp = st.get('sharp', 999)
@@ -1655,21 +1793,21 @@ class BrainNode(Node):
         # LiDAR can see up to 12m; trigger avoidance at 1.5m for safety margin
         # (ESP32's local sensors take over below 80cm for emergency stop)
         threshold = 1.5
+        if (time.monotonic() - self._lidar_last_update) > 0.5:
+            return True, 'unknown'
         zones = {
-            'front': self._lidar_min_front,
-            'left':  self._lidar_min_left,
+            'front_left': self._lidar_min_front_left,
+            'front': self._lidar_min_front_center,
+            'front_right': self._lidar_min_front_right,
+            'left': self._lidar_min_left,
             'right': self._lidar_min_right,
-            'rear':  self._lidar_min_rear,
+            'rear': self._lidar_min_rear,
         }
         blocked_zone = None
         for name, d in zones.items():
             if d < threshold:
                 if blocked_zone is None or d < zones[blocked_zone]:
                     blocked_zone = name
-
-        # Stale LiDAR data (>500ms) = don't trust it
-        if (time.time() - self._lidar_last_update) > 0.5:
-            return False, 'none'
 
         return blocked_zone is not None, (blocked_zone or 'none')
 
@@ -1977,17 +2115,19 @@ class BrainNode(Node):
         """
         # Read IR mask from ESP32 status (cached by _on_esp32_status).
         ir_pressed: set[str] = set()
+        ir_mask = [False, False, False, False]
         ir_count = 0
         if self._esp32_status:
             st = self._esp32_status.get('st', {})
             ir = st.get('ir', [False, False, False, False])
             if isinstance(ir, list) and len(ir) >= 4:
                 # ir layout (per ESP32 type-131): [rl, rr, l, r]
-                ir_count = sum(1 for hit in ir[:4] if bool(hit))
-                if ir[0]: ir_pressed.add('left')   # rear-left → "left" side
-                if ir[1]: ir_pressed.add('right')
-                if ir[2]: ir_pressed.add('left')
-                if ir[3]: ir_pressed.add('right')
+                ir_mask = [bool(hit) for hit in ir[:4]]
+                ir_count = sum(1 for hit in ir_mask if hit)
+                if ir_mask[0]: ir_pressed.add('left')   # rear-left → "left" side
+                if ir_mask[1]: ir_pressed.add('right')
+                if ir_mask[2]: ir_pressed.add('left')
+                if ir_mask[3]: ir_pressed.add('right')
         # Sharp very close (<30cm) → treat as front-blocked
         sharp_close = False
         if self._esp32_status:
@@ -1995,20 +2135,16 @@ class BrainNode(Node):
             if isinstance(sharp, (int, float)) and 0 < sharp < 30:
                 sharp_close = True
 
-        # Stale LiDAR → just trust IR
-        li_stale = (time.time() - self._lidar_last_update) > 0.5
+        # Stale LiDAR is unknown, never maximally clear.  Unknown zones get a
+        # conservative score and cannot authorize autonomous escape.
+        li_stale = (time.monotonic() - self._lidar_last_update) > 0.5
 
-        # LiDAR zone scores — now using 3 front sub-zones + left/right/rear
-        # During forward drive, rear is ignored (robot is moving away).
-        _safe = 99.0 if li_stale else None  # sentinel for stale data
-
-        # Per-zone minimum distances (3 directional front + left/right/rear)
-        fl_dist = self._lidar_min_front_left if not li_stale else 99.0
-        fc_dist = self._lidar_min_front_center if not li_stale else 99.0
-        fr_dist = self._lidar_min_front_right if not li_stale else 99.0
-        l_dist  = self._lidar_min_left  if not li_stale else 99.0
-        r_dist  = self._lidar_min_right if not li_stale else 99.0
-        rr_dist = self._lidar_min_rear  if not li_stale else 99.0
+        fl_dist = self._lidar_min_front_left if not li_stale else None
+        fc_dist = self._lidar_min_front_center if not li_stale else None
+        fr_dist = self._lidar_min_front_right if not li_stale else None
+        l_dist  = self._lidar_min_left if not li_stale else None
+        r_dist  = self._lidar_min_right if not li_stale else None
+        rr_dist = self._lidar_min_rear if not li_stale else None
 
         th = self._AVOID_THRESHOLD_SLOW
 
@@ -2064,7 +2200,7 @@ class BrainNode(Node):
         # (robot physically surrounded by IR-detectable obstacles).
         # This is a genuine safety stop — no maneuver is safe.
         # ─────────────────────────────────────────────────────────────
-        all_ir_blocked = (len(ir_pressed) >= 2 and sharp_close)
+        all_ir_blocked = all(ir_mask) and sharp_close
         if all_ir_blocked:
             self.get_logger().warn(
                 'E-STOP: all 4 IR + Sharp sensors triggered — '
@@ -2155,13 +2291,21 @@ class BrainNode(Node):
             return True
 
         # Quick check: is anything actually close?
-        min_clear = min(self._lidar_min_front, self._lidar_min_left,
-                        self._lidar_min_right, self._lidar_min_rear)
+        if (time.monotonic() - self._lidar_last_update) > 0.5:
+            self.get_logger().warn('LiDAR stale before Nav2 escape — refusing motion')
+            await self._bridge.stop()
+            return True
+        min_clear = min(self._lidar_min_front_left,
+                        self._lidar_min_front_center,
+                        self._lidar_min_front_right,
+                        self._lidar_min_left,
+                        self._lidar_min_right,
+                        self._lidar_min_rear)
         if min_clear >= self._AVOID_THRESHOLD_SLOW:
             return False
 
-        # Try up to 3 escape maneuvers
-        for attempt in range(3):
+        # Try a bounded number of escape maneuvers
+        for attempt in range(self._DODGE_MAX_ATTEMPTS):
             direction, score = self._score_escape_directions()
 
             if direction == 'e_stop':
@@ -2176,10 +2320,15 @@ class BrainNode(Node):
             await self._bridge.move(vx, vy, omega)
             await asyncio.sleep(0.4)
 
-            # Check if clear now
-            min_clear = min(self._lidar_min_front, self._lidar_min_left,
-                            self._lidar_min_right, self._lidar_min_rear)
-            if min_clear >= self._AVOID_THRESHOLD_CLEAR:
+            # Check all six zones and require a fresh scan.
+            min_clear = min(self._lidar_min_front_left,
+                            self._lidar_min_front_center,
+                            self._lidar_min_front_right,
+                            self._lidar_min_left,
+                            self._lidar_min_right,
+                            self._lidar_min_rear)
+            if ((time.monotonic() - self._lidar_last_update) <= 0.5 and
+                    min_clear >= self._AVOID_THRESHOLD_CLEAR):
                 self.get_logger().info(f'Path clear after attempt {attempt+1}')
                 return True
 
@@ -2187,9 +2336,12 @@ class BrainNode(Node):
         # to Nav2 — that would let it send the original goal command and
         # drive the robot into the same wall again.
         self.get_logger().error(
-            'Escape attempts exhausted after 3 tries → E-STOP '
+            f'Escape attempts exhausted after {self._DODGE_MAX_ATTEMPTS} tries → E-STOP '
             '(Nav2 must not resume)')
-        await self._bridge.stop()
+        self._e_stop_latched = True
+        self._cancel_nav_goal()
+        await self._bridge.e_stop()
+        self.transition_to(BrainState.E_STOP, 'Nav2 obstacle escape exhausted')
         return True
 
     async def _nav_to_pose(self, x: float, y: float, theta: float) -> bool:

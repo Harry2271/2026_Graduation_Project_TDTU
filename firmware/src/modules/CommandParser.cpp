@@ -282,17 +282,37 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     else if (strcmp(cmd, "heartbeat") == 0) {
         out.type = CMD_HEARTBEAT;
     }
-    else if (strcmp(cmd, "obstacle_left") == 0) {
-        out.type = CMD_OBSTACLE_LEFT;
-    }
-    else if (strcmp(cmd, "obstacle_right") == 0) {
-        out.type = CMD_OBSTACLE_RIGHT;
-    }
-    else if (strcmp(cmd, "obstacle_front") == 0) {
-        out.type = CMD_OBSTACLE_FRONT;
-    }
-    else if (strcmp(cmd, "obstacle_clear") == 0) {
-        out.type = CMD_OBSTACLE_CLEAR;
+    else if (strncmp(cmd, "obstacle_", 9) == 0) {
+        // Obstacle commands are intentionally backward-compatible: the
+        // direction remains encoded in the command name, while distance and
+        // severity are optional JSON fields from the Pi LiDAR fusion layer.
+        if (strcmp(cmd, "obstacle_left") == 0) {
+            out.type = CMD_OBSTACLE_LEFT;
+        } else if (strcmp(cmd, "obstacle_right") == 0) {
+            out.type = CMD_OBSTACLE_RIGHT;
+        } else if (strcmp(cmd, "obstacle_front") == 0) {
+            out.type = CMD_OBSTACLE_FRONT;
+        } else if (strcmp(cmd, "obstacle_front_left") == 0) {
+            out.type = CMD_OBSTACLE_FRONT_LEFT;
+        } else if (strcmp(cmd, "obstacle_front_right") == 0) {
+            out.type = CMD_OBSTACLE_FRONT_RIGHT;
+        } else if (strcmp(cmd, "obstacle_rear") == 0) {
+            out.type = CMD_OBSTACLE_REAR;
+        } else if (strcmp(cmd, "obstacle_rear_left") == 0) {
+            out.type = CMD_OBSTACLE_REAR_LEFT;
+        } else if (strcmp(cmd, "obstacle_rear_right") == 0) {
+            out.type = CMD_OBSTACLE_REAR_RIGHT;
+        } else if (strcmp(cmd, "obstacle_clear") == 0) {
+            out.type = CMD_OBSTACLE_CLEAR;
+        }
+        if (out.type != CMD_UNKNOWN) {
+            out.obstacle_has_payload = doc.containsKey("distance_m") ||
+                                       doc.containsKey("severity");
+            out.obstacle_distance_m = doc["distance_m"] | 0.0f;
+            out.obstacle_severity = doc["severity"] | 0.0f;
+            out.obstacle_distance_m = constrain(out.obstacle_distance_m, 0.0f, 12.0f);
+            out.obstacle_severity = constrain(out.obstacle_severity, 0.0f, 1.0f);
+        }
     }
     else if (strcmp(cmd, "get_imu") == 0) {
         out.type = CMD_GET_IMU;

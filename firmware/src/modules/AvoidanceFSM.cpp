@@ -331,6 +331,12 @@ AvoidanceAction AvoidanceFSM::doRotating(uint32_t now_ms)
         Serial.println("[AVOID] rotate TIMEOUT");
         rotate_heading_valid_ = false;
         rotate_attempts_++;
+        if (rotate_attempts_ >= MAX_ROTATE_ATTEMPTS) {
+            Serial.println("[AVOID] rotate attempts exhausted — E_STOP");
+            enterState(STATE_E_STOPPED, now_ms);
+            a.hard_stop = true;
+            return a;
+        }
         enterState(STATE_EVALUATING, now_ms);
         return a;
     }
@@ -350,6 +356,15 @@ AvoidanceAction AvoidanceFSM::doReversing()
 {
     AvoidanceAction a = {0, 0, 0, false, "reverse"};
     uint32_t now_ms = millis();
+
+    // A zero target means this state was entered without a valid baseline;
+    // fail closed instead of completing a reverse maneuver immediately.
+    if (reverse_target_pulse_ <= 0) {
+        Serial.println("[AVOID] reverse has no encoder target — E_STOP");
+        enterState(STATE_E_STOPPED, now_ms);
+        a.hard_stop = true;
+        return a;
+    }
 
     int32_t delta = reverse_pulse_now_ - reverse_start_pulse_;
     if (delta >= reverse_target_pulse_ || getElapsed(now_ms) >= REVERSE_TIMEOUT_MS) {
@@ -417,11 +432,25 @@ AvoidanceAction AvoidanceFSM::evaluate(uint32_t now_ms)
 
     // CASE 2: Sharp slowing only (no IR) → strafe to the clearer side
     if (front && !any_ir) {
+        // The front-only case has no side IR report; use the short bounded
+        // strafe first.  A subsequent evaluation can escalate to reverse/
+        // rotate once a rear-safe route is known.
         enterState(STATE_STRAFING, now_ms);
         return a;
     }
 
-    // ── Cases 3-9: sensor combinations → use doStrafing() direction logic ──
+    // ── Front trap with rear clearance: reverse using encoder distance,
+    // then rotate.  This makes the documented escape path reachable while
+    // preserving the hard-stop case when both sides/rear are blocked.
+    if (front && !any_rear && left && right) {
+        reverse_start_pulse_ = reverse_pulse_now_;
+        reverse_target_pulse_ = REVERSE_PULSE_TARGET;
+        enterState(STATE_REVERSING, now_ms);
+        return doReversing();
+    }
+
+    // Front with one open side: bounded lateral escape first.  If it fails
+    // to clear, the next evaluation can enter the reverse/rotate path.
     enterState(STATE_STRAFING, now_ms);
     return a;
 }

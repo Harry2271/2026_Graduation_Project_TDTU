@@ -107,6 +107,10 @@ start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controlle
 ESP32_PORT="${ESP32_PORT:-/dev/ttyACM0}"
 sudo chmod 666 "$ESP32_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $ESP32_PORT"
 start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
+# Required for Nav2: publishes /odom and odom→base_footprint from encoders/IMU.
+start_ros_node "${SERVICE_NAME_PREFIX}-odom" "ros2 run my_robot_controller odom"
+# Required motor command consumer for both MANUAL and AUTO/Nav2 /cmd_vel.
+start_ros_node "${SERVICE_NAME_PREFIX}-teleop" "ros2 run my_robot_controller teleop_node"
 
 # web_bridge now subscribes to /esp32/status, /esp32/encoder AND /esp32/power
 # so it must start after esp32-telemetry to have topic subscribers ready.

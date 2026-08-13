@@ -179,7 +179,13 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     st["imu"] = imu->isOperational();
     st["pwr"] = power->isOperational();
     st["sharp"] = sharp->getDistanceCm();
-    st["obs"] = sharp->isTooClose() || sharp->isSlowing() || (ir->detectedMask() != 0);
+    const ObstacleAvoidance& avoidance = modeManager->getObstacleAvoidance();
+    st["obs"] = sharp->isTooClose() || sharp->isSlowing() || (ir->detectedMask() != 0) ||
+                 avoidance.hasActiveObstacle();
+    st["obstacle_dir"] = (int)avoidance.getLastDirection();
+    st["obstacle_dodge"] = avoidance.isDodging();
+    st["obstacle_distance_m"] = avoidance.getLastDistanceM();
+    st["obstacle_severity"] = avoidance.getLastSeverity();
     st["tof_mm"] = tof->getDistanceMm();
     st["cyl"]    = CylinderActuator::stateName(cylinder->getState());
     st["cargo"]   = cargo && cargo->hasCargo();

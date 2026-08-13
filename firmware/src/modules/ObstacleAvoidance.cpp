@@ -1,43 +1,78 @@
 #include "ObstacleAvoidance.h"
 #include "config.h"
+#include <math.h>
 
 ObstacleAvoidance::ObstacleAvoidance()
     : last_dir_(ObstacleDirection::NONE)
     , dodging_(false)
     , obstacle_active_(false)
     , dodge_start_ms_(0)
+    , dodge_duration_ms_(DODGE_DURATION_MS)
     , last_clear_ms_(0)
     , last_obstacle_ms_(0)
+    , last_distance_m_(0.0f)
+    , last_severity_(0.0f)
     , saved_vx_(0)
     , saved_vy_(0)
     , saved_omega_(0)
 {
 }
 
-void ObstacleAvoidance::onObstacleEvent(ObstacleDirection dir, uint32_t now_ms)
+void ObstacleAvoidance::onObstacleEvent(ObstacleDirection dir, uint32_t now_ms,
+                                        bool has_payload,
+                                        float distance_m,
+                                        float severity)
 {
     last_obstacle_ms_ = now_ms;
     obstacle_active_ = true;
 
+    if (has_payload) {
+        // Tiny NaN/Inf guard so a corrupt LiDAR payload can't poison the
+        // dodge math.  Anything that fails isfinite() is treated as missing.
+        if (isfinite(distance_m)) last_distance_m_ = distance_m;
+        if (isfinite(severity))   last_severity_   = severity;
+    } else {
+        last_distance_m_ = 0.0f;
+        last_severity_   = 0.0f;
+    }
+
     if (dir != ObstacleDirection::NONE) {
         if (dir != last_dir_ || !dodging_) {
-            startDodge(dir, now_ms);
+            startDodge(dir, now_ms, last_severity_);
         }
     }
 }
 
-void ObstacleAvoidance::startDodge(ObstacleDirection dir, uint32_t now_ms)
+void ObstacleAvoidance::startDodge(ObstacleDirection dir, uint32_t now_ms,
+                                    float severity)
 {
     last_dir_ = dir;
     dodging_ = true;
+    // Severity scales the dodge duration only between 0.4× and 1.4× the
+    // base DODGE_DURATION_MS.  A vertical scale, not a different direction:
+    // the dodge direction table is fixed for each direction.
+    float scale = 1.0f;
+    if (severity > 0.0f) {
+        scale = 0.4f + 1.0f * severity;
+        if (scale < 0.4f) scale = 0.4f;
+        if (scale > 1.4f) scale = 1.4f;
+    }
+    uint32_t duration_ms = (uint32_t)((float)DODGE_DURATION_MS * scale);
+    if (duration_ms < (uint32_t)(DODGE_DURATION_MS / 2)) {
+        duration_ms = (uint32_t)(DODGE_DURATION_MS / 2);
+    }
+    if (duration_ms > (uint32_t)(CLEAR_THRESHOLD_MS * 3)) {
+        duration_ms = (uint32_t)(CLEAR_THRESHOLD_MS * 3);
+    }
     dodge_start_ms_ = now_ms;
+    dodge_duration_ms_ = duration_ms;
 }
 
 void ObstacleAvoidance::updateDodge(uint32_t now_ms)
 {
     if (!dodging_) return;
 
-    if (now_ms - dodge_start_ms_ >= DODGE_DURATION_MS) {
+    if (now_ms - dodge_start_ms_ >= dodge_duration_ms_) {
         endDodge();
     }
 }
@@ -66,11 +101,6 @@ void ObstacleAvoidance::updateLastSeen(uint32_t now_ms)
     }
 }
 
-bool ObstacleAvoidance::hasActiveObstacle() const
-{
-    return obstacle_active_;
-}
-
 AvoidanceResult ObstacleAvoidance::processCommand(int16_t vx, int16_t vy,
                                                     int16_t omega, uint32_t now_ms)
 {
@@ -97,11 +127,16 @@ void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
 {
     // Front obstacle → HARD STOP.  The vehicle should not advance when
     // the physical sensors (IR/Sharp) report something directly ahead,
-    // regardless of how the dodge state-machine ticks.
+    // regardless of how the dodge state-machine ticks.  FRONT_HARD_STOP_LATCH_MS
+    // == 0 means "latch until the operator explicitly clears" — never auto-
+    // release, otherwise a quiet sensor tick could re-arm forward motion
+    // while the obstacle is still in the path.
     if (obstacle_active_ && last_dir_ == ObstacleDirection::FRONT) {
-        vx = 0;
-        vy = 0;
-        omega = 0;
+        // Never advance into a center-front obstacle, but preserve a
+        // caller-supplied reverse/strafe escape vector.  The local IR/Sharp
+        // interlock independently clamps unsafe components and may still
+        // hard-stop when no safe escape exists.
+        if (vx > 0) vx = 0;
         return;
     }
 
@@ -198,7 +233,10 @@ AvoidanceResult ObstacleAvoidance::update(uint32_t now_ms)
 
     updateDodge(now_ms);
 
-    if (now_ms - last_obstacle_ms_ > CLEAR_THRESHOLD_MS * 3) {
+    // A front event is a hard safety latch.  It must not disappear merely
+    // because the serial/LiDAR stream went quiet; require explicit clear.
+    if (last_dir_ != ObstacleDirection::FRONT &&
+        now_ms - last_obstacle_ms_ > CLEAR_THRESHOLD_MS * 3) {
         clearObstacles(now_ms);
         r.clear = true;
         r.dodging = false;

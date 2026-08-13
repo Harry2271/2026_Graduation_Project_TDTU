@@ -82,8 +82,10 @@ class TeleopNode(Node):
         self._cylinder_sub = self.create_subscription(
             String, '/cylinder_cmd', self._on_cylinder_cmd, 10)
 
-        # Auto/Manual mode arbitration — teleop_node only accepts commands
-        # when mode is MANUAL.  Default to MANUAL on startup.
+        # Auto/Manual mode arbitration.  In MANUAL, /cmd_vel is operator
+        # teleop; in AUTO, the same topic is Nav2's controller output.  Both
+        # must reach the sole ESP32 gateway, otherwise Nav2 goals succeed in
+        # software while the chassis never receives velocity commands.
         self._mode = 'MANUAL'
         self._mode_sub = self.create_subscription(
             String, '/control/mode', self._on_mode, 10)
@@ -110,14 +112,14 @@ class TeleopNode(Node):
         if new_mode != old:
             self.get_logger().info(f'Mode changed: {old} → {new_mode}')
             if new_mode == 'AUTO' and self._connected:
-                loop = asyncio.get_event_loop()
-                loop.create_task(self._bridge.stop())
-                self.get_logger().info('Switched to AUTO — teleop stopped')
+                # Nav2 publishes /cmd_vel in AUTO; keep the bridge alive so
+                # those commands reach ESP32 instead of stopping permanently.
+                self.get_logger().info('Switched to AUTO — forwarding Nav2 /cmd_vel')
 
     def _on_cmd_vel(self, msg: Twist) -> None:
-        """Convert Twist to ESP32 move command."""
-        if self._mode != 'MANUAL':
-            return
+        """Convert MANUAL or Nav2 /cmd_vel to ESP32 move commands."""
+        # /cmd_vel is operator input in MANUAL and Nav2 output in AUTO.
+        # The mode switch changes publisher authority, not this safety bridge.
         if self._bridge is None or not self._connected:
             return
 
@@ -245,8 +247,9 @@ def main(args: list[str] | None = None) -> None:
         # Spin ROS + drive async bridge concurrently
         while rclpy.ok():
             executor.spin_once(timeout_sec=0.01)
-            loop.call_soon_once(lambda: None)
-            # Let asyncio run pending callbacks
+            # Let asyncio run pending callbacks.  `call_soon_once` is not an
+            # asyncio API; invoking it caused the production bridge to crash
+            # before forwarding the first /cmd_vel message.
             loop._run_once()  # noqa: SLF001
     except KeyboardInterrupt:
         pass

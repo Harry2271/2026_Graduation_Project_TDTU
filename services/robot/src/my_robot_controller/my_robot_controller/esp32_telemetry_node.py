@@ -51,11 +51,13 @@ from my_robot_controller.esp32_bridge import open_esp32_bridge
 ALLOWED_COMMANDS = frozenset({
     'move', 'stop', 'e_stop', 'e_stop_clear', 'heartbeat',
     'cylinder_extend', 'cylinder_retract', 'cylinder_stop',
-    'begin_dock', 'cancel_dock',
+    'begin_dock', 'cancel_dock', 'get_cargo', 'get_imu', 'get_power',
     'set_speed', 'set_all_speed', 'set_pid',
     'individual', 'reset_encoder', 'get_encoder',
-    'obstacle_left', 'obstacle_right',
-    'obstacle_front', 'obstacle_clear',
+    'obstacle_front', 'obstacle_left', 'obstacle_right',
+    'obstacle_front_left', 'obstacle_front_right',
+    'obstacle_rear', 'obstacle_rear_left', 'obstacle_rear_right',
+    'obstacle_clear',
 })
 
 # Commands that must NEVER be dropped, even under heavy back-pressure.
@@ -339,6 +341,19 @@ def _start_executor(node: Node) -> tuple[SingleThreadedExecutor, threading.Threa
     return executor, thread
 
 
+async def _heartbeat_loop(bridge: Any) -> None:
+    """Keep the firmware watchdog alive from the sole serial owner."""
+    while True:
+        await asyncio.sleep(0.05)
+        try:
+            await bridge.heartbeat()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Read/health paths report link failures; keep retrying writes.
+            pass
+
+
 async def _run_bridge(node: Esp32TelemetryNode) -> None:
     """Open serial, wire callbacks, hold until ROS is shut down.
 
@@ -361,6 +376,7 @@ async def _run_bridge(node: Esp32TelemetryNode) -> None:
 
     await bridge.connect()
     node._bridge = bridge
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(bridge))
     node.get_logger().info('ESP32 telemetry bridge connected — gateway active')
 
     try:
@@ -368,6 +384,11 @@ async def _run_bridge(node: Esp32TelemetryNode) -> None:
             await asyncio.sleep(0.05)  # 20 Hz command drain
             node._poll_commands()
     finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
         await bridge.disconnect()
 
 
