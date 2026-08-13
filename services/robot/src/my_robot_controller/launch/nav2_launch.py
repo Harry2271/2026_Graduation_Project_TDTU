@@ -39,7 +39,7 @@ def generate_launch_description() -> LaunchDescription:
         description="Full path to the URDF/Xacro file",
     )
 
-    def check_map(context) -> list:
+    def launch_nodes(context) -> list:
         map_yaml = LaunchConfiguration("map_yaml").perform(context)
         if not os.path.isfile(map_yaml):
             return [
@@ -50,10 +50,6 @@ def generate_launch_description() -> LaunchDescription:
                     )
                 )
             ]
-        return []
-
-    def launch_nodes(context) -> list:
-        map_yaml = LaunchConfiguration("map_yaml").perform(context)
         params_file = LaunchConfiguration("params_file").perform(context)
         urdf_file = LaunchConfiguration("urdf_file").perform(context)
 
@@ -125,7 +121,8 @@ def generate_launch_description() -> LaunchDescription:
             map_yaml_arg,
             params_file_arg,
             urdf_path_arg,
-            OpaqueFunction(function=check_map),
+            # The map check and node creation must be one conditional action;
+            # otherwise launch_nodes still starts Nav2 after the warning.
             OpaqueFunction(function=launch_nodes),
         ]
     )

@@ -28,6 +28,11 @@ enum CommandType {
     CMD_OBSTACLE_LEFT,
     CMD_OBSTACLE_RIGHT,
     CMD_OBSTACLE_FRONT,
+    CMD_OBSTACLE_FRONT_LEFT,
+    CMD_OBSTACLE_FRONT_RIGHT,
+    CMD_OBSTACLE_REAR,
+    CMD_OBSTACLE_REAR_LEFT,
+    CMD_OBSTACLE_REAR_RIGHT,
     CMD_OBSTACLE_CLEAR,
 
     // Sensor query commands
@@ -82,6 +87,17 @@ struct Command {
     uint16_t target_distance_mm;
     float facing_theta_deg;   // target heading for heading gate
     char    operation_id[37]; // UUID string from Pi (36 chars + NUL); empty if absent
+
+    // Obstacle event parameters (populated by obstacle_* commands).
+    // Optional fields.  The Pi may include them to convey LiDAR severity
+    // to the firmware so it can scale dodge duration/intensity.  When
+    // fields are missing, firmware uses the existing default dodge tables.
+    //   distance_m:    closest point in the reported zone (meters, 0..12)
+    //   severity:      0.0 .. 1.0; 0 = barely inside threshold, 1 = bumper range
+    //   has_payload:   true only when JSON included distance_m OR severity
+    float obstacle_distance_m;
+    float obstacle_severity;
+    bool  obstacle_has_payload;
 };
 
 class CommandParser {

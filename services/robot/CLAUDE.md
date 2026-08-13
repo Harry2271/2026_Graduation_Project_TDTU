@@ -386,6 +386,18 @@ The brain sends `move` JSON to the ESP32 via `esp32_telemetry_node`'s `/esp32/cm
 
 ---
 
+## LiDAR → ESP32 obstacle events
+
+`brain_node.py` derives front-left, front-center, front-right, left, right, and rear zones from `/scan`. Events are sent through `esp32_telemetry_node` using debounced, hysteretic commands:
+
+- obstacle threshold: 1.5 m
+- clear threshold: 1.7 m
+- transition debounce: 150 ms
+- same-zone resend only after a 0.20 m distance change
+- stale scans (>0.5 s) do not emit new events
+
+Supported commands are `obstacle_front`, `obstacle_front_left`, `obstacle_front_right`, `obstacle_left`, `obstacle_right`, `obstacle_rear`, `obstacle_rear_left`, `obstacle_rear_right`, and `obstacle_clear`. Events may include `distance_m` and normalized `severity`. Local ESP32 IR/Sharp telemetry has priority: a LiDAR clear is withheld while those sensors report a physical obstacle. The Pi velocity planner remains primary; ESP32 events are a fast safety/dodge hint.
+
 ## ESP32 Telemetry Node
 
 `esp32_telemetry_node.py` is the **sole owner** of the ESP32 USB CDC serial link (`/dev/ttyACM0`). All other nodes interact with the ESP32 exclusively through this node's ROS topics.

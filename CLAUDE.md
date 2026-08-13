@@ -128,7 +128,7 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `{"cmd":"cylinder_stop"}` | Stop cylinder immediately |
 | `{"cmd":"begin_dock"}` | Start full docking/unload sequence |
 | `{"cmd":"cancel_dock"}` | Cancel docking sequence |
-| `{"cmd":"obstacle_left"\|"obstacle_right"\|"obstacle_front"\|"obstacle_clear"}` | Reactive obstacle events (see `ObstacleAvoidance` module) |
+| `{"cmd":"obstacle_left"\|"obstacle_right"\|"obstacle_front"\|"obstacle_front_left"\|"obstacle_front_right"\|"obstacle_rear"\|"obstacle_rear_left"\|"obstacle_rear_right"\|"obstacle_clear"}` | Reactive obstacle events (see `ObstacleAvoidance` module). Optional `distance_m` (0–12 m) and `severity` (0–1) payload on left/right/compound directions. |
 
 **JSON responses (ESP32 → Pi):**
 

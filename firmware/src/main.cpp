@@ -76,6 +76,8 @@ ObstacleAvoidance g_obstacle;
 // Pi move command or CMD_INDIVIDUAL cannot override a physical IR/Sharp
 // obstacle while the obstacle is present.
 static bool g_local_obstacle_stop = false;
+static uint32_t g_local_clear_since_ms = 0;
+static constexpr uint32_t LOCAL_CLEAR_DWELL_MS = 500;
 
 // Kick-start boost constants live in config.h (single source of truth).
 int8_t g_kick_ticks[4] = {0, 0, 0, 0};
@@ -90,6 +92,10 @@ int16_t g_prev_target_for_kick[4] = {0, 0, 0, 0};
 // but the cumulative count never moves, the encoder hardware is broken.
 static int32_t g_prev_encoder_count[4] = {0, 0, 0, 0};
 static bool    g_encoder_stall_warned[4] = {false, false, false, false};
+// Health is evaluated at 50 Hz. Require a sustained zero-RPM condition so
+// one delayed PCNT/RPM sample cannot flap the whole encoder module to FAILED.
+static uint8_t g_encoder_stall_ticks[4] = {0, 0, 0, 0};
+static constexpr uint8_t ENCODER_STALL_CONFIRM_TICKS = 10; // 200 ms
 
 // Direct motor test mode (bypasses PID + ramp, for hardware debugging)
 bool g_raw_test_mode = false;
@@ -334,9 +340,30 @@ void computeNavTargets()
     int16_t adj_omega = g_nav_omega;
     g_obstacle.applyToCommand(adj_vx, adj_vy, adj_omega, millis());
     if (g_local_obstacle_stop) {
-        adj_vx = 0;
-        adj_vy = 0;
-        adj_omega = 0;
+        // Keep the physical interlock fail-safe, but permit only an escape
+        // vector that moves away from the currently asserted local sensors.
+        // A blanket zero here deadlocks NAV in front of a Sharp obstacle.
+        const uint8_t mask = g_ir.detectedMask();
+        const bool rear_blocked = (mask & 0x03) != 0;
+        const bool left_blocked = (mask & 0x04) != 0;
+        const bool right_blocked = (mask & 0x08) != 0;
+        const bool front_blocked = g_sharp.isTooClose() || g_sharp.isSlowing();
+
+        if (rear_blocked) adj_vx = max<int16_t>(0, adj_vx);
+        if (front_blocked) adj_vx = min<int16_t>(0, adj_vx);
+        if (left_blocked) adj_vy = max<int16_t>(0, adj_vy);
+        if (right_blocked) adj_vy = min<int16_t>(0, adj_vy);
+
+        // A hard front stop may not rotate into the obstacle.  Rotation is
+        // allowed only when a lateral escape direction remains available.
+        if (g_sharp.isTooClose() && left_blocked && right_blocked) {
+            adj_vx = 0;
+            adj_vy = 0;
+            adj_omega = 0;
+        }
+        if (adj_vx == 0 && adj_vy == 0 && adj_omega == 0) {
+            adj_vx = adj_vy = adj_omega = 0;
+        }
     }
 
     // Mecanum kinematics → 4 wheel targets
@@ -355,20 +382,15 @@ void applySpeeds()
         return;
     }
 
-    // Local hard-stop latch overrides every Pi-supplied command.  Clear it
-    // here once the sensors have been quiet for the safety window.
-    if (g_local_obstacle_stop) {
+    // Individual-wheel/raw commands cannot be safety-filtered as a chassis
+    // vector, so the physical latch still hard-stops those paths.  Normal NAV
+    // commands were already clamped by computeNavTargets() to permit only a
+    // safe escape direction.
+    if (g_local_obstacle_stop && g_individual_mode) {
         for (int i = 0; i < MOTOR_COUNT; i++) {
             g_target_speeds[i] = 0;
             g_ramped_speeds[i] = 0;
             g_motors[i].coast();
-        }
-        // Use a simple debounce: once the latch fires, wait at least
-        // SHARP_HOLD_MS before allowing it to clear.  This prevents
-        // rapid toggling when the Sharp reading fluctuates around 60 cm.
-        if (!g_ir.anyDetected() && !g_sharp.isTooClose() && !g_sharp.isSlowing()) {
-            g_local_obstacle_stop = false;
-            Serial.println("[SAFETY] obstacle latch cleared — resuming");
         }
         return;
     }
@@ -1163,22 +1185,16 @@ void pollLocalSensors(uint32_t now)
         // mask bits: 0=REAR_LEFT, 1=REAR_RIGHT, 2=LEFT, 3=RIGHT
 
         if (mask != 0) {
-            bool rl  = mask & 0x01;
-            bool rr  = mask & 0x02;
-            bool l   = mask & 0x04;
-            bool r   = mask & 0x08;
-
-            ObstacleDirection dir = ObstacleDirection::FRONT;
-            if (l && r)           dir = ObstacleDirection::REAR;
-            else if (l && !r)     dir = ObstacleDirection::LEFT;
-            else if (r && !l)     dir = ObstacleDirection::RIGHT;
-            else if (rl && rr)    dir = ObstacleDirection::REAR;
-            else if (rl && !rr)   dir = ObstacleDirection::REAR_LEFT;
-            else if (rr && !rl)   dir = ObstacleDirection::REAR_RIGHT;
-
-            g_obstacle.onObstacleEvent(dir, now);
+            g_local_clear_since_ms = 0;
+            // Local IR/Sharp protection is applied by the physical interlock
+            // in computeNavTargets().  Do not mirror it into the Pi/LiDAR
+            // ObstacleAvoidance object: doing so creates a second owner and
+            // can turn a safe escape command into a permanent front stop.
             g_local_obstacle_stop = true;
-        } else {
+            } else {
+            if (g_local_obstacle_stop && g_local_clear_since_ms == 0) {
+                g_local_clear_since_ms = now;
+            }
             // Sensor reads clear — leave the obstacle state untouched.
             // applyToCommand() clears it after CLEAR_THRESHOLD_MS.  Calling
             // clearObstacles() here would erase the stop on the very next
@@ -1190,8 +1206,18 @@ void pollLocalSensors(uint32_t now)
     g_sharp.update(now);
     g_health.reportOk(MOD_SHARP, now);
     if (g_sharp.isTooClose() || g_sharp.isSlowing()) {
-        g_obstacle.onObstacleEvent(ObstacleDirection::FRONT, now);
+        g_local_clear_since_ms = 0;
+        // Keep local Sharp safety separate from the Pi LiDAR event owner.
+        // This allows a validated reverse/strafe escape to pass while still
+        // clamping any command component that drives toward the obstacle.
         g_local_obstacle_stop = true;
+    } else if (g_local_obstacle_stop && g_ir.detectedMask() == 0) {
+        if (g_local_clear_since_ms == 0) g_local_clear_since_ms = now;
+        if (now - g_local_clear_since_ms >= LOCAL_CLEAR_DWELL_MS) {
+            g_local_obstacle_stop = false;
+            g_local_clear_since_ms = 0;
+            Serial.println("[SAFETY] local obstacle latch cleared after dwell");
+        }
     }
 
     // ---- Cargo sensor (microswitch, polled every tick) ----
@@ -1234,31 +1260,92 @@ void pollLocalSensors(uint32_t now)
     // Use the actual ramped command, not g_target_speeds: AUTO_ROAM has its
     // own local target array and g_target_speeds can retain an old command.
     // At zero command there is no valid stall test, so encoders are healthy.
+    //
+    // Require ENCODER_STALL_CONFIRM_TICKS consecutive zero-RPM samples before
+    // declaring the module FAILED.  A single transient under 200 ms is normal
+    // (kick-start PWM, gear backlash, RPM filter warm-up); only a sustained
+    // stall is a real fault.  Track per-motor so we can name the offender.
     bool enc_ok = true;
     bool any_target = false;
+    int8_t failed_motor = -1;
     const int16_t* actual_targets = g_modeManager.getRampedSpeeds();
     for (int i = 0; i < MOTOR_COUNT; i++) {
         if (abs(actual_targets[i]) > 50) {
             any_target = true;
             float actual = abs(g_encoders[i].getFilteredRPM());
             if (actual < 2) {
-                g_health.reportError(MOD_ENCODERS, 1, now);
-                enc_ok = false;
-                break;
+                if (g_encoder_stall_ticks[i] < ENCODER_STALL_CONFIRM_TICKS + 1) {
+                    g_encoder_stall_ticks[i]++;
+                }
+                if (g_encoder_stall_ticks[i] >= ENCODER_STALL_CONFIRM_TICKS) {
+                    failed_motor = i;
+                    enc_ok = false;
+                }
+            } else {
+                g_encoder_stall_ticks[i] = 0;
             }
+        } else {
+            g_encoder_stall_ticks[i] = 0;
         }
     }
-    if (enc_ok || !any_target) g_health.reportOk(MOD_ENCODERS, now);
+    if (!enc_ok) {
+        g_health.reportError(MOD_ENCODERS, 1, now);
+        // Surface the offending motor once so the operator can act on it.
+        // The per-motor per-tick warning in applySpeeds() covers transient
+        // cases; this covers the sustained fault.
+        static uint8_t last_failed_motor = 0xFF;
+        static uint32_t last_failed_log_ms = 0;
+        if (failed_motor != last_failed_motor ||
+            (now - last_failed_log_ms) >= 5000) {
+            last_failed_motor = (uint8_t)failed_motor;
+            last_failed_log_ms = now;
+            int idx = failed_motor;
+            Serial.printf("[HEALTH] encoder FAILED: %s target=%d rpm=%.1f "
+                          "CHA=%u CHB=%u PCNT=%d — check 5V/3.3V/GND, "
+                          "encoder cable, motor cable, BTS7960\n",
+                          MOTOR_NAMES[idx], actual_targets[idx],
+                          (double)g_encoders[idx].getFilteredRPM(),
+                          (unsigned)g_encoders[idx].getChaPin(),
+                          (unsigned)g_encoders[idx].getChbPin(),
+                          (int)PCNT_UNITS[idx]);
+        }
+    }
+    if (enc_ok || !any_target) {
+        g_health.reportOk(MOD_ENCODERS, now);
+        for (int i = 0; i < MOTOR_COUNT; i++) g_encoder_stall_ticks[i] = 0;
+    }
 
     // ---- Pi link health — aligned with HEARTBEAT_TIMEOUT_MS ----
     // The firmware watchdog transitions to AUTO_ROAM at 2 s; the health
     // report should agree.  Report OK when the last serial activity is
     // younger than the timeout; report stale otherwise.
+    //
+    // Print a single-line diagnostic on transitions (OK → STALE, STALE → OK)
+    // and every 5 s while STALE so the operator sees why mode flipped to
+    // AUTO_ROAM (expected) vs. why no commands are accepted at all.
     const uint32_t pi_link_window_ms = HEARTBEAT_TIMEOUT_MS + 500;
-    if (now > 1000 && (now - g_modeManager.getLastSerialActivityMs()) < pi_link_window_ms) {
+    const uint32_t last_serial_ms = g_modeManager.getLastSerialActivityMs();
+    if (now > 1000 && last_serial_ms > 0 &&
+        (now - last_serial_ms) < pi_link_window_ms) {
         g_health.reportOk(MOD_Pi_LINK, now);
     } else if (now > pi_link_window_ms) {
         g_health.reportError(MOD_Pi_LINK, 1, now);
+        static uint32_t last_pi_link_warn_ms = 0;
+        const uint32_t age_ms = last_serial_ms ? (now - last_serial_ms) : now;
+        if (last_serial_ms == 0) {
+            if (now - last_pi_link_warn_ms >= 5000) {
+                last_pi_link_warn_ms = now;
+                Serial.printf("[HEALTH] Pi link STALE — no UART activity since boot "
+                              "(%lu ms). Check Pi bridge, USB-CDC cable, baud 115200.\n",
+                              (unsigned long)age_ms);
+            }
+        } else if (now - last_pi_link_warn_ms >= 5000) {
+            last_pi_link_warn_ms = now;
+            Serial.printf("[HEALTH] Pi link STALE — last heartbeat %lu ms ago "
+                          "(window=%lu ms). Check esp32_telemetry_node, /esp32/cmd.\n",
+                          (unsigned long)age_ms,
+                          (unsigned long)pi_link_window_ms);
+        }
     }
 }
 
