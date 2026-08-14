@@ -139,7 +139,14 @@ pm2 start "bash" \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $CAMERA_ENV ros2 run my_robot_controller camera_stream"
 
 # 3. Nav2 (Phase 3 — real bringup)
-start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py"
+# Do not register a mapless launch under PM2: nav2_launch.py exits cleanly
+# when latest.yaml is absent, which would otherwise cause a restart loop.
+MAP_YAML="$ROS_WS/maps/latest.yaml"
+if [ -f "$MAP_YAML" ]; then
+    start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py map_yaml:=$MAP_YAML"
+else
+    echo "⚠️ Skipping Nav2: $MAP_YAML not found. Save a map, then start nexus-robot-nav2."
+fi
 
 pm2 save
 echo "✅ DEPLOY THÀNH CÔNG!"

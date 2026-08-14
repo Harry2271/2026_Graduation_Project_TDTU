@@ -148,8 +148,15 @@ pm2 start "bash" \
     --max-restarts 10 \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $CAMERA_ENV ros2 run my_robot_controller camera_stream"
 
-# 3. Nav2
-start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py"
+# 3. Nav2 — only start when a saved map is available. The launch file exits
+# cleanly without a map, which would otherwise make PM2 restart it forever.
+MAP_YAML="$ROS_WS/maps/latest.yaml"
+if [ -f "$MAP_YAML" ]; then
+    start_ros_node "${SERVICE_NAME_PREFIX}-nav2" "ros2 launch my_robot_controller nav2_launch.py map_yaml:=$MAP_YAML"
+else
+    echo "⚠️  Skipping Nav2: $MAP_YAML not found. Save a map, then run:"
+    echo "   pm2 start nexus-robot-nav2"
+fi
 
 pm2 save
 
