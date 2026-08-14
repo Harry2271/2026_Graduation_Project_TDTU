@@ -131,6 +131,7 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
       pickupAt?: string;
       dropoffAt?: string;
       unloadAt?: string;
+      completedAt?: string;
       totalDurationMs?: number;
       fullCycleDurationMs?: number;
       travelToPickupMs?: number;
@@ -144,6 +145,7 @@ export class RobotGateway implements OnGatewayConnection, OnGatewayDisconnect {
       pickupAt: payload.pickupAt ? new Date(payload.pickupAt) : undefined,
       dropoffAt: payload.dropoffAt ? new Date(payload.dropoffAt) : undefined,
       unloadAt: payload.unloadAt ? new Date(payload.unloadAt) : undefined,
+      completedAt: payload.completedAt ? new Date(payload.completedAt) : undefined,
       totalDurationMs: payload.totalDurationMs,
       fullCycleDurationMs: payload.fullCycleDurationMs,
       travelToPickupMs: payload.travelToPickupMs,

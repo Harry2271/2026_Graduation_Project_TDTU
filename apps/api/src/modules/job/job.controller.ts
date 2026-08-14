@@ -66,6 +66,7 @@ export class JobController {
       pickupAt?: string;
       dropoffAt?: string;
       unloadAt?: string;
+      completedAt?: string;
       totalDurationMs?: number;
       fullCycleDurationMs?: number;
       travelToPickupMs?: number;
@@ -78,6 +79,7 @@ export class JobController {
       pickupAt: body.pickupAt ? new Date(body.pickupAt) : undefined,
       dropoffAt: body.dropoffAt ? new Date(body.dropoffAt) : undefined,
       unloadAt: body.unloadAt ? new Date(body.unloadAt) : undefined,
+      completedAt: body.completedAt ? new Date(body.completedAt) : undefined,
       totalDurationMs: body.totalDurationMs,
       fullCycleDurationMs: body.fullCycleDurationMs,
       travelToPickupMs: body.travelToPickupMs,

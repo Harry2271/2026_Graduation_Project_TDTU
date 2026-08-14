@@ -74,11 +74,14 @@ export class Job {
   @Prop({ type: Date })
   unloadAt?: Date;
 
+  @Prop({ type: Date })
+  completedAt?: Date;
+
   // Start → unload complete (the delivery duration shown to operators)
   @Prop({ type: Number })
   totalDurationMs?: number;
 
-  // Optional full cycle: start → unload → return home
+  // Start → unload → return home
   @Prop({ type: Number })
   fullCycleDurationMs?: number;
 
@@ -94,4 +97,5 @@ export class Job {
 
 export const JobSchema = SchemaFactory.createForClass(Job);
 JobSchema.index({ createdAt: -1 });
+JobSchema.index({ completedAt: -1, createdAt: -1 });
 JobSchema.index({ status: 1, queuedAt: 1 });

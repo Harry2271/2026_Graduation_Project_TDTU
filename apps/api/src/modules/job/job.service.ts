@@ -135,7 +135,7 @@ export class JobService {
   // ── CRUD helpers ────────────────────────────────────────────────────────
 
   async findAll(): Promise<Job[]> {
-    return this.jobModel.find().sort({ createdAt: -1 }).lean();
+    return this.jobModel.find().sort({ completedAt: -1, createdAt: -1 }).lean();
   }
 
   async findById(id: string): Promise<Job | null> {
@@ -183,6 +183,7 @@ export class JobService {
       pickupAt?: Date;
       dropoffAt?: Date;
       unloadAt?: Date;
+      completedAt?: Date;
       totalDurationMs?: number;
       fullCycleDurationMs?: number;
       travelToPickupMs?: number;

@@ -2108,6 +2108,7 @@ class BrainNode(Node):
         self.transition_to(BrainState.JOB_RETURN_HOME, f'job {job_id}')
         await self._api_client.emit_job_phase(job_id, 'RETURNING')
         await self._return_home()
+        t_completed_at = datetime.now(timezone.utc).isoformat()
         full_cycle_duration_ms = int((time.time() - t_start) * 1000)
 
         # ── Phase 5: Idle — job done ────────────────────────────────────
@@ -2120,6 +2121,7 @@ class BrainNode(Node):
             'startedAt': t_started,
             'dropoffAt': t_dropoff_at,
             'unloadAt': t_unload_at,
+            'completedAt': t_completed_at,
             'totalDurationMs': delivery_duration_ms,
             'fullCycleDurationMs': full_cycle_duration_ms,
             'travelToDropoffMs': travel_to_dropoff_ms,

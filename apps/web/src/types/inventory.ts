@@ -106,6 +106,7 @@ export interface Job {
   pickupAt?: string;
   dropoffAt?: string;
   unloadAt?: string;
+  completedAt?: string;
   totalDurationMs?: number;
   fullCycleDurationMs?: number;
   travelToPickupMs?: number;

@@ -22,6 +22,13 @@ type TagDescription =
   | { type: TagType }
   | { type: TagType; id: string | number };
 
+function compareJobHistory(a: Job, b: Job): number {
+  const completedAtA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+  const completedAtB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+  return completedAtB - completedAtA
+    || new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime();
+}
+
 export const inventoryApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     // ─── Packages ─────────────────────────────────────────────────
@@ -264,15 +271,21 @@ export const inventoryApi = baseApi.injectEndpoints({
         socket.on("job:created", (newJob: Job) => {
           updateCachedData((draft) => {
             if (!Array.isArray(draft)) return;
-            const exists = draft.some((j) => j._id === newJob._id);
-            if (!exists) draft.unshift(newJob);
+            const exists = draft.some((job) => job._id === newJob._id);
+            if (!exists) {
+              draft.push(newJob);
+              draft.sort(compareJobHistory);
+            }
           });
         });
         socket.on("job:updated", (updatedJob: Job) => {
           updateCachedData((draft) => {
             if (!Array.isArray(draft)) return;
-            const idx = draft.findIndex((j) => j._id === updatedJob._id);
-            if (idx >= 0) draft[idx] = updatedJob;
+            const idx = draft.findIndex((job) => job._id === updatedJob._id);
+            if (idx >= 0) {
+              draft[idx] = updatedJob;
+              draft.sort(compareJobHistory);
+            }
           });
         });
         await cacheEntryRemoved;

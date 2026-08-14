@@ -180,8 +180,9 @@ class BrainApiClient:
     async def emit_job_timing(self, job_id: str, timing: dict) -> None:
         """Emit delivery timing data to the API.
 
-        Timing dict keys: startedAt, pickupAt, dropoffAt, unloadAt,
-        totalDurationMs, travelToPickupMs, travelToDropoffMs, unloadDurationMs.
+        Timing dict keys: startedAt, pickupAt, dropoffAt, unloadAt, completedAt,
+        totalDurationMs, fullCycleDurationMs, travelToPickupMs,
+        travelToDropoffMs, unloadDurationMs.
         All Date values should be ISO-format strings.
         """
         if not self._connected:
