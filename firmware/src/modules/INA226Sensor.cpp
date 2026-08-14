@@ -111,13 +111,15 @@ bool INA226Sensor::read()
         noload_ = false;
     }
 
-    // Piecewise linear lookup for a 3S Li-ion pack. A single linear formula
-    // is inaccurate because the Li-ion discharge curve is not linear.
+    // Piecewise linear lookup for the pack. A single linear formula is
+    // inaccurate because the Li-ion discharge curve is not linear. Keep the
+    // configured endpoints in this table so telemetry and SOC limits agree.
     static const float soc_table[][2] = {
-        { 20.6f, 100.0f }, { 20.0f, 90.0f }, { 19.2f, 80.0f },
-        { 18.6f, 70.0f }, { 18.0f, 60.0f }, { 17.4f, 50.0f },
-        { 16.8f, 40.0f }, { 16.2f, 30.0f }, { 15.6f, 20.0f },
-        { 15.0f, 10.0f }, { 12.0f, 0.0f },
+        { BATTERY_VOLTAGE_FULL, 100.0f }, { 20.0f, 90.0f },
+        { 19.2f, 80.0f }, { 18.6f, 70.0f }, { 18.0f, 60.0f },
+        { 17.4f, 50.0f }, { 16.8f, 40.0f }, { 16.2f, 30.0f },
+        { 15.6f, 20.0f }, { 14.8f, 10.0f },
+        { BATTERY_VOLTAGE_EMPTY, 0.0f },
     };
     constexpr int SOC_TABLE_LEN = sizeof(soc_table) / sizeof(soc_table[0]);
 

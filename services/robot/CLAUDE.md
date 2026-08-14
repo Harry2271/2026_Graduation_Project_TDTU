@@ -270,15 +270,15 @@ Forwarded from `/esp32/imu`. Used by the brain for heading correction and the ri
 
 ### `esp32_power` — INA226 Battery/Power Telemetry (0.2 Hz)
 
-Forwarded from `/esp32/power`. Battery state-of-charge is derived from bus voltage (3S Li-ion lookup).
+Forwarded from `/esp32/power`. Battery state-of-charge is calculated in firmware from the pack voltage using a piecewise curve: 20.5 V = 100%, 14.0 V = 0%, with linear interpolation between calibrated points. A fresh `noload=true` frame means no source is connected and must not be displayed as a real 0% battery.
 
 ```json
 {
   "type": "esp32_power",
   "data": {
-    "ts": 1053920, "type": 133,
-    "bus_v": 12.34, "shunt_mv": 1.5, "current_a": 0.45, "power_w": 5.6,
-    "soc_pct": 78
+    "type": 133,
+    "voltage_v": 20.1, "current_a": 0.45, "power_w": 9.0,
+    "battery_pct": 92, "battery_status": "ok", "noload": false
   }
 }
 ```

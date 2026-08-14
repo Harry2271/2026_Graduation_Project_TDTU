@@ -330,13 +330,16 @@ I = mA / 1000         (amps)
 P = mW / 1000         (watts)
 ```
 
-**Battery SOC (linear interpolation):**
+**Battery SOC (piecewise Li-ion voltage curve):**
 ```
-V_FULL  = 20.6 V   (100%)
-V_EMPTY = 15.0 V   (0%)
+V_FULL  = 20.5 V   (100%)
+V_EMPTY = 14.0 V   (0%)
 
-SOC% = clamp((1 - (V - V_FULL) / (V_FULL - V_EMPTY)) × 100, 0, 100)
-     = clamp((1 - (V - 20.6) / 5.6) × 100, 0, 100)
+20.5V:100, 20.0V:90, 19.2V:80, 18.6V:70, 18.0V:60,
+17.4V:50, 16.8V:40, 16.2V:30, 15.6V:20, 14.8V:10, 14.0V:0
+
+SOC is linearly interpolated between adjacent points and clamped
+at 100% above V_FULL and 0% below V_EMPTY.
 ```
 
 | SOC | Hành động |

@@ -6,7 +6,7 @@
  * INA226 — Voltage/Current/Power Monitor via LibDriver
  *
  * Measures pack voltage directly from M21-B4055A pack (VIN+ → + pack, VIN- → GND).
- * Battery SOC: 20.6V = 100%, 15.0V = 0% (pack under-load limit).
+ * Battery SOC: 20.5V = 100%, 14.0V = 0% (pack under-load limit).
  * Also reports current (A) and power (W) through the shunt resistor.
  */
 

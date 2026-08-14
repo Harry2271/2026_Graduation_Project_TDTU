@@ -215,12 +215,12 @@ enum MotorState {
 
 // ============================================================
 // Battery — Molicel M21-B4055A pack (84 Wh)
-// Pack voltage: 20.6V fully charged → 14-15V minimum (under load limit).
+// Pack voltage: 20.5V fully charged → 14.0V empty under load.
 // INA226 VIN+ wired directly to pack red (+), VIN- to pack black (GND).
-// SOC linear interpolation: 20.6V = 100%, 15.0V = 0%.
+// SOC uses the piecewise Li-ion curve in INA226Sensor.cpp.
 // ============================================================
-#define BATTERY_VOLTAGE_FULL   20.6f    // 100% — fully charged pack
-#define BATTERY_VOLTAGE_EMPTY  15.0f    // 0% — minimum operational voltage
+#define BATTERY_VOLTAGE_FULL   20.5f    // 100% — fully charged pack
+#define BATTERY_VOLTAGE_EMPTY  14.0f    // 0% — minimum operational voltage
 #define BATTERY_LOW_WARN_PCT   20       // Warning threshold (%)
 #define BATTERY_CRITICAL_PCT   10       // Critical — notify Pi for safe stop
 

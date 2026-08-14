@@ -50,7 +50,7 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 | Module | File | Responsibility |
 |--------|------|---------------|
 | BNO055Sensor | `modules/BNO055Sensor.{h,cpp}` | 9-DOF IMU over I2C. Reads Euler angles (yaw/pitch/roll), temperature, calibration status. Type 134 @ 20Hz |
-| INA226Sensor | `modules/INA226Sensor.{h,cpp}` | Bus voltage, shunt voltage, current, power, and battery SOC (0-100%) over I2C. 3S Li-ion voltage-to-SOC lookup with low/critical alerts. Type 133 @ 0.2Hz |
+| INA226Sensor | `modules/INA226Sensor.{h,cpp}` | Bus voltage, shunt voltage, current, power, and battery SOC (0-100%) over I2C. Piecewise voltage-to-SOC lookup (20.5V = 100%, 14.0V = 0%) with low/critical alerts. Type 133 @ 0.2Hz |
 | IRProximitySensor | `modules/IRProximitySensor.{h,cpp}` | 4× E18-D80NK digital IR proximity sensors (rear-left, rear-right, left, right). Debounced digital reads feeding ObstacleAvoidance. Type 135 on-demand |
 | SharpFrontSensor | `modules/SharpFrontSensor.{h,cpp}` | Sharp GP2Y0A21YK0F analog front distance sensor (10-80 cm). ADC oversampling, distance-to-obstacle mapping for close-range front detection. Type 136 on-demand |
 | VL53L0XSensor | `modules/VL53L0XSensor.{h,cpp}` | VL53L0X Time-of-Flight distance sensor (50-2000mm) over I2C. Used for cargo presence at dock. Reads mm distance and obstacle boolean. |
