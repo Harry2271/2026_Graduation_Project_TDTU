@@ -362,6 +362,7 @@ class RealEsp32Bridge:
     # the ESP32 as frozen (is_alive() == False).  ESP32 emits every
     # 500 ms, so 3 s gives 6x safety margin for transient jitter.
     _ALIVE_TIMEOUT_S = 3.0
+    _POWER_STALE_AFTER_S = 5.0
 
     def __init__(self, writer: Any, reader: Any) -> None:
         self._writer = writer
@@ -562,33 +563,52 @@ class RealEsp32Bridge:
 
     # ----- battery + error health accessors ---------------------------------
 
-    def battery_pct(self) -> Optional[float]:
-        """Battery percentage (0.0-1.0) from cached type-133, or None if stale."""
+    def _fresh_power(self) -> Optional[dict]:
+        """Return the latest type-133 payload while it remains fresh."""
         if not self._last_power:
             return None
         import time as _t
-        if (_t.monotonic() - self._last_power_ms) > 5.0:
+        if (_t.monotonic() - self._last_power_ms) > self._POWER_STALE_AFTER_S:
             return None
-        pct = self._last_power.get('pct')
-        return float(pct) / 100.0 if pct is not None else None
+        return self._last_power
+
+    @staticmethod
+    def _power_is_unavailable(power: dict) -> bool:
+        """True when INA226 reports no measured source rather than an empty pack."""
+        return bool(power.get('noload')) or power.get('battery_status') == 'unknown'
+
+    def battery_pct(self) -> Optional[float]:
+        """Battery percentage (0.0-1.0), or None for stale/no-load telemetry."""
+        power = self._fresh_power()
+        if power is None or self._power_is_unavailable(power):
+            return None
+        pct = power.get('battery_pct', power.get('pct'))
+        try:
+            return float(pct) / 100.0 if pct is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def battery_voltage(self) -> Optional[float]:
-        """Bus voltage in volts from cached type-133, or None if stale."""
-        if not self._last_power:
+        """Bus voltage in volts, or None for stale/no-load telemetry."""
+        power = self._fresh_power()
+        if power is None or self._power_is_unavailable(power):
             return None
-        import time as _t
-        if (_t.monotonic() - self._last_power_ms) > 5.0:
+        voltage = power.get('voltage_v', power.get('bus_v'))
+        try:
+            return float(voltage) if voltage is not None else None
+        except (TypeError, ValueError):
             return None
-        return self._last_power.get('bus_v')
 
     def battery_current(self) -> Optional[float]:
-        """Current draw in amps from cached type-133, or None if stale."""
-        if not self._last_power:
+        """Current draw in amps, or None for stale/no-load telemetry."""
+        power = self._fresh_power()
+        if power is None or self._power_is_unavailable(power):
             return None
-        import time as _t
-        if (_t.monotonic() - self._last_power_ms) > 5.0:
+        current = power.get('current_a')
+        try:
+            return float(current) if current is not None else None
+        except (TypeError, ValueError):
             return None
-        return self._last_power.get('current_a')
 
     def last_power(self) -> dict:
         """Return the latest cached power frame, empty when none received."""

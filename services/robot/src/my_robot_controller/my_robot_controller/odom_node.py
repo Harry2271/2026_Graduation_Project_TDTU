@@ -348,7 +348,13 @@ class OdomNode(Node):
         self._tf_broadcaster.sendTransform(tf)
 
     def _publish_battery(self) -> None:
-        """Publish /battery_state from cached type-133 power data."""
+        """Publish /battery_state from cached type-133 power data.
+
+        ``noload=true`` is a valid INA226 measurement meaning that no source
+        is connected. It must not be presented as a real 0% battery: a real
+        empty battery is only valid when the frame explicitly reports
+        ``noload=false``.
+        """
         if not self._last_power:
             return
         now = self.get_clock().now().nanoseconds / 1e9
@@ -358,14 +364,32 @@ class OdomNode(Node):
         p = self._last_power
         bs = BatteryState()
         bs.header = Header(stamp=self.get_clock().now().to_msg())
-        bs.voltage = float(p.get('bus_v', 0.0))
-        bs.current = float(p.get('current_a', 0.0))
-        bs.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
-        bs.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_GOOD
-        bs.present = True
-        pct = p.get('pct')
-        if pct is not None:
-            bs.percentage = float(pct) / 100.0
+
+        try:
+            voltage = p.get('voltage_v', p.get('bus_v', 0.0))
+            current = p.get('current_a', 0.0)
+            bs.voltage = float(voltage)
+            bs.current = float(current)
+        except (TypeError, ValueError):
+            return
+
+        no_load = bool(p.get('noload')) or p.get('battery_status') == 'unknown'
+        if no_load:
+            bs.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
+            bs.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_UNKNOWN
+            bs.present = False
+            bs.percentage = float('nan')
+        else:
+            bs.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+            bs.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_GOOD
+            bs.present = True
+            pct = p.get('battery_pct', p.get('pct'))
+            if pct is not None:
+                try:
+                    bs.percentage = float(pct) / 100.0
+                except (TypeError, ValueError):
+                    return
+
         self._battery_pub.publish(bs)
 
     @staticmethod
