@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power, Zap, Keyboard, Rocket, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Cpu } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power, Keyboard, Rocket, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Cpu, ArrowUp, ArrowDown, Square, OctagonAlert, Route, CircleStop, Radio } from 'lucide-react';
 import { Button, App, Tooltip } from 'antd';
 
 const WS_URL =
@@ -881,6 +881,24 @@ export default function MapPage() {
     sendTeleop(vx, vy, omega);
   }, [controlMode, sendTeleop]);
 
+  const stopManualMotion = useCallback((key?: string) => {
+    if (key) {
+      keysPressed.current.delete(key);
+      sendKeyboardMotion();
+      return;
+    }
+    keysPressed.current.clear();
+    teleopRef.current = null;
+    sendTeleop(0, 0, 0);
+  }, [sendKeyboardMotion, sendTeleop]);
+
+  const startManualMotion = useCallback((key: string, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (controlMode !== 'MANUAL') return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    keysPressed.current.add(key);
+    sendKeyboardMotion();
+  }, [controlMode, sendKeyboardMotion]);
+
   useEffect(() => {
     const controlledKeys = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
     const onKeyDown = (event: KeyboardEvent) => {
@@ -902,9 +920,13 @@ export default function MapPage() {
       teleopRef.current = null;
       sendTeleop(0, 0, 0);
     };
+    const stopOnVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') stopOnBlur();
+    };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', stopOnBlur);
+    document.addEventListener('visibilitychange', stopOnVisibilityChange);
     teleopSendTimerRef.current = setInterval(() => {
       if (controlMode === 'MANUAL' && teleopRef.current) sendKeyboardMotion();
     }, 50);
@@ -912,9 +934,10 @@ export default function MapPage() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', stopOnBlur);
+      document.removeEventListener('visibilitychange', stopOnVisibilityChange);
       if (teleopSendTimerRef.current) clearInterval(teleopSendTimerRef.current);
       teleopSendTimerRef.current = null;
-      keysPressed.current.clear();
+      stopOnBlur();
     };
   }, [controlMode, sendKeyboardMotion, sendTeleop]);
 
@@ -1183,233 +1206,69 @@ export default function MapPage() {
       </div>
 
       {/* ─── Robot Control Panel ─────────────────────────────────────────── */}
-      <div
-        className="px-4 md:px-8 py-3 flex flex-wrap items-start justify-between gap-3 relative z-10"
-        style={{
-          background: 'rgba(8,11,16,0.95)',
-          borderTop: '1px solid var(--border-dim)',
-          boxShadow: 'inset 0 1px 0 rgba(0,212,255,0.08)',
-        }}
+      <section
+        className="relative z-10 border-t px-4 py-4 md:px-8"
+        style={{ background: 'rgba(8,11,16,0.96)', borderColor: 'var(--border-dim)' }}
+        aria-label="Bảng điều khiển robot"
       >
-        {/* Left: Manual controls */}
-        <div className="flex flex-col gap-2 min-w-[300px]">
-          <span style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.08em' }}>ĐIỀU KHIỂN THỦ CÔNG</span>
-          <div className="flex items-center gap-3">
-            {/* Mode toggle */}
-            <div className="flex items-center gap-1 p-1 rounded-xl" style={{ border: '1px solid var(--border-mid)' }}>
-              <button
-                onClick={() => handleModeSwitch('MANUAL')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
-                style={
-                  controlMode === 'MANUAL'
-                    ? { background: 'rgba(0,212,255,0.18)', color: 'var(--accent)', border: '1px solid rgba(0,212,255,0.4)', boxShadow: '0 0 12px rgba(0,212,255,0.15)' }
-                    : { background: 'transparent', color: 'var(--text-muted)', border: '1px solid transparent' }
-                }
-              >
-                <Keyboard size={13} />
-                MANUAL
-              </button>
-              <button
-                onClick={() => handleModeSwitch('AUTO')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
-                style={
-                  controlMode === 'AUTO'
-                    ? { background: 'rgba(0,255,136,0.18)', color: 'var(--success)', border: '1px solid rgba(0,255,136,0.4)', boxShadow: '0 0 12px rgba(0,255,136,0.15)' }
-                    : { background: 'transparent', color: 'var(--text-muted)', border: '1px solid transparent' }
-                }
-              >
-                <Rocket size={13} />
-                AUTO
-              </button>
+        <div className="mx-auto grid max-w-[1540px] gap-3 xl:grid-cols-[minmax(330px,1.08fr)_minmax(300px,1fr)_minmax(280px,0.82fr)]">
+          <div className="glass flex flex-col gap-3 rounded-lg p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-label">Điều khiển trực tiếp</p>
+                <p className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>Giữ nút để di chuyển</p>
+              </div>
+              <div className="flex rounded-lg p-1" style={{ border: '1px solid var(--border-mid)' }} role="group" aria-label="Chế độ điều khiển">
+                <button type="button" onClick={() => handleModeSwitch('MANUAL')} aria-pressed={controlMode === 'MANUAL'} className="flex min-h-11 items-center gap-1.5 rounded-md px-3 text-[11px] font-bold transition-colors" style={controlMode === 'MANUAL' ? { background: 'var(--accent-dim)', color: 'var(--accent)', boxShadow: 'inset 0 0 0 1px var(--accent-border)' } : { color: 'var(--text-muted)' }}><Keyboard size={14} />THỦ CÔNG</button>
+                <button type="button" onClick={() => handleModeSwitch('AUTO')} aria-pressed={controlMode === 'AUTO'} className="flex min-h-11 items-center gap-1.5 rounded-md px-3 text-[11px] font-bold transition-colors" style={controlMode === 'AUTO' ? { background: 'var(--success-dim)', color: 'var(--success)', boxShadow: 'inset 0 0 0 1px var(--success-border)' } : { color: 'var(--text-muted)' }}><Rocket size={14} />TỰ ĐỘNG</button>
+              </div>
             </div>
-
-            {/* D-pad (manual only) */}
-            {controlMode === 'MANUAL' && (
-              <div className="grid grid-cols-3 gap-1 p-1.5 rounded-xl" style={{ border: '1px solid var(--border-mid)' }}>
-                <div />
-                <button
-                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
-                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
-                  onMouseDown={() => { keysPressed.current.add('w'); sendKeyboardMotion(); }}
-                  onMouseUp={() => { keysPressed.current.delete('w'); sendKeyboardMotion(); }}
-                  onMouseLeave={() => { keysPressed.current.delete('w'); sendKeyboardMotion(); }}
-                >
-                  <ChevronUp size={16} />
-                </button>
-                <div />
-                <button
-                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
-                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
-                  onMouseDown={() => { keysPressed.current.add('a'); sendKeyboardMotion(); }}
-                  onMouseUp={() => { keysPressed.current.delete('a'); sendKeyboardMotion(); }}
-                  onMouseLeave={() => { keysPressed.current.delete('a'); sendKeyboardMotion(); }}
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <button
-                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
-                  style={{ background: 'rgba(255,59,92,0.15)', border: '1px solid rgba(255,59,92,0.4)', color: 'var(--danger)' }}
-                  onMouseDown={() => { sendEsp32({ cmd: 'stop' }); }}
-                >
-                  ■
-                </button>
-                <button
-                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
-                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
-                  onMouseDown={() => { keysPressed.current.add('d'); sendKeyboardMotion(); }}
-                  onMouseUp={() => { keysPressed.current.delete('d'); sendKeyboardMotion(); }}
-                  onMouseLeave={() => { keysPressed.current.delete('d'); sendKeyboardMotion(); }}
-                >
-                  <ChevronRight size={16} />
-                </button>
-                <div />
-                <button
-                  className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-90"
-                  style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
-                  onMouseDown={() => { keysPressed.current.add('s'); sendKeyboardMotion(); }}
-                  onMouseUp={() => { keysPressed.current.delete('s'); sendKeyboardMotion(); }}
-                  onMouseLeave={() => { keysPressed.current.delete('s'); sendKeyboardMotion(); }}
-                >
-                  <ChevronDown size={16} />
-                </button>
-                <div />
+            {controlMode === 'MANUAL' ? (
+              <div className="grid grid-cols-[1fr_auto] items-center gap-4">
+                <div className="grid grid-cols-3 gap-1.5" aria-label="Điều khiển hướng">
+                  <div />
+                  <Tooltip title="Tiến, giữ để chạy"><button type="button" aria-label="Di chuyển tiến, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('w', event)} onPointerUp={() => stopManualMotion('w')} onPointerCancel={() => stopManualMotion('w')} onLostPointerCapture={() => stopManualMotion('w')}><ChevronUp size={22} /></button></Tooltip>
+                  <div />
+                  <Tooltip title="Sang trái, giữ để chạy"><button type="button" aria-label="Di chuyển sang trái, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('a', event)} onPointerUp={() => stopManualMotion('a')} onPointerCancel={() => stopManualMotion('a')} onLostPointerCapture={() => stopManualMotion('a')}><ChevronLeft size={22} /></button></Tooltip>
+                  <Tooltip title="Dừng ngay"><button type="button" aria-label="Dừng robot ngay" className="map-motion-stop" onClick={() => { stopManualMotion(); sendEsp32({ cmd: 'stop' }); }}><Square size={17} fill="currentColor" /></button></Tooltip>
+                  <Tooltip title="Sang phải, giữ để chạy"><button type="button" aria-label="Di chuyển sang phải, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('d', event)} onPointerUp={() => stopManualMotion('d')} onPointerCancel={() => stopManualMotion('d')} onLostPointerCapture={() => stopManualMotion('d')}><ChevronRight size={22} /></button></Tooltip>
+                  <div />
+                  <Tooltip title="Lùi, giữ để chạy"><button type="button" aria-label="Di chuyển lùi, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('s', event)} onPointerUp={() => stopManualMotion('s')} onPointerCancel={() => stopManualMotion('s')} onLostPointerCapture={() => stopManualMotion('s')}><ChevronDown size={22} /></button></Tooltip>
+                  <div />
+                </div>
+                <div className="hidden text-right text-[10px] leading-5 md:block" style={{ color: 'var(--text-muted)' }}>W A S D: di chuyển<br />Q / E: xoay<br />Mũi tên: điều hướng</div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {['A', 'B', 'C', 'D'].map((zone) => <button key={zone} type="button" onClick={() => sendDemo(zone)} className="map-auto-button">KHU {zone}</button>)}
+                <button type="button" onClick={() => sendDemo('full')} className="map-route-button"><Route size={16} />LỘ TRÌNH</button>
+                <button type="button" onClick={() => sendDemo('stop')} className="map-auto-stop"><CircleStop size={16} />DỪNG</button>
               </div>
             )}
+          </div>
 
-            {/* Cylinder controls */}
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => sendCylinder('extend')}
-                className="px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
-                style={{ background: 'rgba(255,184,0,0.12)', border: '1px solid rgba(255,184,0,0.3)', color: 'var(--warning)' }}
-              >
-                ▲ NÂNG
-              </button>
-              <button
-                onClick={() => sendCylinder('stop')}
-                className="px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
-                style={{ background: 'rgba(156,163,175,0.12)', border: '1px solid rgba(156,163,175,0.3)', color: 'var(--text-secondary)' }}
-              >
-                ■
-              </button>
-              <button
-                onClick={() => sendCylinder('retract')}
-                className="px-3 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer transition-all"
-                style={{ background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)', color: 'var(--accent)' }}
-              >
-                ▼ HẠ
-              </button>
+          <div className="glass flex flex-col gap-3 rounded-lg p-3">
+            <div className="flex items-center justify-between gap-2"><div><p className="text-label">Tác vụ khu vực</p><p className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>{controlMode === 'AUTO' ? 'Chọn lộ trình tự động' : 'Chuyển sang Tự động để kích hoạt'}</p></div><Radio size={18} style={{ color: controlMode === 'AUTO' ? 'var(--success)' : 'var(--text-muted)' }} /></div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:hidden">
+              {['A', 'B', 'C', 'D'].map((zone) => <button key={zone} type="button" disabled={controlMode !== 'AUTO'} onClick={() => sendDemo(zone)} className="map-auto-button">KHU {zone}</button>)}
+              <button type="button" disabled={controlMode !== 'AUTO'} onClick={() => sendDemo('full')} className="map-route-button"><Route size={16} />LỘ TRÌNH</button>
+              <button type="button" onClick={() => sendDemo('stop')} className="map-auto-stop"><CircleStop size={16} />DỪNG</button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 border-t pt-3" style={{ borderColor: 'var(--border-dim)' }}>
+              <button type="button" onClick={() => sendCylinder('extend')} className="map-cylinder-button" style={{ color: 'var(--warning)' }}><ArrowUp size={16} />NÂNG</button>
+              <button type="button" onClick={() => sendCylinder('stop')} className="map-cylinder-button" style={{ color: 'var(--text-secondary)' }}><Square size={14} fill="currentColor" />DỪNG</button>
+              <button type="button" onClick={() => sendCylinder('retract')} className="map-cylinder-button" style={{ color: 'var(--accent)' }}><ArrowDown size={16} />HẠ</button>
             </div>
           </div>
-        </div>
 
-        {/* Center: Autonomous controls */}
-        <div className="flex flex-col gap-2">
-          <span style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.08em' }}>TỰ ĐỘNG / KHU VỰC</span>
-          <div className="flex items-center gap-2">
-          {['A', 'B', 'C', 'D'].map(zone => (
-            <button
-              key={zone}
-              onClick={() => sendDemo(zone)}
-              disabled={controlMode !== 'AUTO'}
-              className="px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
-              style={{
-                background: controlMode === 'AUTO' ? 'rgba(0,255,136,0.12)' : 'rgba(156,163,175,0.06)',
-                border: `1px solid ${controlMode === 'AUTO' ? 'rgba(0,255,136,0.35)' : 'rgba(156,163,175,0.15)'}`,
-                color: controlMode === 'AUTO' ? 'var(--success)' : 'var(--text-muted)',
-                opacity: controlMode === 'AUTO' ? 1 : 0.4,
-              }}
-            >
-              {zone}
-            </button>
-          ))}
-          <button
-            onClick={() => sendDemo('full')}
-            disabled={controlMode !== 'AUTO'}
-            className="px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
-            style={{
-              background: controlMode === 'AUTO' ? 'rgba(0,212,255,0.12)' : 'rgba(156,163,175,0.06)',
-              border: `1px solid ${controlMode === 'AUTO' ? 'rgba(0,212,255,0.35)' : 'rgba(156,163,175,0.15)'}`,
-              color: controlMode === 'AUTO' ? 'var(--accent)' : 'var(--text-muted)',
-              opacity: controlMode === 'AUTO' ? 1 : 0.4,
-            }}
-          >
-            FULL
-          </button>
-          <button
-            onClick={() => sendDemo('stop')}
-            className="px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
-            style={{ background: 'rgba(255,59,92,0.12)', border: '1px solid rgba(255,59,92,0.35)', color: 'var(--danger)' }}
-          >
-            STOP
-          </button>
-
-          {/* E-STOP (priority) */}
-          <button
-            onClick={handleEStop}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-[12px] cursor-pointer transition-all"
-            style={{
-              background: 'linear-gradient(135deg, rgba(255,59,92,0.2), rgba(220,30,60,0.15))',
-              border: '2px solid var(--danger)',
-              color: 'var(--danger)',
-              boxShadow: '0 0 20px rgba(255,59,92,0.3), inset 0 1px 0 rgba(255,255,255,0.05)',
-              letterSpacing: '0.08em',
-            }}
-          >
-            🛑 E-STOP
-          </button>
+          <div className="glass flex flex-col gap-3 rounded-lg p-3">
+            <div className="flex items-start justify-between gap-3"><div><p className="text-label">Trạng thái an toàn</p><div className="mt-2 flex items-center gap-2 text-[12px] font-bold" style={{ color: esp32Status?.estop ? 'var(--danger)' : esp32Status ? 'var(--success)' : 'var(--text-muted)' }}><Cpu size={15} />{esp32Status?.estop ? 'E-STOP ĐANG BẬT' : esp32Status?.mode?.toUpperCase() || 'CHỜ TELEMETRY'}</div></div><button type="button" onClick={handleEStop} className="map-estop-button" aria-label="Dừng khẩn cấp"><OctagonAlert size={18} />E-STOP</button></div>
+            <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]" style={{ color: 'var(--text-secondary)' }}><span className="rounded-md px-1.5 py-2" style={{ background: 'rgba(255,255,255,0.035)' }}>TOF<br /><b style={{ color: 'var(--text-primary)' }}>{esp32Status?.st?.tof_mm ?? '--'} mm</b></span><span className="rounded-md px-1.5 py-2" style={{ background: 'rgba(255,255,255,0.035)' }}>XYLANH<br /><b style={{ color: 'var(--text-primary)' }}>{esp32Status?.st?.cyl ?? '--'}</b></span><span className="rounded-md px-1.5 py-2" style={{ background: 'rgba(255,255,255,0.035)' }}>VẬT CẢN<br /><b style={{ color: esp32Status?.st?.obs ? 'var(--warning)' : 'var(--text-primary)' }}>{esp32Status?.st?.obs ? 'CÓ' : 'KHÔNG'}</b></span></div>
+            {(demoStatus.state && demoStatus.state !== 'idle') || controlModeStatus.reason ? <p className="min-h-5 text-[10px] leading-5" style={{ color: 'var(--text-muted)' }}>{demoStatus.state && demoStatus.state !== 'idle' ? `TÁC VỤ: ${demoStatus.action?.toUpperCase() || demoStatus.state.toUpperCase()}` : `${controlMode}: ${controlModeStatus.reason}`}</p> : <p className="min-h-5 text-[10px] leading-5" style={{ color: 'var(--text-muted)' }}>Tín hiệu điều khiển: {isOnline ? 'đã kết nối' : 'đang kết nối lại'}</p>}
           </div>
         </div>
+      </section>
 
-        {/* Right: ESP32 status panel */}
-        <div className="flex items-center gap-3">
-          {esp32Status && (
-            <div
-              className="flex flex-col gap-1 px-3 py-2 rounded-xl"
-              style={{ background: 'rgba(17,24,39,0.8)', border: '1px solid var(--border-dim)' }}
-            >
-              <div className="flex items-center gap-2">
-                <Cpu size={11} style={{ color: esp32Status.estop ? 'var(--danger)' : 'var(--success)' }} />
-                <span className="text-[9px] font-bold" style={{ color: esp32Status.estop ? 'var(--danger)' : 'var(--success)', letterSpacing: '0.08em' }}>
-                  {esp32Status.estop ? 'E-STOP' : esp32Status.mode?.toUpperCase() || 'IDLE'}
-                </span>
-              </div>
-              {esp32Status.st && (
-                <div className="flex items-center gap-2 text-[8px]" style={{ color: 'var(--text-muted)' }}>
-                  <span>TOF:{esp32Status.st.tof_mm ?? '?'}mm</span>
-                  <span>CYL:{esp32Status.st.cyl ?? '?'}</span>
-                  <span>OBS:{esp32Status.st.obs ? '●' : '○'}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {demoStatus.state && demoStatus.state !== 'idle' && (
-            <div
-              className="flex items-center gap-2 px-3 py-2 rounded-xl"
-              style={{
-                background: 'rgba(0,255,136,0.06)',
-                border: '1px solid rgba(0,255,136,0.2)',
-              }}
-            >
-              <span className="text-[9px] font-bold" style={{ color: 'var(--success)', letterSpacing: '0.08em' }}>
-                DEMO: {demoStatus.state?.toUpperCase()} {demoStatus.action ? `→ ${demoStatus.action}` : ''}
-              </span>
-              {demoStatus.message && (
-                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{demoStatus.message}</span>
-              )}
-            </div>
-          )}
-
-          {controlModeStatus.source && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(17,24,39,0.8)', border: '1px solid var(--border-dim)' }}>
-              <span className="text-[9px] font-bold" style={{ color: controlMode === 'AUTO' ? 'var(--success)' : 'var(--accent)', letterSpacing: '0.08em' }}>
-                {controlMode} {controlModeStatus.reason ? `(${controlModeStatus.reason})` : ''}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* ─── Robot error banner ──────────────────────────────────────────────── */}
       {robotErrors.length > 0 && (() => {
@@ -1775,6 +1634,46 @@ export default function MapPage() {
         @keyframes pulse-glow {
           0%, 100% { opacity: 0.6; transform: scale(1); }
           50% { opacity: 1; transform: scale(1.05); }
+        }
+        .map-motion-button, .map-motion-stop {
+          align-items: center;
+          background: rgba(0, 212, 255, 0.1);
+          border: 1px solid var(--accent-border);
+          border-radius: 8px;
+          color: var(--accent);
+          cursor: pointer;
+          display: flex;
+          height: 48px;
+          justify-content: center;
+          touch-action: none;
+          transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+          width: 48px;
+        }
+        .map-motion-button:hover { background: rgba(0, 212, 255, 0.18); }
+        .map-motion-button:active { background: rgba(0, 212, 255, 0.28); transform: scale(0.94); }
+        .map-motion-stop { background: var(--danger-dim); border-color: var(--danger-border); color: var(--danger); }
+        .map-motion-stop:hover { background: rgba(255, 59, 92, 0.22); }
+        .map-auto-button, .map-route-button, .map-auto-stop, .map-cylinder-button, .map-estop-button {
+          align-items: center;
+          border-radius: 8px;
+          cursor: pointer;
+          display: inline-flex;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          font-weight: 700;
+          justify-content: center;
+          min-height: 44px;
+          transition: background 160ms ease, border-color 160ms ease, opacity 160ms ease;
+        }
+        .map-auto-button { background: var(--success-dim); border: 1px solid var(--success-border); color: var(--success); }
+        .map-auto-button:hover:not(:disabled) { background: rgba(0, 255, 136, 0.2); }
+        .map-route-button { background: var(--accent-dim); border: 1px solid var(--accent-border); color: var(--accent); gap: 6px; }
+        .map-auto-stop { background: var(--danger-dim); border: 1px solid var(--danger-border); color: var(--danger); gap: 6px; }
+        .map-cylinder-button { background: rgba(255, 255, 255, 0.035); border: 1px solid var(--border-mid); flex-direction: column; gap: 3px; }
+        .map-estop-button { background: var(--danger-dim); border: 1px solid var(--danger); color: var(--danger); gap: 6px; padding: 0 12px; }
+        .map-auto-button:disabled, .map-route-button:disabled { cursor: not-allowed; opacity: 0.36; }
+        @media (prefers-reduced-motion: reduce) {
+          .map-motion-button, .map-motion-stop, .map-auto-button, .map-route-button, .map-auto-stop, .map-cylinder-button, .map-estop-button { transition: none; }
         }
       `}</style>
     </div>
