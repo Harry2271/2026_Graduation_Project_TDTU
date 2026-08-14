@@ -116,6 +116,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Write API env file for Compose validation
+        run: |
+          mkdir -p apps/api
+          cat > apps/api/.env <<'ENVEOF'
+          API_PORT=${{ vars.API_PORT || '5000' }}
+          PORT=${{ vars.API_PORT || '5000' }}
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          JWT_SIGN_SECRET=${{ secrets.JWT_SIGN_SECRET }}
+          ROBOT_BRAIN_TOKEN=${{ secrets.ROBOT_BRAIN_TOKEN }}
+          MAPS_DIR=${{ vars.MAPS_DIR || '/home/pi/robot_ws/maps' }}
+          API_SOCKET_URL=${{ vars.API_SOCKET_URL || 'https://api.nguyen-robot.io.vn' }}
+          ENVEOF
+
       - name: Build and start Web container
         env:
           PORT: ${{ vars.WEB_PORT || '3000' }}

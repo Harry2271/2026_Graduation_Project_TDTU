@@ -43,6 +43,8 @@ Nếu Pi mất mạng nhưng code trên đĩa đã mới, bỏ qua bước pull:
 ./start-all.sh --skip-git
 ```
 
+Không chạy `docker compose up` trực tiếp trên bản checkout mới nếu chưa có `apps/api/.env`; Compose đọc file này ngay cả khi chỉ khởi động Web. Dùng `./start-all.sh` để tự tạo file từ `.env.example`, hoặc tạo file thủ công và điền các secret thật trước khi chạy Compose.
+
 `start-all.sh` chạy theo thứ tự:
 1. `git pull --ff-only`
 2. Kiểm tra `apps/api/.env` (nếu thiếu thì copy từ `.env.example` — bạn phải tự sửa secrets sau)
