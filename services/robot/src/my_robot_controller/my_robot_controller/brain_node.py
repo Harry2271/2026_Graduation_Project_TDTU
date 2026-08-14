@@ -27,6 +27,7 @@ from my_robot_controller.api_client import BrainApiClient
 from my_robot_controller.esp32_bridge import (
     Esp32Bridge, FakeEsp32Bridge, MirrorBridge,
 )
+from my_robot_controller.route_planner import RoutePlan, build_route_plan
 
 
 class BrainState(str, Enum):
@@ -105,14 +106,16 @@ CARGO_RELEASE_STABLE_S = 0.8
 #
 # Coordinates are in the map frame — they become valid once SLAM has built
 # a map in MAPPING mode and lifecycle has shifted to LIVE (AMCL).
+# Fallback values keep single-zone commands available before YAML is installed.
+# FULL uses the validated YAML route loaded in BrainNode.__init__.
 DEMO_ZONES: dict[str, dict] = {
-    'A': {'x': 1.00, 'y': 0.90, 'theta': 0.0, 'tag_id': 0, 'label': 'Khu A'},
-    'B': {'x': 2.40, 'y': 0.90, 'theta': 0.0, 'tag_id': 1, 'label': 'Khu B'},
-    'C': {'x': 1.00, 'y': 2.20, 'theta': 0.0, 'tag_id': 2, 'label': 'Khu C'},
-    'D': {'x': 2.40, 'y': 2.20, 'theta': 0.0, 'tag_id': 3, 'label': 'Khu D'},
+    'A': {'x': 1.00, 'y': 0.90, 'theta': 0.0, 'tag_id': 0, 'label': 'Khu A (trái gần)'},
+    'B': {'x': 1.00, 'y': 2.20, 'theta': 0.0, 'tag_id': 2, 'label': 'Khu B (trái xa)'},
+    'C': {'x': 2.40, 'y': 2.20, 'theta': 0.0, 'tag_id': 3, 'label': 'Khu C (phải xa)'},
+    'D': {'x': 2.40, 'y': 0.90, 'theta': 0.0, 'tag_id': 1, 'label': 'Khu D (phải gần Home)'},
 }
 DEMO_DOCK_DISTANCE_MM = 300   # VL53L0X target distance to dock body
-DEMO_DEMO_SEQUENCE = ['A', 'B', 'D', 'C']  # route that minimises total travel
+DEMO_DEMO_SEQUENCE = ['A', 'B', 'C', 'D']
 
 
 class BrainNode(Node):
@@ -160,6 +163,11 @@ class BrainNode(Node):
             String, '/demo/cmd', self._on_demo_cmd, 10)
         self._demo_task: asyncio.Task[None] | None = None
         self._demo_cancel = False
+        # YAML is the source of truth for FULL route ordering and calibration.
+        # The fallback plan preserves individual A/B/C/D commands in dev mode.
+        self._route_plan: RoutePlan | None = None
+        self._route_config_error: str | None = None
+        self._load_demo_route()
 
         # ── Operator navigation: web_bridge → /brain/navigate_cmd ──────────
         # Payload JSON: {"action":"navigate","x":1.5,"y":2.0,"theta":0.0}
@@ -281,6 +289,24 @@ class BrainNode(Node):
         self._snapshot_pose: tuple[float, float, float] | None = None
 
         self.get_logger().info(f'brain_node started in state {self._state}')
+
+    def _load_demo_route(self) -> None:
+        """Load the installed YAML route; do not silently run an unsafe FULL route."""
+        config_path = os.environ.get(
+            'DEMO_ZONES_CONFIG',
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'demo_zones.yaml'))
+        try:
+            import yaml
+            with open(config_path, 'r', encoding='utf-8') as stream:
+                config = yaml.safe_load(stream)
+            self._route_plan = build_route_plan(config, allow_uncalibrated=True)
+            self.get_logger().info(
+                f'Demo route loaded: {" → ".join(self._route_plan.zone_ids)} '
+                f'(distance={self._route_plan.dock_distance_mm}mm, '
+                f'status={self._route_plan.distance_status})')
+        except Exception as exc:
+            self._route_config_error = str(exc)
+            self.get_logger().error(f'Cannot load demo route: {exc}')
 
     def transition_to(self, new_state: BrainState, reason: str = '') -> None:
         old = self._state
@@ -976,11 +1002,17 @@ class BrainNode(Node):
     # ─────────────────────────────────────────────────────────────────
 
     def _publish_demo_status(self, state: str, zone: str = '',
-                             message: str = '') -> None:
-        """Publish a small JSON status frame for the map-page demo panel."""
+                             message: str = '', route_index: int | None = None,
+                             expected_tag_id: int | None = None) -> None:
+        """Publish demo status with enough route context for safe monitoring."""
+        total = len(self._route_plan.zones) if self._route_plan else 0
         payload = json.dumps({
             'state': state,
+            'route_id': self._route_plan.route_id if self._route_plan else None,
+            'route_index': route_index,
+            'total_zones': total,
             'zone': zone,
+            'expected_tag_id': expected_tag_id,
             'message': message,
             'ts': time.time(),
         })
@@ -1123,13 +1155,26 @@ class BrainNode(Node):
         """
         zone_id = zone_id.upper()
         zone = DEMO_ZONES.get(zone_id)
+        if self._route_plan is not None:
+            configured = next((item for item in self._route_plan.zones
+                               if item.zone_id == zone_id), None)
+            if configured is not None:
+                zone = {
+                    'x': configured.x, 'y': configured.y,
+                    'theta': configured.theta, 'tag_id': configured.tag_id,
+                    'label': configured.label,
+                }
         if zone is None:
             self.get_logger().error(f'Unknown delivery zone {zone_id!r}')
             return False
 
+        route_index = (self._route_plan.zone_ids.index(zone_id)
+                       if self._route_plan and zone_id in self._route_plan.zone_ids
+                       else None)
         self.transition_to(BrainState.JOB_NAV_TO_DROPOFF, f'demo zone {zone_id}')
         self._publish_demo_status('NAVIGATING', zone_id,
-                                  f'Đang đi đến {zone["label"]}')
+                                  f'Đang đi đến {zone["label"]}', route_index,
+                                  zone['tag_id'])
         try:
             await self.connect_bridge()
             if self._demo_cancel:
@@ -1145,8 +1190,10 @@ class BrainNode(Node):
             self.transition_to(BrainState.JOB_DOCK_UNLOAD,
                                f'demo zone {zone_id} tag')
             self._clear_tag()
+            dock_distance_mm = (self._route_plan.dock_distance_mm
+                                if self._route_plan else DEMO_DOCK_DISTANCE_MM)
             dock_ok = await self._dock_align(
-                zone['tag_id'], DEMO_DOCK_DISTANCE_MM, timeout_s=20.0)
+                zone['tag_id'], dock_distance_mm, timeout_s=20.0)
             if not dock_ok:
                 raise RuntimeError(f'Không căn được AprilTag ID {zone["tag_id"]}')
 
@@ -1155,7 +1202,7 @@ class BrainNode(Node):
             self._publish_demo_status('UNLOADING', zone_id,
                                       'Đang đổ hàng bằng xy lanh')
             await self._bridge.begin_dock(
-                zone['tag_id'], DEMO_DOCK_DISTANCE_MM,
+                zone['tag_id'], dock_distance_mm,
                 facing_theta_deg=math.degrees(zone['theta']),
                 operation_id=f'demo-{zone_id}-{int(time.time())}')
             if not await self._poll_unload_state():
@@ -1183,21 +1230,41 @@ class BrainNode(Node):
             return False
 
     async def run_demo(self) -> bool:
-        """Run the short capstone route S→A→B→D→C→S."""
-        self._publish_demo_status('RUNNING', message='Bắt đầu demo A→B→D→C')
+        """Run Home → A → B → C → D → Home in the configured order."""
+        if self._route_plan is None:
+            self._publish_demo_status('FAILED', message=self._route_config_error or
+                                      'Không có cấu hình route')
+            return False
+        if self._route_plan.distance_status not in {'READY', 'VERIFIED'}:
+            message = (f'Chưa chạy FULL: dock distance chưa xác nhận '
+                       f'({self._route_plan.distance_status})')
+            self._publish_demo_status('FAILED', message=message)
+            self.get_logger().error(message)
+            return False
+        if any(not zone.calibrated for zone in self._route_plan.zones):
+            message = 'Chưa chạy FULL: còn khu chưa calibrated'
+            self._publish_demo_status('FAILED', message=message)
+            self.get_logger().error(message)
+            return False
+
+        route = self._route_plan.zone_ids
+        self._publish_demo_status('RUNNING', message='Bắt đầu demo ' + '→'.join(route))
         try:
-            for zone_id in DEMO_DEMO_SEQUENCE:
+            for route_index, zone_id in enumerate(route):
                 if self._demo_cancel:
                     return False
+                self._publish_demo_status('ZONE_START', zone_id,
+                                          f'Chặng {route_index + 1}/{len(route)}',
+                                          route_index)
                 if not await self.deliver_to_zone(zone_id, return_home=False):
                     return False
                 await asyncio.sleep(1.0)
-            self._publish_demo_status('RETURNING', message='Đang về điểm xuất phát S')
+            self._publish_demo_status('RETURNING', message='Đang về điểm xuất phát Home')
             returned = await self._return_home()
             await self._stop()
             if returned:
                 self.transition_to(BrainState.IDLE, 'full demo complete')
-                self._publish_demo_status('COMPLETED', message='Hoàn tất demo A→B→D→C')
+                self._publish_demo_status('COMPLETED', message='Hoàn tất demo ' + '→'.join(route))
             return returned
         except asyncio.CancelledError:
             await self._stop()

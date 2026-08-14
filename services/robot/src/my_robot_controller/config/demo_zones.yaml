@@ -5,49 +5,56 @@
 # until each approach pose has been tested individually at low speed.
 #
 # Layout for the compact graduation demonstration:
-#   A (left)  B (right)  -- first cross-section
-#   C (left)  D (right)  -- farther down the aisle
+#   A (left, near)   D (right, near)  -- first cross-section / closest to Home
+#   B (left, far)    C (right, far)   -- farther down the aisle
+#
+# Required AUTO route: Home → A → B → C → D → Home.
+# The route is explicit and must not be reordered from camera-frame detections.
 #
 # AprilTags should be mounted level with the camera optical axis and face the
 # corresponding approach direction.  `dock_distance_mm` remains provisional
 # until the physical robot-to-bay distance is measured.
 
 demo:
-  route: [A, B, D, C]
+  route: [A, B, C, D]
   dock_distance_mm: 300
   distance_status: MEASURE_REQUIRED
   zones:
     A:
-      label: Khu A
+      label: Khu A (trái gần)
       tag_id: 0
       approach_x: 1.00
       approach_y: 0.90
       approach_theta: 0.0
       side: left
+      depth: near
       calibrated: false
     B:
-      label: Khu B
-      tag_id: 1
-      approach_x: 2.40
-      approach_y: 0.90
-      approach_theta: 0.0
-      side: right
-      calibrated: false
-    C:
-      label: Khu C
+      label: Khu B (trái xa)
       tag_id: 2
       approach_x: 1.00
       approach_y: 2.20
       approach_theta: 0.0
       side: left
+      depth: far
       calibrated: false
-    D:
-      label: Khu D
+    C:
+      label: Khu C (phải xa)
       tag_id: 3
       approach_x: 2.40
       approach_y: 2.20
       approach_theta: 0.0
       side: right
+      depth: far
+      calibrated: false
+    D:
+      label: Khu D (phải gần Home)
+      tag_id: 1
+      approach_x: 2.40
+      approach_y: 0.90
+      approach_theta: 0.0
+      side: right
+      depth: near
       calibrated: false
 
 # Recommended physical clearance (measure on the real setup):
