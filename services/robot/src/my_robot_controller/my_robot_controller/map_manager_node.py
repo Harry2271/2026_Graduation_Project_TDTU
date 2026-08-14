@@ -42,10 +42,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Empty
 from tf2_ros import Buffer, TransformListener
 
-# ── Grid parameters ────────────────────────────────────────────────────────────
-RESOLUTION    = 0.05          # m per cell
-GRID_SIZE     = 800           # 40 m × 40 m world
-ORIGIN        = -GRID_SIZE * RESOLUTION / 2.0   # -20.0 m
+# ── Scan parameters ────────────────────────────────────────────────────────────
 MAX_RANGE     = 8.0           # m — lidar max range for live grid
 VOXEL_SIZE    = 0.05          # m — voxel grid bin size
 
@@ -120,9 +117,9 @@ class MapManager(Node):
         # ── Slam map cache ──────────────────────────────────────────────
         self.slam_map_cache: Optional[OccupancyGrid] = None
 
-        # ── Live obstacle grid (2m radius, rebuilt per scan) ────────────
-        self.temp_grid: np.ndarray = np.full(
-            GRID_SIZE * GRID_SIZE, CELL_UNKNOWN, dtype=np.int8)
+        # ── Live obstacle grid (matches the current slam map geometry) ──
+        self.temp_grid: Optional[np.ndarray] = None
+        self._temp_grid_geometry: Optional[Tuple[int, int, float, float, float]] = None
 
         # ── Obstacle scan accumulator (for SCAN_OBSTACLE state) ─────────
         self._obstacle_scan_buf: list = []
@@ -158,8 +155,46 @@ class MapManager(Node):
     # ── Subscriptions ──────────────────────────────────────────────────────────
 
     def _on_slam_map(self, msg: OccupancyGrid) -> None:
-        """Cache the latest map from slam_toolbox."""
+        """Cache only well-formed maps and resize the live overlay as needed."""
+        geometry = self._grid_geometry(msg)
+        if geometry is None:
+            self.get_logger().warn(
+                'Ignoring malformed slam map: data length does not match geometry')
+            return
         self.slam_map_cache = msg
+        self._prepare_live_grid(geometry)
+
+    @staticmethod
+    def _grid_geometry(msg: OccupancyGrid) -> Optional[Tuple[int, int, float, float, float]]:
+        """Return width, height, resolution and origin for a valid occupancy grid."""
+        width = int(msg.info.width)
+        height = int(msg.info.height)
+        resolution = float(msg.info.resolution)
+        if width <= 0 or height <= 0 or resolution <= 0.0:
+            return None
+        if len(msg.data) != width * height:
+            return None
+        return (
+            width,
+            height,
+            resolution,
+            float(msg.info.origin.position.x),
+            float(msg.info.origin.position.y),
+        )
+
+    def _clear_live_grid(self) -> None:
+        self.temp_grid = None
+        self._temp_grid_geometry = None
+
+    def _prepare_live_grid(
+        self, geometry: Tuple[int, int, float, float, float]
+    ) -> None:
+        """Allocate the overlay using the current SLAM map geometry."""
+        if self._temp_grid_geometry == geometry and self.temp_grid is not None:
+            return
+        width, height, _resolution, _origin_x, _origin_y = geometry
+        self.temp_grid = np.full(width * height, CELL_UNKNOWN, dtype=np.int8)
+        self._temp_grid_geometry = geometry
 
     def _on_control(self, msg: String) -> None:
         cmd = msg.data.strip().lower()
@@ -229,13 +264,14 @@ class MapManager(Node):
 
     def _enter_live(self) -> None:
         self.state = STATE_LIVE
-        self.temp_grid[:] = CELL_UNKNOWN
+        if self.temp_grid is not None:
+            self.temp_grid[:] = CELL_UNKNOWN
         self.get_logger().info('Entered LIVE — slam map + 2m awareness zone')
         self._publish_status()
 
     def _reset_slam_and_obstacles(self) -> None:
         """Clear obstacle layers and reset slam_toolbox."""
-        self.temp_grid[:] = CELL_UNKNOWN
+        self._clear_live_grid()
         self._obstacle_scan_buf = []
 
         # Call slam_toolbox reset service (non-blocking)
@@ -314,28 +350,47 @@ class MapManager(Node):
             self._enter_live()
             return
 
-        # Convert to grid cells
-        gx = np.round((vx - ORIGIN) / RESOLUTION).astype(np.int32)
-        gy = np.round((vy - ORIGIN) / RESOLUTION).astype(np.int32)
-        mask = (gx >= 0) & (gx < GRID_SIZE) & (gy >= 0) & (gy < GRID_SIZE)
+        if self.slam_map_cache is None:
+            self.get_logger().warn('Cannot publish obstacle layer before receiving a slam map')
+            self._enter_live()
+            return
+        geometry = self._grid_geometry(self.slam_map_cache)
+        if geometry is None:
+            self.get_logger().warn('Cannot publish obstacle layer from malformed slam map')
+            self._enter_live()
+            return
+        self._prepare_live_grid(geometry)
+        width, height, resolution, origin_x, origin_y = geometry
 
-        # Build obstacle grid for publishing
-        obs_grid = np.full(GRID_SIZE * GRID_SIZE, CELL_UNKNOWN, dtype=np.int8)
-        for ix, iy in zip(gx[mask], gy[mask]):
-            obs_grid[iy * GRID_SIZE + ix] = CELL_OCCUPIED
+        # Convert world points to cells using the current SLAM map geometry.
+        gx = np.floor((vx - origin_x) / resolution).astype(np.int32)
+        gy = np.floor((vy - origin_y) / resolution).astype(np.int32)
+        mask = (gx >= 0) & (gx < width) & (gy >= 0) & (gy < height)
+
+        obs_grid = np.full(width * height, CELL_UNKNOWN, dtype=np.int8)
+        obs_grid[gy[mask] * width + gx[mask]] = CELL_OCCUPIED
 
         self.get_logger().info(
             f'Obstacle scan finalised — {vx.size} points within {OBSTACLE_RADIUS}m')
 
-        # Publish obstacle layer once
-        self._publish_obstacle_layer_from(obs_grid)
+        # Publish obstacle layer once using exactly the SLAM map geometry.
+        self._publish_obstacle_layer_from(obs_grid, geometry)
 
         self._enter_live()
 
     # ── Live grid (2m awareness zone) ──────────────────────────────────────────
 
     def _build_live_grid(self, msg: LaserScan) -> None:
-        """Rebuild temp_grid from current scan — vectorized ray-march."""
+        """Rebuild the dynamic overlay using the current SLAM map geometry."""
+        if self.slam_map_cache is None:
+            return
+        geometry = self._grid_geometry(self.slam_map_cache)
+        if geometry is None:
+            self._clear_live_grid()
+            return
+        self._prepare_live_grid(geometry)
+        width, height, resolution, origin_x, origin_y = geometry
+
         ranges = np.array(msg.ranges, dtype=np.float32)
         angles = np.arange(len(ranges)) * msg.angle_increment + msg.angle_min
 
@@ -348,30 +403,32 @@ class MapManager(Node):
         abs_angles = angles[valid] + theta
         valid_ranges = ranges[valid]
 
-        step = RESOLUTION * 0.5
+        step = resolution * 0.5
         max_steps = int(MAX_RANGE / step) + 1
         dists = np.arange(max_steps, dtype=np.float32) * step
 
         xs = rx + np.outer(np.cos(abs_angles), dists).astype(np.float32)
         ys = ry + np.outer(np.sin(abs_angles), dists).astype(np.float32)
 
-        gxs = ((xs - ORIGIN) / RESOLUTION).astype(np.int32)
-        gys = ((ys - ORIGIN) / RESOLUTION).astype(np.int32)
+        gxs = np.floor((xs - origin_x) / resolution).astype(np.int32)
+        gys = np.floor((ys - origin_y) / resolution).astype(np.int32)
 
-        in_bounds = (gxs >= 0) & (gxs < GRID_SIZE) & (gys >= 0) & (gys < GRID_SIZE)
+        in_bounds = (gxs >= 0) & (gxs < width) & (gys >= 0) & (gys < height)
 
         hit_steps = np.clip(
             np.searchsorted(dists, valid_ranges, side='right'),
             0, max_steps - 1)
 
         grid = self.temp_grid
+        if grid is None:
+            return
         grid[:] = CELL_UNKNOWN
 
         # Vectorized ray-march + occupancy
         n_rays = len(valid_ranges)
         ray_idx = np.repeat(np.arange(n_rays, dtype=np.int32), max_steps)
         step_idx = np.tile(np.arange(max_steps, dtype=np.int32), n_rays)
-        flat = gys.ravel() * GRID_SIZE + gxs.ravel()
+        flat = gys.ravel() * width + gxs.ravel()
         ok = (step_idx < hit_steps.ravel()[ray_idx]) & in_bounds.ravel()
         free_cells = flat[ok]
         if free_cells.size > 0:
@@ -380,26 +437,26 @@ class MapManager(Node):
 
         ht_indices = np.clip(hit_steps, 0, max_steps - 1)
         hit_flat = (
-            gys[np.arange(n_rays), ht_indices] * GRID_SIZE +
+            gys[np.arange(n_rays), ht_indices] * width +
             gxs[np.arange(n_rays), ht_indices])
-        hit_valid = (hit_flat >= 0) & (hit_flat < GRID_SIZE * GRID_SIZE)
+        hit_valid = (hit_flat >= 0) & (hit_flat < width * height)
         grid[hit_flat[hit_valid]] = CELL_OCCUPIED
 
         # Mask: keep only 2m radius around robot
-        r_gx = int((rx - ORIGIN) / RESOLUTION)
-        r_gy = int((ry - ORIGIN) / RESOLUTION)
-        r_radius = int(OBSTACLE_RADIUS / RESOLUTION)
-        y_lo, y_hi = max(0, r_gy - r_radius), min(GRID_SIZE, r_gy + r_radius)
-        x_lo, x_hi = max(0, r_gx - r_radius), min(GRID_SIZE, r_gx + r_radius)
+        r_gx = int(math.floor((rx - origin_x) / resolution))
+        r_gy = int(math.floor((ry - origin_y) / resolution))
+        r_radius = int(OBSTACLE_RADIUS / resolution)
+        y_lo, y_hi = max(0, r_gy - r_radius), min(height, r_gy + r_radius)
+        x_lo, x_hi = max(0, r_gx - r_radius), min(width, r_gx + r_radius)
         if y_hi > y_lo and x_hi > x_lo:
             gy_range = np.arange(y_lo, y_hi, dtype=np.int32)
             gx_range = np.arange(x_lo, x_hi, dtype=np.int32)
             yy, xx = np.meshgrid(gy_range, gx_range, indexing='ij')
-            wx = xx * RESOLUTION + ORIGIN
-            wy = yy * RESOLUTION + ORIGIN
+            wx = (xx + 0.5) * resolution + origin_x
+            wy = (yy + 0.5) * resolution + origin_y
             dist_sq = (wx - rx) ** 2 + (wy - ry) ** 2
             outside = dist_sq > OBSTACLE_RADIUS ** 2
-            flat_idx = yy.ravel() * GRID_SIZE + xx.ravel()
+            flat_idx = yy.ravel() * width + xx.ravel()
             grid[flat_idx[outside.ravel()]] = CELL_UNKNOWN
 
     # ── Publishers ─────────────────────────────────────────────────────────────
@@ -422,7 +479,14 @@ class MapManager(Node):
             return
 
         if self.state == STATE_LIVE:
-            # Merge: slam map + live 2m obstacle overlay
+            geometry = self._grid_geometry(self.slam_map_cache)
+            if geometry is None:
+                return
+            self._prepare_live_grid(geometry)
+            if self.temp_grid is None:
+                return
+
+            # Merge: slam map + live 2m obstacle overlay with matching geometry.
             slam_data = np.array(self.slam_map_cache.data, dtype=np.int8)
             combined = slam_data.copy()
             live_mask = self.temp_grid != CELL_UNKNOWN
@@ -438,16 +502,19 @@ class MapManager(Node):
             # Forward slam_toolbox's map directly
             self.map_pub.publish(self.slam_map_cache)
 
-    def _publish_obstacle_layer_from(self, grid: np.ndarray) -> None:
-        """Publish the obstacle awareness zone as a separate layer."""
+    def _publish_obstacle_layer_from(
+        self, grid: np.ndarray, geometry: Tuple[int, int, float, float, float]
+    ) -> None:
+        """Publish the obstacle awareness zone with the current SLAM geometry."""
+        width, height, resolution, origin_x, origin_y = geometry
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'map'
-        msg.info.width = GRID_SIZE
-        msg.info.height = GRID_SIZE
-        msg.info.resolution = RESOLUTION
-        msg.info.origin.position.x = ORIGIN
-        msg.info.origin.position.y = ORIGIN
+        msg.info.width = width
+        msg.info.height = height
+        msg.info.resolution = resolution
+        msg.info.origin.position.x = origin_x
+        msg.info.origin.position.y = origin_y
         msg.info.origin.orientation.w = 1.0
         msg.data = grid.tolist()
         self.obstacle_pub.publish(msg)
