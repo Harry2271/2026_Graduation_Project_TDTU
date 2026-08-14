@@ -111,6 +111,7 @@ class MapManager(Node):
 
         # ── State machine ────────────────────────────────────────────────
         self.state: str = STATE_IDLE
+        self._mapping_start_pose: Optional[Tuple[float, float]] = None
 
         # ── TF2 for pose extraction (replaces /odom subscription) ───────
         self.tf_buffer = Buffer()
@@ -187,11 +188,13 @@ class MapManager(Node):
 
     def _on_scan(self, msg: LaserScan) -> None:
         """Route scan to the appropriate handler based on state."""
-        if self.state == STATE_SCAN_OBSTACLE:
+        if self.state == STATE_MAPPING_IDLE:
+            self._activate_mapping_if_moved()
+        elif self.state == STATE_SCAN_OBSTACLE:
             self._handle_obstacle_scan(msg)
         elif self.state == STATE_LIVE:
             self._handle_live_scan(msg)
-        # MAPPING states: slam_toolbox handles scan processing directly.
+        # MAPPING_ACTIVE is handled by slam_toolbox directly.
 
     # ── State transitions ──────────────────────────────────────────────────────
 
@@ -202,7 +205,20 @@ class MapManager(Node):
 
     def _enter_mapping_idle(self) -> None:
         self.state = STATE_MAPPING_IDLE
-        self.get_logger().info('Entered MAPPING_IDLE — slam_toolbox building map')
+        x, y, _ = self._get_robot_pose()
+        self._mapping_start_pose = (x, y)
+        self.get_logger().info('Entered MAPPING_IDLE — waiting for robot movement')
+        self._publish_status()
+
+    def _activate_mapping_if_moved(self) -> None:
+        if self._mapping_start_pose is None:
+            return
+        x, y, _ = self._get_robot_pose()
+        start_x, start_y = self._mapping_start_pose
+        if math.hypot(x - start_x, y - start_y) < 0.05:
+            return
+        self.state = STATE_MAPPING_ACTIVE
+        self.get_logger().info('Entered MAPPING_ACTIVE — robot movement detected')
         self._publish_status()
 
     def _enter_scan_obstacle(self) -> None:
@@ -258,13 +274,10 @@ class MapManager(Node):
         if not np.any(valid):
             return
 
-        rx, ry, _ = self._get_robot_pose()
-
-        abs_angles = angles[valid] + math.atan2(0, 1)  # orientation handled by TF
+        rx, ry, theta = self._get_robot_pose()
         valid_ranges = ranges[valid]
 
-        # World coordinates: use TF pose for robot position, lidar angles for direction
-        _, _, theta = self._get_robot_pose()
+        # World coordinates: use one TF pose snapshot for position and heading.
         abs_angles = angles[valid] + theta
         wxs = rx + valid_ranges * np.cos(abs_angles)
         wys = ry + valid_ranges * np.sin(abs_angles)

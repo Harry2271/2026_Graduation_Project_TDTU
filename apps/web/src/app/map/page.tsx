@@ -6,6 +6,14 @@ import { Button, App, Tooltip } from 'antd';
 
 const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL || 'wss://map.nguyen-robot.io.vn';
+const WS_AUTH_TOKEN = process.env.NEXT_PUBLIC_WS_AUTH_TOKEN;
+
+function authenticatedWsUrl(url: string): string {
+  if (!WS_AUTH_TOKEN) return url;
+  const wsUrl = new URL(url);
+  wsUrl.searchParams.set('token', WS_AUTH_TOKEN);
+  return wsUrl.toString();
+}
 
 interface ScanData { points: { x: number; y: number }[]; count: number; }
 
@@ -139,6 +147,7 @@ export default function MapPage() {
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const zoomRef = useRef<number>(1);
   const headingUpRef = useRef<boolean>(true);
+  const robotLockRef = useRef<boolean>(true);
   const connectWsRef = useRef<() => void>(() => {});
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
@@ -150,6 +159,7 @@ export default function MapPage() {
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const occOffscreenRef = useRef<HTMLCanvasElement | null>(null);
   const obstacleOffscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const obstacleDataRef = useRef<MapData | null>(null);
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [scanCount, setScanCount] = useState(0);
 
@@ -160,6 +170,7 @@ export default function MapPage() {
   const [esp32Status, setEsp32Status] = useState<Esp32Status | null>(null);
   const [ackLog, setAckLog] = useState<{ ts: number; type: string; data: unknown }[]>([]);
   const [robotErrors, setRobotErrors] = useState<Array<{ ts: number; severity: string; code: string; message: string }>>([]);
+  const pendingCommandLabelsRef = useRef<Map<string, string>>(new Map());
 
   // Keyboard state for teleop
   const keysPressed = useRef<Set<string>>(new Set());
@@ -171,6 +182,7 @@ export default function MapPage() {
   useEffect(() => { scanDataRef.current = scanData; }, [scanData]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { headingUpRef.current = isHeadingUp; }, [isHeadingUp]);
+  useEffect(() => { robotLockRef.current = isRobotLock; }, [isRobotLock]);
   useEffect(() => { lidarAxisRef.current = lidarAxis; }, [lidarAxis]);
 
   useEffect(() => {
@@ -352,10 +364,12 @@ export default function MapPage() {
       const minScale = Math.min(W, H) * 0.75 / Math.max(gw, gh);
       const rawFit = Math.min(W / gw, H / gh) * zoom;
       const scale = Math.max(rawFit, minScale);
+      const centerX = robotLockRef.current && p ? p.x : 0;
+      const centerY = robotLockRef.current && p ? p.y : 0;
       // OccupancyGrid origin is bottom-left; canvas origin is top-left.
       // Grid row 0 = world top = origin_y + gh*res. In screen space (Y-down), world Y+ = screen Y−.
-      const mapX = W / 2 + origin_x / res * scale;
-      const mapY = H / 2 - (origin_y + gh * res) / res * scale;
+      const mapX = W / 2 + (origin_x - centerX) / res * scale;
+      const mapY = H / 2 - (origin_y + gh * res - centerY) / res * scale;
 
       ctx.save();
       if (p && isHU) {
@@ -367,8 +381,8 @@ export default function MapPage() {
       ctx.restore();
 
       const worldToScreen = (wx: number, wy: number) => {
-        let sx = W / 2 + wx * scale / res;
-        let sy = H / 2 - wy * scale / res;
+        let sx = W / 2 + (wx - centerX) * scale / res;
+        let sy = H / 2 - (wy - centerY) * scale / res;
         if (p && isHU) {
           const cx2 = W / 2;
           const cy2 = H / 2;
@@ -404,16 +418,12 @@ export default function MapPage() {
       }
 
       // ── Overlay: obstacle layer (if any) ──────────────────────────
-      if (obstacleOffscreenRef.current && obstacleOffscreenRef.current.width > 0) {
-        const odW = obstacleOffscreenRef.current.width;
-        const odH = obstacleOffscreenRef.current.height;
-        const oRes = mapDataRef.current.resolution;
-        const oMinScale = Math.min(W, H) * 0.75 / Math.max(odW, odH);
-        const oRawFit = Math.min(W / odW, H / odH) * zoom;
-        const oScale = Math.max(oRawFit, oMinScale);
-        // Use the same map coords as the server map (assume same origin family).
-        const oMapX = W / 2 + origin_x / oRes * oScale;
-        const oMapY = H / 2 - (origin_y + odH * oRes) / oRes * oScale;
+      const obstacleData = obstacleDataRef.current;
+      if (obstacleOffscreenRef.current && obstacleData) {
+        const { width: odW, height: odH, resolution: oRes, origin_x: obstacleOriginX, origin_y: obstacleOriginY } = obstacleData;
+        const oScale = scale * oRes / res;
+        const oMapX = W / 2 + (obstacleOriginX - centerX) / res * scale;
+        const oMapY = H / 2 - (obstacleOriginY + odH * oRes - centerY) / res * scale;
         ctx.save();
         if (p && isHU) {
           const cx2 = W / 2, cy2 = H / 2;
@@ -574,7 +584,7 @@ export default function MapPage() {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
     setWsStatus('connecting');
     try {
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(authenticatedWsUrl(WS_URL));
       ws.onopen = () => {
         setWsStatus('connected');
         reconnectDelayRef.current = 1000;
@@ -600,6 +610,7 @@ export default function MapPage() {
               const od = msg.data as MapData;
               if (!obstacleOffscreenRef.current) obstacleOffscreenRef.current = document.createElement('canvas');
               drawGridToCanvas(od, obstacleOffscreenRef.current);
+              obstacleDataRef.current = od;
               break;
             }
             case 'pose': setPose({ ...(msg.data as PoseData) }); poseRef.current = { ...(msg.data as PoseData) }; break;
@@ -624,7 +635,19 @@ export default function MapPage() {
             case 'esp32_status': setEsp32Status(msg.data as Esp32Status); break;
             case 'demo_status': { const ds = msg.data as DemoStatus; setDemoStatus(ds); break; }
             case 'control_mode_status': { const cms = msg.data as ControlModeStatus; setControlModeStatus(cms); const m = cms.mode ?? cms.active_mode; if (m === 'AUTO' || m === 'MANUAL') setControlMode(m); break; }
-            case 'ack': { const entry = { ts: Date.now(), type: msg.type, data: msg.data }; setAckLog(prev => [entry, ...prev].slice(0, 20)); break; }
+            case 'ack': {
+              const data = (msg.data ?? {}) as { command?: string; accepted?: boolean; ok?: boolean; error?: string };
+              const entry = { ts: Date.now(), type: msg.type, data };
+              setAckLog(prev => [entry, ...prev].slice(0, 20));
+              const label = data.command ? pendingCommandLabelsRef.current.get(data.command) : undefined;
+              if (data.command) pendingCommandLabelsRef.current.delete(data.command);
+              if (data.accepted ?? data.ok ?? false) {
+                notification.success({ title: 'Robot đã nhận lệnh', description: label ?? data.command ?? 'Lệnh điều khiển', placement: 'topRight' });
+              } else {
+                notification.error({ title: 'Robot từ chối lệnh', description: data.error ?? label ?? data.command ?? 'Lệnh điều khiển', placement: 'topRight' });
+              }
+              break;
+            }
             case 'robot_error': {
               const ed = (msg.data ?? {}) as { severity?: string; code?: string; message?: string; ts?: string };
               const entry = {
@@ -733,9 +756,9 @@ export default function MapPage() {
       notification.warning({ title: 'Mất kết nối', description: 'Không thể gửi lệnh. Đang thử kết nối lại...', placement: 'topRight' });
       connectWsRef.current(); return;
     }
+    pendingCommandLabelsRef.current.set(command, label);
     wsRef.current.send(JSON.stringify({ type: 'cmd', command }));
     console.log('[WS] → cmd:', command);
-    notification.success({ title: 'Thành công', description: `Đã gửi lệnh ${label}`, placement: 'topRight' });
   }, [notification]);
 
   const handleStartScan = () => {
@@ -1154,9 +1177,9 @@ export default function MapPage() {
           boxShadow: 'inset 0 1px 0 rgba(0,212,255,0.08)',
         }}
       >
-        {/* Left: Mode + Drive + Cylinder */}
-        <div className="flex flex-col gap-3">
-          {/* Mode + Drive row */}
+        {/* Left: Manual controls */}
+        <div className="flex flex-col gap-2 min-w-[300px]">
+          <span style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.08em' }}>ĐIỀU KHIỂN THỦ CÔNG</span>
           <div className="flex items-center gap-3">
             {/* Mode toggle */}
             <div className="flex items-center gap-1 p-1 rounded-xl" style={{ border: '1px solid var(--border-mid)' }}>
@@ -1266,8 +1289,10 @@ export default function MapPage() {
           </div>
         </div>
 
-        {/* Center: Demo controls (auto only) */}
-        <div className="flex items-center gap-2">
+        {/* Center: Autonomous controls */}
+        <div className="flex flex-col gap-2">
+          <span style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.08em' }}>TỰ ĐỘNG / KHU VỰC</span>
+          <div className="flex items-center gap-2">
           {['A', 'B', 'C', 'D'].map(zone => (
             <button
               key={zone}
@@ -1319,6 +1344,7 @@ export default function MapPage() {
           >
             🛑 E-STOP
           </button>
+          </div>
         </div>
 
         {/* Right: ESP32 status panel */}

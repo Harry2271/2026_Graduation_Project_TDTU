@@ -486,16 +486,16 @@ class WSServer:
                                 self.cmd_q.put_nowait(command)
                                 print(f'[WS] CMD queued → /mapping/control: {command}')
                                 ack = {'type': 'ack', 'data': {
-                                    'command': command, 'accepted': True, 'queued': True,
+                                    'command': command, 'accepted': True, 'ok': True, 'queued': True,
                                 }}
                             except queue.Full:
                                 ack = {'type': 'ack', 'data': {
-                                    'command': command, 'accepted': False,
+                                    'command': command, 'accepted': False, 'ok': False,
                                     'error': 'command queue full',
                                 }}
                         else:
                             ack = {'type': 'ack', 'data': {
-                                'command': command, 'accepted': False,
+                                'command': command, 'accepted': False, 'ok': False,
                                 'error': f'unknown command: {command!r}',
                             }}
 
@@ -559,11 +559,14 @@ class WSServer:
                         if requested in ('AUTO', 'MANUAL'):
                             self._control_mode = requested
                             self._control_mode_pub.publish(String(data=requested))
+                            self._control_mode_status_pub.publish(String(data=json.dumps({
+                                'mode': requested, 'source': 'web_bridge',
+                            })))
                             ack = {'type': 'ack', 'data': {
-                                'command': f'mode:{requested}', 'accepted': True}}
+                                'command': f'mode:{requested}', 'accepted': True, 'ok': True}}
                         else:
                             ack = {'type': 'ack', 'data': {
-                                'command': f'mode:{requested}', 'accepted': False,
+                                'command': f'mode:{requested}', 'accepted': False, 'ok': False,
                                 'error': 'invalid mode'}}
                         try:
                             await connection.send(json.dumps(ack))
@@ -578,7 +581,7 @@ class WSServer:
                         #         { type: 'demo', action: 'warehouse 0 1 2' }
                         if self._control_mode != 'AUTO':
                             ack = {'type': 'ack', 'data': {
-                                'command': 'demo', 'accepted': False,
+                                'command': 'demo', 'accepted': False, 'ok': False,
                                 'error': f'mode is {self._control_mode}, not AUTO'}}
                             try:
                                 await connection.send(json.dumps(ack))
@@ -600,14 +603,14 @@ class WSServer:
                             try:
                                 self.demo_q.put_nowait(action)
                                 ack = {'type': 'ack', 'data': {
-                                    'command': f'demo:{action}', 'accepted': True}}
+                                    'command': f'demo:{action}', 'accepted': True, 'ok': True}}
                             except queue.Full:
                                 ack = {'type': 'ack', 'data': {
-                                    'command': f'demo:{action}', 'accepted': False,
+                                    'command': f'demo:{action}', 'accepted': False, 'ok': False,
                                     'error': 'queue full'}}
                         else:
                             ack = {'type': 'ack', 'data': {
-                                'command': f'demo:{action}', 'accepted': False,
+                                'command': f'demo:{action}', 'accepted': False, 'ok': False,
                                 'error': f'invalid demo action {action!r}'}}
                         try:
                             await connection.send(json.dumps(ack))
@@ -623,11 +626,11 @@ class WSServer:
                         cmd_obj = msg.get('cmd')
                         if not isinstance(cmd_obj, dict):
                             ack = {'type': 'ack', 'data': {
-                                'command': 'esp32', 'accepted': False,
+                                'command': 'esp32', 'accepted': False, 'ok': False,
                                 'error': 'cmd must be a JSON object'}}
                         elif cmd_obj.get('cmd') not in allowed:
                             ack = {'type': 'ack', 'data': {
-                                'command': 'esp32', 'accepted': False,
+                                'command': 'esp32', 'accepted': False, 'ok': False,
                                 'error': f'cmd not allow-listed: {cmd_obj.get("cmd")!r}'}}
                         else:
                             # Drop stale frames; only keep the latest
@@ -645,7 +648,7 @@ class WSServer:
                             except queue.Full:
                                 ack = {'type': 'ack', 'data': {
                                     'command': f'esp32:{cmd_obj.get("cmd")}',
-                                    'accepted': False,
+                                    'accepted': False, 'ok': False,
                                     'error': 'queue full'}}
                         try:
                             await connection.send(json.dumps(ack))
@@ -666,7 +669,7 @@ class WSServer:
                         # Payload (navigate_home): { } — brain_node uses its captured home pose
                         if self._control_mode != 'AUTO':
                             ack = {'type': 'ack', 'data': {
-                                'command': msg_type, 'accepted': False,
+                                'command': msg_type, 'accepted': False, 'ok': False,
                                 'error': f'mode is {self._control_mode}, not AUTO'}}
                             try:
                                 await connection.send(json.dumps(ack))
@@ -695,12 +698,12 @@ class WSServer:
                         try:
                             self.navigate_q.put_nowait(command)
                             ack = {'type': 'ack', 'data': {
-                                'command': msg_type, 'accepted': True,
+                                'command': msg_type, 'accepted': True, 'ok': True,
                                 'queued': True,
                                 'goal': command}}
                         except queue.Full:
                             ack = {'type': 'ack', 'data': {
-                                'command': msg_type, 'accepted': False,
+                                'command': msg_type, 'accepted': False, 'ok': False,
                                 'error': 'navigate queue full'}}
                         try:
                             await connection.send(json.dumps(ack))
@@ -717,7 +720,7 @@ class WSServer:
                         if not isinstance(data, dict):
                             data = {}
                         ack = {'type': 'ack', 'data': {
-                            'command': 'custom_map', 'accepted': True,
+                            'command': 'custom_map', 'accepted': True, 'ok': True,
                             'lines': len(data.get('lines', []))}}
                         try:
                             await connection.send(json.dumps(ack))

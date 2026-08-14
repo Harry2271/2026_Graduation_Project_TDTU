@@ -42,6 +42,7 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.nguyen-robot.io.vn}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://map.nguyen-robot.io.vn}
+        NEXT_PUBLIC_WS_AUTH_TOKEN: ${NEXT_PUBLIC_WS_AUTH_TOKEN:-}
         NEXT_PUBLIC_CAMERA_STREAM_URL: ${NEXT_PUBLIC_CAMERA_STREAM_URL:-https://cam.nguyen-robot.io.vn/stream}
     container_name: nguyen-web
     restart: unless-stopped
