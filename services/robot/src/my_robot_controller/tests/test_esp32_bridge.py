@@ -150,3 +150,74 @@ def test_real_bridge_handles_envelope_type_131_status_frame() -> None:
     )
 
     assert received == [payload]
+
+
+def test_real_bridge_normalizes_firmware_type_133_accessors() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    bridge.on_power = received.append
+    payload = {
+        'voltage_v': 20.1,
+        'current_a': 0.45,
+        'power_w': 9.0,
+        'battery_pct': 92,
+        'battery_status': 'ok',
+        'noload': False,
+    }
+
+    bridge._handle_line(json.dumps({'type': 133, 'data': payload}).encode('utf-8'))
+
+    assert received == [payload]
+    assert bridge.last_power() == payload
+    assert bridge.battery_voltage() == pytest.approx(20.1)
+    assert bridge.battery_current() == pytest.approx(0.45)
+    assert bridge.battery_pct() == pytest.approx(0.92)
+
+
+def test_real_bridge_accepts_valid_zero_percent_battery() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    bridge._handle_line(
+        b'{"type":133,"data":{"voltage_v":12.0,"current_a":0.0,'
+        b'"battery_pct":0,"battery_status":"critical","noload":false}}'
+    )
+
+    assert bridge.battery_voltage() == pytest.approx(12.0)
+    assert bridge.battery_pct() == 0.0
+
+
+def test_real_bridge_treats_noload_power_as_unavailable() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    bridge.on_power = received.append
+    payload = {
+        'voltage_v': 0.0,
+        'current_a': 0.0,
+        'power_w': 0.0,
+        'battery_pct': 0,
+        'battery_status': 'unknown',
+        'noload': True,
+    }
+
+    bridge._handle_line(json.dumps({'type': 133, 'data': payload}).encode('utf-8'))
+
+    assert received == [payload]
+    assert bridge.last_power() == payload
+    assert bridge.battery_voltage() is None
+    assert bridge.battery_current() is None
+    assert bridge.battery_pct() is None
+
+
+def test_real_bridge_ignores_stale_power_accessors() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    bridge._last_power = {
+        'voltage_v': 20.1,
+        'current_a': 0.45,
+        'battery_pct': 92,
+        'battery_status': 'ok',
+        'noload': False,
+    }
+    bridge._last_power_ms = -1.0
+
+    assert bridge.battery_voltage() is None
+    assert bridge.battery_current() is None
+    assert bridge.battery_pct() is None
