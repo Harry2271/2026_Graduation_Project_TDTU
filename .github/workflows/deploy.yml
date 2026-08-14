@@ -175,23 +175,23 @@ jobs:
           chmod +x ./deploy.sh
           ./deploy.sh
 
-      - name: Verify LiDAR scan stream
+      - name: Verify LiDAR driver
         run: |
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
-          export ROS_DOMAIN_ID=0
-          source /opt/ros/jazzy/setup.bash
+          LIDAR_NAME=nexus-robot-lidar
+          LIDAR_LOG=/home/pi/.pm2/logs/${LIDAR_NAME}-out.log
 
-          echo "⏳ Waiting for a /scan message on ROS domain $ROS_DOMAIN_ID (max 30s)..."
-          for i in {1..6}; do
-            # ros2 may ignore SIGTERM while DDS discovery is blocked. -k sends
-            # SIGKILL one second later, so this job cannot wait indefinitely.
-            if timeout --foreground -k 1s 4s ros2 topic echo /scan sensor_msgs/msg/LaserScan --once > /dev/null 2>&1; then
-              echo "✅ LiDAR is publishing /scan messages"
+          echo "⏳ Waiting for LiDAR driver scan mode (max 30s)..."
+          for i in {1..15}; do
+            PM2_STATUS=$(pm2 jlist | node -e "let input=''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => { const app = JSON.parse(input).find(({name}) => name === process.argv[1]); process.stdout.write(app?.pm2_env?.status ?? 'missing'); });" "$LIDAR_NAME")
+            if [ "$PM2_STATUS" = "online" ] && grep -q "current scan mode:" "$LIDAR_LOG"; then
+              echo "✅ LiDAR driver is online and scanning"
               exit 0
             fi
-            echo "  attempt $i/6..."
+            echo "  attempt $i/15 (PM2=$PM2_STATUS)..."
+            sleep 2
           done
 
-          echo "❌ LiDAR did not publish /scan within 30s. Check logs:"
-          pm2 logs nexus-robot-lidar --lines 40 --nostream
+          echo "❌ LiDAR driver did not reach scan mode. Check logs:"
+          pm2 logs "$LIDAR_NAME" --lines 40 --nostream
           exit 1
