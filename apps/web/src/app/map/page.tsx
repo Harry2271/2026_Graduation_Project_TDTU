@@ -581,7 +581,7 @@ export default function MapPage() {
 
   function connectWs() {
     if (typeof window === 'undefined') return;
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
     setWsStatus('connecting');
     try {
       const ws = new WebSocket(authenticatedWsUrl(WS_URL));
@@ -753,8 +753,14 @@ export default function MapPage() {
 
   const sendCmd = useCallback((command: string, label: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      notification.warning({ title: 'Mất kết nối', description: 'Không thể gửi lệnh. Đang thử kết nối lại...', placement: 'topRight' });
-      connectWsRef.current(); return;
+      notification.warning({
+        title: 'Mất kết nối robot',
+        description: 'Không thể gửi lệnh. Hệ thống đang tự kết nối lại.',
+        placement: 'topRight',
+        duration: 4,
+      });
+      connectWsRef.current();
+      return;
     }
     pendingCommandLabelsRef.current.set(command, label);
     wsRef.current.send(JSON.stringify({ type: 'cmd', command }));
@@ -803,10 +809,18 @@ export default function MapPage() {
   };
 
   // ── Robot command callbacks ────────────────────────────────────────
-  const sendWs = useCallback((obj: Record<string, unknown>) => {
+  const sendWs = useCallback((obj: Record<string, unknown>, notifyOnFailure = true) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      notification.warning({ title: 'Mất kết nối', description: 'Không thể gửi lệnh.', placement: 'topRight' });
-      connectWsRef.current(); return false;
+      if (notifyOnFailure) {
+        notification.warning({
+          title: 'Mất kết nối robot',
+          description: 'Không thể gửi lệnh. Hệ thống đang tự kết nối lại.',
+          placement: 'topRight',
+          duration: 4,
+        });
+      }
+      connectWsRef.current();
+      return false;
     }
     wsRef.current.send(JSON.stringify(obj));
     return true;
@@ -817,7 +831,7 @@ export default function MapPage() {
   }, [sendWs]);
 
   const sendTeleop = useCallback((vx: number, vy: number, omega: number) => {
-    sendWs({ type: 'teleop', vx, vy, omega });
+    sendWs({ type: 'teleop', vx, vy, omega }, false);
   }, [sendWs]);
 
   const sendCylinder = useCallback((action: 'extend' | 'retract' | 'stop') => {

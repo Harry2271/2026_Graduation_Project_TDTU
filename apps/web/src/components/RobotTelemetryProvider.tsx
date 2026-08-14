@@ -12,6 +12,14 @@ import {
 
 const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL || 'wss://map.nguyen-robot.io.vn';
+const WS_AUTH_TOKEN = process.env.NEXT_PUBLIC_WS_AUTH_TOKEN;
+
+function authenticatedWsUrl(url: string): string {
+  if (!WS_AUTH_TOKEN) return url;
+  const wsUrl = new URL(url);
+  wsUrl.searchParams.set('token', WS_AUTH_TOKEN);
+  return wsUrl.toString();
+}
 
 // ── Payload shapes (mirror firmware type-130/131 + web_bridge.py envelope) ──
 
@@ -205,10 +213,10 @@ export function RobotTelemetryProvider({ children }: { children: ReactNode }) {
 
     function connect() {
       if (typeof window === 'undefined') return;
-      if (wsRef.current?.readyState === WebSocket.OPEN) return;
+      if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
       setWsStatus('connecting');
       try {
-        const ws = new WebSocket(WS_URL);
+        const ws = new WebSocket(authenticatedWsUrl(WS_URL));
         wsRef.current = ws;
         ws.onopen = () => {
           if (cancelled) return;

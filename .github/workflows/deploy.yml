@@ -175,21 +175,21 @@ jobs:
           chmod +x ./deploy.sh
           ./deploy.sh
 
-      - name: Verify health
+      - name: Verify LiDAR scan stream
         run: |
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin
+          export ROS_DOMAIN_ID=0
           source /opt/ros/jazzy/setup.bash
 
-          echo "⏳ Waiting for Lidar topic /scan (max 30s)..."
-          for i in {1..30}; do
-            if ros2 topic list | grep -q "/scan"; then
-              echo "✅ Lidar is UP and publishing!"
+          echo "⏳ Waiting for a /scan message on ROS domain $ROS_DOMAIN_ID (max 30s)..."
+          for i in {1..10}; do
+            if timeout 3 ros2 topic echo /scan sensor_msgs/msg/LaserScan --once > /dev/null 2>&1; then
+              echo "✅ LiDAR is publishing /scan messages"
               exit 0
             fi
-            echo "..."
-            sleep 1
+            echo "  attempt $i/10..."
           done
 
-          echo "❌ Lidar topic NOT FOUND after 30s. Check logs:"
-          pm2 logs nexus-robot-lidar --lines 20
+          echo "❌ LiDAR did not publish /scan within 30s. Check logs:"
+          pm2 logs nexus-robot-lidar --lines 40 --nostream
           exit 1
