@@ -662,7 +662,16 @@ class BrainNode(Node):
         # Wait for sequence to start (state changes away from IDLE)
         while (loop.time() - t0) < timeout_s:
             state = await self._bridge.get_unload_state()
+            if state.get('error', False):
+                self.get_logger().error(
+                    f"Unload rejected: {state.get('error_name', 'unknown')} "
+                    f"(code={state.get('error_code', '?')})")
+                return False
             current = state.get('state', 0)
+            if isinstance(current, str):
+                current = {'idle': 0, 'adjusting': 1, 'extending': 2,
+                           'holding': 3, 'retracting': 4, 'done': 5,
+                           'leaving': 6, 'complete': 7}.get(current, 0)
             if current != UNLOAD_STATE_IDLE:
                 self.get_logger().info(f'Unload started: state={current}')
                 last_state = current
@@ -674,7 +683,16 @@ class BrainNode(Node):
         # Poll until COMPLETE (7) or timeout
         while (loop.time() - t0) < timeout_s:
             state = await self._bridge.get_unload_state()
+            if state.get('error', False):
+                self.get_logger().error(
+                    f"Unload failed: {state.get('error_name', 'unknown')} "
+                    f"(code={state.get('error_code', '?')})")
+                return False
             current = state.get('state', 0)
+            if isinstance(current, str):
+                current = {'idle': 0, 'adjusting': 1, 'extending': 2,
+                           'holding': 3, 'retracting': 4, 'done': 5,
+                           'leaving': 6, 'complete': 7}.get(current, 0)
 
             if current != last_state:
                 names = {0:'IDLE', 1:'ADJUST', 2:'EXTEND', 3:'HOLD',

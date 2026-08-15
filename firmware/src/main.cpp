@@ -104,9 +104,6 @@ int16_t g_raw_test_speeds[4] = {0};
 // Shared JSON output buffer for status messages (UART to Pi 5)
 static char g_json_buf[1200];
 
-// Unload state tracking (for transition detection → type 140 emit)
-AutoRoam::UnloadState g_last_unload_state = AutoRoam::UNLOAD_IDLE;
-
 // Heartbeat counter — bumped every successful "alive" publish.  Pi
 // monitor uses this to detect that ESP32 firmware is still ticking;
 // if the counter freezes, the host knows to reconnect even though no
@@ -504,6 +501,10 @@ void applySpeeds()
 // ========================================================================
 // ASCII Command Handlers
 // ========================================================================
+void emitFirmwareError(const char* code, const char* message,
+                       const char* severity = "error");
+void emitCommandAck(const char* command, const char* status = "accepted");
+
 void handleForward(int speed)
 {
     g_individual_mode = false;
@@ -511,7 +512,7 @@ void handleForward(int speed)
     g_nav_vx    = constrain(speed, 0, 255);
     g_nav_vy    = 0;
     g_nav_omega = 0;
-    PiSerial.printf("ACK: forward %d\n", speed);
+    emitCommandAck("forward");
 }
 
 void handleBackward(int speed)
@@ -521,7 +522,7 @@ void handleBackward(int speed)
     g_nav_vx    = -constrain(speed, 0, 255);
     g_nav_vy    = 0;
     g_nav_omega = 0;
-    PiSerial.printf("ACK: backward %d\n", speed);
+    emitCommandAck("backward");
 }
 
 void handleStop()
@@ -538,34 +539,47 @@ void handleStop()
         // Soft stop: PWM to 0, drivers stay enabled (no hard e-stop).
         g_motors[i].coast();
     }
-    PiSerial.println("ACK: stopped");
+    emitCommandAck("stop");
 }
 
 void handleEStop()
 {
+    // Latch the autonomous path before disabling hardware so AUTO_ROAM cannot
+    // retain a conflicting command while the global hardware interlock is set.
+    g_modeManager.enterEStop(millis());
+    g_cylinder.stop();
+
     // CRITICAL safety path — hardware disable of BTS7960 drivers.
     // Pulls EN pin LOW on every driver so no PWM can produce torque,
     // even if the firmware later writes PWM by mistake.
     g_e_stop_active = true;
     g_pid_enabled   = false;
+    g_individual_mode = false;
+    g_raw_test_mode = false;
     g_nav_vx    = 0;
     g_nav_vy    = 0;
     g_nav_omega = 0;
     for (int i = 0; i < MOTOR_COUNT; i++) {
         g_target_speeds[i] = 0;
         g_ramped_speeds[i] = 0;
+        g_raw_test_speeds[i] = 0;
         g_kick_ticks[i] = 0;
         // emergencyStop() pulls EN LOW and zeros PWM. Disarms until
         // an explicit handleEStopClear() re-arms the drivers.
         g_motors[i].emergencyStop();
     }
-    PiSerial.println("ACK: E-STOP (hardware disabled)");
+    emitCommandAck("e_stop");
 }
 
 void handleEStopClear()
 {
+    // This is the only command path that may re-arm motion after an E-stop.
+    g_modeManager.clearEStop(millis());
+    g_cylinder.stop();
     g_e_stop_active = false;
     g_pid_enabled   = true;
+    g_individual_mode = false;
+    g_raw_test_mode = false;
     g_nav_vx    = 0;
     g_nav_vy    = 0;
     g_nav_omega = 0;
@@ -574,8 +588,9 @@ void handleEStopClear()
         g_motors[i].coast();
         g_ramped_speeds[i]  = 0;
         g_target_speeds[i]  = 0;
+        g_raw_test_speeds[i] = 0;
     }
-    PiSerial.println("ACK: E-STOP cleared");
+    emitCommandAck("e_stop_clear");
 }
 
 void handleSetPID(float kp, float ki, float kd)
@@ -584,13 +599,13 @@ void handleSetPID(float kp, float ki, float kd)
         g_pid[i].setGains(kp, ki, kd);
     }
     g_pid_enabled = true;
-    PiSerial.printf("ACK: PID kp=%.2f ki=%.2f kd=%.2f\n", kp, ki, kd);
+    emitCommandAck("set_pid");
 }
 
 void handleSetMaxSpeed(int pct)
 {
     g_max_speed_pct = constrain(pct, 0, 100);
-    PiSerial.printf("ACK: max_speed=%d%%\n", g_max_speed_pct);
+    emitCommandAck("set_max_speed");
 }
 
 void handleGetEncoder()
@@ -605,7 +620,7 @@ void handleGetEncoder()
 void handleResetEncoder()
 {
     for (int i = 0; i < MOTOR_COUNT; i++) g_encoders[i].reset();
-    PiSerial.println("ACK: encoders reset");
+    emitCommandAck("reset_encoder");
 }
 
 void handleGetStatus()
@@ -618,6 +633,21 @@ void handleGetStatus()
         &g_tof, &g_cylinder,
         g_nav_vx, g_nav_vy, g_nav_omega,
         g_e_stop_active, g_max_speed_pct);
+    PiSerial.write(g_json_buf, n);
+}
+
+void emitFirmwareError(const char* code, const char* message,
+                       const char* severity)
+{
+    size_t n = JsonStatus::emitError(g_json_buf, sizeof(g_json_buf),
+                                     code, message, severity);
+    PiSerial.write(g_json_buf, n);
+}
+
+void emitCommandAck(const char* command, const char* status)
+{
+    size_t n = JsonStatus::emitAck(g_json_buf, sizeof(g_json_buf),
+                                   command, status);
     PiSerial.write(g_json_buf, n);
 }
 
@@ -690,6 +720,45 @@ void handleHelp()
 // ========================================================================
 void processPiCommand(const Command& cmd, uint32_t now_ms)
 {
+    // A latched E-stop must not let command processing store motion that could
+    // run immediately after an unrelated clear. Stop/query/cancel remain safe.
+    if (g_e_stop_active) {
+        switch (cmd.type) {
+            case CMD_STOP:
+                handleStop();
+                return;
+            case CMD_CYLINDER_STOP:
+                g_cylinder.stop();
+                emitCommandAck("cylinder_stop");
+                return;
+            case CMD_CANCEL_DOCK:
+                g_modeManager.cancelUnloading(AutoRoam::DOCK_ERROR_E_STOP);
+                emitCommandAck("cancel_dock");
+                return;
+            case CMD_E_STOP:
+                handleEStop();
+                return;
+            case CMD_E_STOP_CLEAR:
+                handleEStopClear();
+                return;
+            case CMD_GET_ENCODER:
+            case CMD_GET_STATUS:
+            case CMD_GET_IMU:
+            case CMD_GET_POWER:
+            case CMD_GET_IR:
+            case CMD_GET_SHARP:
+            case CMD_GET_TOF:
+            case CMD_GET_UNLOAD_STATE:
+            case CMD_GET_CARGO:
+                break;
+            default:
+                emitFirmwareError("E_STOP_ACTIVE",
+                                  "Command rejected while E-stop is active",
+                                  "critical");
+                return;
+        }
+    }
+
     switch (cmd.type) {
         // ---- Navigation (mecanum) ----
         case CMD_MOVE:
@@ -741,7 +810,7 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             break;
         case CMD_FORCE_AUTO_ROAM:
             g_modeManager.onPiCommand(cmd, now_ms);
-            PiSerial.println("ACK: AUTO_ROAM forced (Pi disconnected, sensors driving)");
+            emitCommandAck("force_auto_roam");
             break;
         case CMD_HEARTBEAT:
             g_modeManager.onPiCommand(cmd, now_ms);
@@ -795,31 +864,85 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             break;
 
         case CMD_CYLINDER_EXTEND:
-            g_cylinder.extend();
-            PiSerial.println("ACK: cylinder extend");
-            break;
-
         case CMD_CYLINDER_RETRACT:
-            g_cylinder.retract();
-            PiSerial.println("ACK: cylinder retract");
+            if (g_e_stop_active) {
+                emitCommandAck(cmd.type == CMD_CYLINDER_EXTEND ?
+                               "cylinder_extend" : "cylinder_retract", "rejected");
+                emitFirmwareError("E_STOP_ACTIVE",
+                                  "Cylinder command rejected while E-stop is active",
+                                  "critical");
+            } else if (g_modeManager.getAutoRoam().isUnloading()) {
+                // The autonomous dock FSM owns the cylinder until it reaches a
+                // terminal result; a direct direction change would corrupt it.
+                emitCommandAck(cmd.type == CMD_CYLINDER_EXTEND ?
+                               "cylinder_extend" : "cylinder_retract", "rejected");
+                emitFirmwareError("DOCK_ACTIVE",
+                                  "Cylinder command rejected while dock is active",
+                                  "error");
+            } else {
+                if (cmd.type == CMD_CYLINDER_EXTEND) {
+                    g_cylinder.extend();
+                    emitCommandAck("cylinder_extend");
+                } else {
+                    g_cylinder.retract();
+                    emitCommandAck("cylinder_retract");
+                }
+            }
             break;
 
         case CMD_CYLINDER_STOP:
-            g_cylinder.stop();
-            PiSerial.println("ACK: cylinder stop");
+            if (g_modeManager.getAutoRoam().isUnloading()) {
+                g_modeManager.cancelUnloading();
+            } else {
+                g_cylinder.stop();
+            }
+            emitCommandAck("cylinder_stop");
             break;
 
         case CMD_BEGIN_DOCK:
-            g_modeManager.onPiCommand(cmd, now_ms);
-            // onPiCommand handles startDock with full params (tag, distance,
-            // facing_theta, operation_id) — no duplicate call needed here.
-            PiSerial.printf("ACK: dock cmd %d\n", cmd.type);
+            if (g_e_stop_active) {
+                emitCommandAck("begin_dock", "rejected");
+                emitFirmwareError("E_STOP_ACTIVE", "Dock rejected while E-stop is active", "critical");
+            } else {
+                const AutoRoam& current_dock = g_modeManager.getAutoRoam();
+                if (current_dock.isCurrentOperation(cmd.operation_id)) {
+                    // Idempotent retry: acknowledge without touching the active
+                    // state machine or its retained terminal error.
+                    emitCommandAck("begin_dock", "accepted");
+                } else if (current_dock.isUnloading() &&
+                           current_dock.getUnloadState() != AutoRoam::UNLOAD_COMPLETE) {
+                    // A second operation must not alter the terminal-error latch
+                    // of the unload already running.
+                    emitCommandAck("begin_dock", "rejected");
+                    emitFirmwareError("DOCK_BUSY", "Dock rejected; another unload is active", "error");
+                } else {
+                    g_modeManager.onPiCommand(cmd, now_ms);
+                    const AutoRoam& auto_roam = g_modeManager.getAutoRoam();
+                    if (auto_roam.hasUnloadError()) {
+                        emitCommandAck("begin_dock", "rejected");
+                        emitFirmwareError(auto_roam.getUnloadErrorName(),
+                                          "Dock preflight rejected", "error");
+                    } else {
+                        emitCommandAck("begin_dock");
+                    }
+                }
+            }
             break;
 
         case CMD_BEGIN_LEAVE_DOCK:
+            if (g_modeManager.startLeaveDock(now_ms)) {
+                emitCommandAck("begin_leave_dock");
+            } else {
+                emitCommandAck("begin_leave_dock", "rejected");
+                emitFirmwareError("DOCK_NOT_READY",
+                                  "Leave-dock rejected; dock is not ready to leave",
+                                  "error");
+            }
+            break;
+
         case CMD_CANCEL_DOCK:
             g_modeManager.onPiCommand(cmd, now_ms);
-            PiSerial.printf("ACK: dock cmd %d\n", cmd.type);
+            emitCommandAck("cancel_dock");
             break;
 
         case CMD_GET_UNLOAD_STATE:
@@ -834,7 +957,7 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             // Graceful reboot.  Send an ACK first so the host knows
             // the command was accepted, then call ESP.restart() to
             // reload firmware without touching the BOOT button.
-            PiSerial.println("{\"type\":128,\"data\":{\"status\":\"restarting\"}}");
+            emitCommandAck("restart");
             PiSerial.flush();
             delay(20);
             ESP.restart();
@@ -854,7 +977,6 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             // the bench command deterministic and independent of NAV versus
             // AUTO_ROAM scheduling.
             if (speed != 0) {
-                g_e_stop_active = false;
                 g_pid_enabled = false;
                 g_motors[id].enable();
                 g_motors[id].setSpeed(speed * MOTOR_PINS[id].dir);
@@ -862,7 +984,7 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
                 g_motors[id].coast();
                 g_raw_test_mode = false;
             }
-            PiSerial.printf("ACK: raw motor[%d] = %d (PID OFF)\n", id, speed);
+            emitCommandAck("raw_motor");
         } break;
 
         default:
@@ -1035,12 +1157,43 @@ static void publishTelemetry(uint32_t now_ms)
 void publishSensors(uint32_t now_ms)
 {
     readSensorsSlow(now_ms);
+
+    // Type-140 is event-driven.  A terminal error must be visible to the Pi
+    // immediately; normal state changes are emitted once without flooding USB.
+    static int last_unload_state = -1;
+    static uint8_t last_unload_error = 255;
+    const AutoRoam& auto_roam = g_modeManager.getAutoRoam();
+    const int unload_state = (int)auto_roam.getUnloadState();
+    const uint8_t unload_error = auto_roam.getUnloadErrorCode();
+    if (unload_state != last_unload_state || unload_error != last_unload_error) {
+        handleUnloadState();
+        if (unload_error != AutoRoam::DOCK_ERROR_NONE &&
+            unload_error != last_unload_error) {
+            emitFirmwareError(
+                auto_roam.getUnloadErrorName(),
+                "Docking/unload sequence failed",
+                unload_error == AutoRoam::DOCK_ERROR_E_STOP ? "critical" : "error");
+        }
+        last_unload_state = unload_state;
+        last_unload_error = unload_error;
+    }
     publishAlive(now_ms);
     publishTelemetry(now_ms);
 
     // ---- Periodic sensor types (independent cadences) ----
     // Each type runs at its own Hz.  All use cached values from
     // readSensorsSlow() so no I2C reads block the publish path.
+
+    // Cylinder state is event-driven: it is operational telemetry, but
+    // repeating it at sensor cadence only wastes UART bandwidth.  Emit the
+    // initial state and each actuator transition (including timeout stop).
+    static int last_cylinder_state = -1;
+    const int cylinder_state = (int)g_cylinder.getState();
+    if (cylinder_state != last_cylinder_state) {
+        last_cylinder_state = cylinder_state;
+        g_cylinder.printStatusJson();
+        yield();
+    }
 
     static uint32_t last_imu_ms   = 0;
     static uint32_t last_pwr_ms   = 0;
@@ -1468,15 +1621,6 @@ void loop()
     printStatus(now);
     publishSensors(now);
     updateLED(now);
-
-    // Detect unload state transitions and emit type 140 to Pi
-    {
-        AutoRoam::UnloadState current = g_modeManager.getUnloadState();
-        if (current != g_last_unload_state) {
-            g_last_unload_state = current;
-            handleUnloadState();
-        }
-    }
 
     delay(1);
 

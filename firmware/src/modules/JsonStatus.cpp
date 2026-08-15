@@ -41,7 +41,10 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
     doc["ts"]   = now_ms;
     doc["type"] = 131;
     doc["mode"] = Watchdog::modeName(modeManager->getMode());
-    doc["estop"]= e_stop;
+    // Keep the legacy spelling during the Pi rollout, but make the documented
+    // e_stop field canonical for new consumers.
+    doc["e_stop"] = e_stop;
+    doc["estop"] = e_stop;
     doc["pid"]  = modeManager->isPIDEnabled();
     doc["max_pct"] = max_pct;
 
@@ -150,7 +153,8 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     doc["ts"]   = now_ms;
     doc["type"] = 131;
     doc["mode"] = Watchdog::modeName(modeManager->getMode());
-    doc["estop"]= e_stop;
+    doc["e_stop"] = e_stop;
+    doc["estop"] = e_stop;
     doc["max_pct"] = max_pct;
 
     JsonArray nav = doc.createNestedArray("nav");
@@ -352,27 +356,72 @@ size_t JsonStatus::emitUnloadState(char* buf, size_t bufsize, uint32_t now_ms,
         "idle", "adjusting", "extending", "holding",
         "retracting", "done", "leaving", "complete"
     };
+    JsonObject data = doc["data"].to<JsonObject>();
     uint8_t s = (uint8_t)auto_roam->getUnloadState();
-    doc["state"] = (s < sizeof(STATE_NAMES) / sizeof(STATE_NAMES[0]))
-                   ? STATE_NAMES[s] : "unknown";
-
-    doc["tag_id"]    = auto_roam->getDockTagId();
-    doc["target_mm"] = auto_roam->getDockTargetMm();
+    data["state"] = s;
+    data["state_name"] = (s < sizeof(STATE_NAMES) / sizeof(STATE_NAMES[0]))
+                         ? STATE_NAMES[s] : "unknown";
+    data["tag_id"]    = auto_roam->getDockTagId();
+    data["target_mm"] = auto_roam->getDockTargetMm();
+    data["error"] = auto_roam->hasUnloadError();
+    data["error_code"] = auto_roam->getUnloadErrorCode();
+    data["error_name"] = auto_roam->getUnloadErrorName();
 
     if (tof && tof->isPresent()) {
-        doc["current_mm"] = tof->getDistanceMm();
+        data["current_mm"] = tof->getDistanceMm();
     } else {
-        doc["current_mm"] = -1;
+        data["current_mm"] = -1;
     }
 
-    doc["heading_err_deg"] = auto_roam->getHeadingErrDeg();
-    doc["heading_ok"]      = auto_roam->isHeadingOk();
+    data["heading_err_deg"] = auto_roam->getHeadingErrDeg();
+    data["heading_ok"]      = auto_roam->isHeadingOk();
 
     if (cylinder) {
-        doc["cyl"] = CylinderActuator::stateName(cylinder->getState());
+        data["cyl"] = CylinderActuator::stateName(cylinder->getState());
     } else {
-        doc["cyl"] = "unknown";
+        data["cyl"] = "unknown";
     }
+
+    size_t n = serializeJson(doc, buf, bufsize);
+    if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }
+    return n;
+}
+
+// =====================================================================
+// Type 128 — generic command acknowledgement
+// =====================================================================
+size_t JsonStatus::emitAck(char* buf, size_t bufsize, const char* command,
+                           const char* status)
+{
+    if (!buf || bufsize == 0) return 0;
+
+    JsonDocument doc;
+    doc["type"] = 128;
+    JsonObject data = doc["data"].to<JsonObject>();
+    data["cmd"] = command ? command : "unknown";
+    data["status"] = status ? status : "accepted";
+    data["ts"] = millis();
+
+    size_t n = serializeJson(doc, buf, bufsize);
+    if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }
+    return n;
+}
+
+// =====================================================================
+// Type 129 — structured firmware error for the Pi safety supervisor
+// =====================================================================
+size_t JsonStatus::emitError(char* buf, size_t bufsize, const char* code,
+                             const char* message, const char* severity)
+{
+    if (!buf || bufsize == 0) return 0;
+
+    JsonDocument doc;
+    doc["type"] = 129;
+    JsonObject data = doc["data"].to<JsonObject>();
+    data["code"] = code ? code : "UNKNOWN";
+    data["error"] = message ? message : "Unknown firmware error";
+    data["severity"] = severity ? severity : "error";
+    data["ts"] = millis();
 
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }

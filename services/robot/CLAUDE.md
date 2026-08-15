@@ -411,7 +411,7 @@ Supported commands are `obstacle_front`, `obstacle_front_left`, `obstacle_front_
 | `/esp32/encoder` | serial → ROS | ESP32 type-130 encoder snapshot |
 | `/esp32/imu` | serial → ROS | ESP32 type-134 BNO055 IMU data (20 Hz) |
 | `/esp32/power` | serial → ROS | ESP32 type-133 INA226 power telemetry (0.2 Hz) |
-| `/esp32/unload_state` | serial → ROS | ESP32 type-140 unload sequence state |
+| `/esp32/unload_state` | serial → ROS | ESP32 type-140 unload state: `{state: 0..7, state_name, error, error_code, error_name}`. An `error=true` frame aborts the current route leg. |
 | `/esp32/cargo` | serial → ROS | ESP32 type-145 cargo sensor status (on-demand) |
 | `/esp32/alive` | serial → ROS | ESP32 type-144 alive heartbeat (500 ms) |
 | `/esp32/alive` | serial → ROS | ESP32 heartbeat liveness flag |

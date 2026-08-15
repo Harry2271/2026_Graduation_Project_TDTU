@@ -27,6 +27,11 @@ public:
 
     void onPiCommand(const Command& cmd, uint32_t now_ms);
 
+    /// Keep the autonomous control path latched with main.cpp's hardware
+    /// interlock. Only clearEStop() may re-arm motor output.
+    void enterEStop(uint32_t now_ms);
+    void clearEStop(uint32_t now_ms);
+
     /// Forward proof-of-life from any byte received on the Pi UART, even if
     /// the command frame was corrupt (e.g. cable yank mid-packet).
     void onSerialActivity(uint32_t now_ms) { watchdog_.onSerialActivity(now_ms); }
@@ -45,13 +50,20 @@ public:
         auto_roam_.startDock(tag_id, target_distance_mm, facing_theta_deg, operation_id);
     }
 
-    /// Manually trigger the leave-dock reverse phase
-    void startLeaveDock() { auto_roam_.startLeaveDock(); }
+    /// Manually trigger the leave-dock reverse phase.
+    bool startLeaveDock(uint32_t now_ms);
+
+    /// End an autonomous dock with no residual motion; Pi/heartbeat owns the
+    /// next navigation command rather than AUTO_ROAM resuming on its own.
+    void finishDock(uint32_t now_ms);
 
     /// Cancel unloading sequence
-    void cancelUnloading() { auto_roam_.cancelUnloading(); }
+    void cancelUnloading(AutoRoam::DockError error = AutoRoam::DOCK_ERROR_CANCELLED) {
+        auto_roam_.cancelUnloading(error);
+    }
 
     [[nodiscard]] AutoRoam::UnloadState getUnloadState() const { return auto_roam_.getUnloadState(); }
+    [[nodiscard]] AutoRoam& getAutoRoam() { return auto_roam_; }
 
     void applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
                             PIDController* pids, MecanumDrive* mecanum,

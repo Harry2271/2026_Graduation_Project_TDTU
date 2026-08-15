@@ -40,6 +40,7 @@ AutoRoam::AutoRoam()
     , dock_target_mm_(VL53L0X_UNLOAD_DISTANCE_MM)
     , heading_err_deg_(0.0f)
     , heading_ok_(false)
+    , unload_error_(DOCK_ERROR_NONE)
     , leave_start_count_(0)
     , leave_start_ms_(0)
     , leave_target_heading_(0.0f)
@@ -87,22 +88,83 @@ void AutoRoam::reset()
 // Docking / unloading API
 // =====================================================================
 
-void AutoRoam::startDock(uint16_t tag_id, uint16_t target_distance_mm,
+bool AutoRoam::isCurrentOperation(const char* operation_id) const
+{
+    return unload_state_ != UNLOAD_IDLE &&
+           operation_id && operation_id[0] != '\0' &&
+           current_operation_id_[0] != '\0' &&
+           strcmp(operation_id, current_operation_id_) == 0;
+}
+
+const char* AutoRoam::getUnloadErrorName() const
+{
+    switch (unload_error_) {
+        case DOCK_ERROR_NONE: return "none";
+        case DOCK_ERROR_BUSY: return "busy";
+        case DOCK_ERROR_TOF_UNAVAILABLE: return "tof_unavailable";
+        case DOCK_ERROR_IMU_UNAVAILABLE: return "imu_unavailable";
+        case DOCK_ERROR_IMU_UNCALIBRATED: return "imu_uncalibrated";
+        case DOCK_ERROR_ADJUST_TIMEOUT: return "adjust_timeout";
+        case DOCK_ERROR_LOCAL_OBSTACLE: return "local_obstacle";
+        case DOCK_ERROR_CANCELLED: return "cancelled";
+        case DOCK_ERROR_E_STOP: return "e_stop";
+        case DOCK_ERROR_LEAVE_TIMEOUT: return "leave_timeout";
+        case DOCK_ERROR_RETRACT_TIMEOUT: return "retract_timeout";
+        default: return "unknown";
+    }
+}
+
+bool AutoRoam::startDock(uint16_t tag_id, uint16_t target_distance_mm,
                          float facing_theta_deg, const char* operation_id)
 {
     // Idempotency: if an unload is already in progress and the operation_id
     // matches, silently ignore (no double-unload).  If it differs, warn
     // but still reject (only one unload at a time).
+    if (unload_state_ == UNLOAD_COMPLETE) {
+        // Preserve idempotency after success: a retry of the same operation
+        // acknowledges the recorded completion without starting another dump.
+        if (isCurrentOperation(operation_id)) return true;
+
+        // A different operation explicitly acknowledges the terminal result
+        // and starts the next dock.
+        unload_state_ = UNLOAD_IDLE;
+        current_operation_id_[0] = '\0';
+    }
     if (unload_state_ != UNLOAD_IDLE) {
         if (operation_id && operation_id[0] != '\0' &&
             strcmp(operation_id, current_operation_id_) == 0) {
             Serial.printf("[UNLOAD] Duplicate operation_id '%s' — ignoring\n",
                           operation_id);
-            return;
+            return true;
         }
+        // Busy is a command-level rejection, not a terminal failure of the
+        // unload already in progress. Do not overwrite its retained error.
         Serial.printf("[UNLOAD] busy (state=%d) — rejecting new dock\n",
                       unload_state_);
-        return;
+        return false;
+    }
+
+    // A production dock must have fresh physical distance and heading data.
+    // Failing closed here prevents an actuator motion after an I2C/device fault.
+    unload_error_ = DOCK_ERROR_NONE;
+    if (!tof_ || !tof_->isPresent()) {
+        unload_error_ = DOCK_ERROR_TOF_UNAVAILABLE;
+        if (cylinder_) cylinder_->stop();
+        Serial.println("[UNLOAD] rejected: VL53L0X unavailable");
+        return false;
+    }
+    if (!imu_ || !imu_->isOperational()) {
+        unload_error_ = DOCK_ERROR_IMU_UNAVAILABLE;
+        if (cylinder_) cylinder_->stop();
+        Serial.println("[UNLOAD] rejected: BNO055 unavailable");
+        return false;
+    }
+    if (imu_->getCalSys() < 2 || imu_->getCalMag() < 2) {
+        unload_error_ = DOCK_ERROR_IMU_UNCALIBRATED;
+        if (cylinder_) cylinder_->stop();
+        Serial.printf("[UNLOAD] rejected: BNO055 uncalibrated (sys=%u mag=%u)\n",
+                      imu_->getCalSys(), imu_->getCalMag());
+        return false;
     }
 
     // Store idempotency key for future duplicate detection
@@ -131,11 +193,14 @@ void AutoRoam::startDock(uint16_t tag_id, uint16_t target_distance_mm,
         has_heading_  = true;
         Serial.printf("[UNLOAD] heading gate: target=%.1f (from cmd)\n", facing_theta_deg);
     }
+    return true;
 }
 
-void AutoRoam::startLeaveDock()
+bool AutoRoam::startLeaveDock()
 {
-    if (unload_state_ != UNLOAD_IDLE && unload_state_ != UNLOAD_DONE) return;
+    if (unload_state_ != UNLOAD_IDLE && unload_state_ != UNLOAD_DONE) {
+        return false;
+    }
 
     Serial.println("[UNLOAD] startLeaveDock");
     leave_start_count_    = 0;
@@ -143,12 +208,14 @@ void AutoRoam::startLeaveDock()
     leave_target_heading_ = has_heading_ ? hold_heading_ : 0.0f;
     unload_state_         = UNLOAD_LEAVE;
     unload_start_ms_      = millis();
+    return true;
 }
 
-void AutoRoam::cancelUnloading()
+void AutoRoam::cancelUnloading(DockError error)
 {
-    if (unload_state_ == UNLOAD_IDLE) return;
-    Serial.println("[UNLOAD] Sequence cancelled");
+    if (unload_state_ == UNLOAD_IDLE && error == DOCK_ERROR_NONE) return;
+    unload_error_ = error;
+    Serial.printf("[UNLOAD] Sequence stopped: %s\n", getUnloadErrorName());
     unload_state_ = UNLOAD_IDLE;
     heading_err_deg_ = 0.0f;
     heading_ok_ = false;
@@ -223,7 +290,28 @@ bool AutoRoam::compute(uint32_t now_ms,
             case UNLOAD_ADJUSTING: {
                 if ((now_ms - adjust_start_ms_) >= ADJUST_TIMEOUT_MS) {
                     Serial.println("[UNLOAD] Adjust timeout — cancelling");
-                    cancelUnloading();
+                    cancelUnloading(DOCK_ERROR_ADJUST_TIMEOUT);
+                    return false;
+                }
+
+                if (!tof_ || !tof_->isPresent()) {
+                    cancelUnloading(DOCK_ERROR_TOF_UNAVAILABLE);
+                    return false;
+                }
+                if (!imu_ || !imu_->isOperational()) {
+                    cancelUnloading(DOCK_ERROR_IMU_UNAVAILABLE);
+                    return false;
+                }
+                if (imu_->getCalSys() < 2 || imu_->getCalMag() < 2) {
+                    cancelUnloading(DOCK_ERROR_IMU_UNCALIBRATED);
+                    return false;
+                }
+                // Fine-position adjustment must not override physical sensors.
+                // A dock target is validated by the dedicated VL53L0X; an IR or
+                // Sharp trip means a separate close obstacle is in the way.
+                if ((ir_ && ir_->detectedMask() != 0) ||
+                    (sharp_ && sharp_->isTooClose())) {
+                    cancelUnloading(DOCK_ERROR_LOCAL_OBSTACLE);
                     return false;
                 }
 
@@ -250,19 +338,16 @@ bool AutoRoam::compute(uint32_t now_ms,
                                       imu_->getCalMag(), imu_->getCalSys());
                     }
                 } else {
-                    heading_err_deg_ = 0.0f;
-                    heading_ok_ = true;  // no IMU — skip gate
+                    // Unreachable after the fail-closed checks above; do not
+                    // turn a sensor fault into permission to extend.
+                    cancelUnloading(DOCK_ERROR_IMU_UNAVAILABLE);
+                    return false;
                 }
 
-                // Check VL53L0X distance against runtime target
-                bool dist_ok = false;
-                if (tof_ && tof_->isPresent()) {
-                    tof_->update(now_ms);
-                    uint16_t dist_mm = tof_->getDistanceMm();
-                    dist_ok = (dist_mm <= dock_target_mm_ + VL53L0X_TOLERANCE_MM);
-                } else {
-                    dist_ok = true;  // no TOF — skip distance check
-                }
+                // Check VL53L0X distance against runtime target.
+                tof_->update(now_ms);
+                uint16_t dist_mm = tof_->getDistanceMm();
+                bool dist_ok = (dist_mm <= dock_target_mm_ + VL53L0X_TOLERANCE_MM);
 
                 // BOTH conditions satisfied → proceed to extend
                 if (dist_ok && heading_ok_) {
@@ -326,10 +411,10 @@ bool AutoRoam::compute(uint32_t now_ms,
                     return true;
                 }
                 if ((now_ms - unload_start_ms_) >= CYLINDER_MAX_RUN_MS) {
-                    Serial.println("[UNLOAD] Cylinder retracted (timeout) → unloading complete");
-                    unload_state_ = UNLOAD_DONE;
-                    unload_start_ms_ = now_ms;
-                    if (cylinder_) cylinder_->stop();
+                    Serial.println("[UNLOAD] Cylinder retract timeout — cancelling");
+                    cancelUnloading(DOCK_ERROR_RETRACT_TIMEOUT);
+                    out_vx = out_vy = out_omega = 0;
+                    return false;
                 }
                 return true;
             }
@@ -349,10 +434,8 @@ bool AutoRoam::compute(uint32_t now_ms,
             case UNLOAD_LEAVE: {
                 // Safety timeout
                 if ((now_ms - leave_start_ms_) >= LEAVE_DOCK_TIMEOUT_MS) {
-                    Serial.println("[UNLOAD] Leave-dock timeout → complete");
-                    unload_state_ = UNLOAD_COMPLETE;
-                    unload_start_ms_ = now_ms;
-                    if (cylinder_) cylinder_->stop();
+                    Serial.println("[UNLOAD] Leave-dock timeout — cancelling");
+                    cancelUnloading(DOCK_ERROR_LEAVE_TIMEOUT);
                     out_vx = out_vy = out_omega = 0;
                     return false;
                 }

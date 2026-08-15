@@ -3,7 +3,7 @@
   AGV robot description — minimal URDF for TF tree.
 
   Frame chain:
-    base_link → laser (LiDAR mount, ~25 cm above base, 5 cm forward)
+    base_footprint → base_link → laser (LiDAR mount, ~25 cm above base, 5 cm forward)
     base_link → base_imu (BNO055 mount, centered on chassis)
 
   Geometry is a 30 cm square mecanum chassis. Tune dimensions here when
@@ -11,6 +11,14 @@
   same values.
 -->
 <robot name="agv" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- Ground-projected base frame published below the physical chassis. -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
 
   <!-- Base chassis (visual + collision) -->
   <link name="base_link">
