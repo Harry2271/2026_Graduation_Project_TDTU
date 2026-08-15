@@ -69,6 +69,14 @@ class Esp32Bridge(Protocol):
     on_error: Callable[[str], None]
     on_alive: Callable[[dict], None]
     on_unload_state: Callable[[dict], None]
+    on_ack: Callable[[dict], None]
+    on_move_ack: Callable[[dict], None]
+    on_firmware_error: Callable[[dict], None]
+    on_ir: Callable[[dict], None]
+    on_sharp: Callable[[dict], None]
+    on_tof: Callable[[dict], None]
+    on_cylinder: Callable[[dict], None]
+    on_health: Callable[[dict], None]
 
 
 # Names of supported obstacle directions.  Mirrors the firmware enum
@@ -92,6 +100,28 @@ OBSTACLE_COMMAND_NAMES: dict[str, str] = {
 def _to_json_line(cmd: dict) -> bytes:
     """Encode a command as a newline-terminated JSON line (matches the ESP32 protocol)."""
     return (json.dumps(cmd) + '\n').encode('utf-8')
+
+
+_UNLOAD_STATE_NAMES = {
+    'idle': 0,
+    'adjusting': 1,
+    'extending': 2,
+    'holding': 3,
+    'retracting': 4,
+    'done': 5,
+    'leaving': 6,
+    'complete': 7,
+}
+
+
+def _is_terminal_unload_state(state: dict) -> bool:
+    """Return whether a type-140 state represents terminal success or failure."""
+    if bool(state.get('error', False)):
+        return True
+    value = state.get('state', 0)
+    if isinstance(value, str):
+        value = _UNLOAD_STATE_NAMES.get(value.lower(), 0)
+    return value == 7
 
 
 async def _open_serial(port: str, baudrate: int = 115200):
@@ -159,9 +189,19 @@ class FakeEsp32Bridge:
         self.on_alive: Callable[[dict], None] = lambda _data: None
         self.on_unload_state: Callable[[dict], None] = lambda _data: None
         self.on_cargo: Callable[[dict], None] = lambda _data: None
+        self.on_ack: Callable[[dict], None] = lambda _data: None
+        self.on_move_ack: Callable[[dict], None] = lambda _data: None
+        self.on_firmware_error: Callable[[dict], None] = lambda _data: None
+        self.on_ir: Callable[[dict], None] = lambda _data: None
+        self.on_sharp: Callable[[dict], None] = lambda _data: None
+        self.on_tof: Callable[[dict], None] = lambda _data: None
+        self.on_cylinder: Callable[[dict], None] = lambda _data: None
+        self.on_health: Callable[[dict], None] = lambda _data: None
 
         # Cached unload state (type 140) so async callers can poll it
-        # without going through the callback.  Updated from _handle_line().
+        # without going through the callback.  Terminal COMPLETE/error frames
+        # stay latched until the next begin_dock; firmware immediately follows
+        # COMPLETE with IDLE, which would otherwise be missed by a 300 ms poll.
         self._last_unload_state: dict = {}
         self._last_unload_state_ms: float = 0.0
         self.on_unload_state: Callable[[dict], None] = lambda _data: None
@@ -224,6 +264,8 @@ class FakeEsp32Bridge:
     async def begin_dock(self, tag_id: int, target_distance_mm: int,
                          facing_theta_deg: float = -999.0,
                          operation_id: str | None = None) -> None:
+        self._last_unload_state = {}
+        self._last_unload_state_ms = 0.0
         cmd: dict[str, Any] = {'cmd': 'begin_dock', 'tag_id': tag_id,
                                'target_distance_mm': target_distance_mm}
         if facing_theta_deg >= 0:
@@ -236,7 +278,7 @@ class FakeEsp32Bridge:
         await self._send({'cmd': 'cancel_dock'})
 
     async def get_unload_state(self) -> dict:
-        return {}
+        return dict(self._last_unload_state)
 
     async def get_cargo(self) -> dict:
         return {}
@@ -271,6 +313,9 @@ class FakeEsp32Bridge:
         return ''
 
     def inject_unload_state(self, state: dict) -> None:
+        if not (_is_terminal_unload_state(self._last_unload_state) and
+                not _is_terminal_unload_state(state)):
+            self._last_unload_state = dict(state)
         self.on_unload_state(state)
 
     def sent_commands(self) -> list[dict]:
@@ -349,7 +394,9 @@ class RealEsp32Bridge:
     TYPE_IR          = 135
     TYPE_SHARP       = 136
     TYPE_TOF         = 138
+    TYPE_CYLINDER    = 139
     TYPE_UNLOAD_STATE = 140
+    TYPE_HEALTH      = 142
     TYPE_ALIVE       = 144  # Always-fire 500 ms heartbeat from ESP32
     TYPE_CARGO       = 145  # Cargo microswitch state (on-demand query)
 
@@ -387,9 +434,19 @@ class RealEsp32Bridge:
         self.on_alive: Callable[[dict], None] = lambda _data: None
         self.on_unload_state: Callable[[dict], None] = lambda _data: None
         self.on_cargo: Callable[[dict], None] = lambda _data: None
+        self.on_ack: Callable[[dict], None] = lambda _data: None
+        self.on_move_ack: Callable[[dict], None] = lambda _data: None
+        self.on_firmware_error: Callable[[dict], None] = lambda _data: None
+        self.on_ir: Callable[[dict], None] = lambda _data: None
+        self.on_sharp: Callable[[dict], None] = lambda _data: None
+        self.on_tof: Callable[[dict], None] = lambda _data: None
+        self.on_cylinder: Callable[[dict], None] = lambda _data: None
+        self.on_health: Callable[[dict], None] = lambda _data: None
 
         # Cached unload state (type 140) so async callers can poll it
-        # without going through the callback.  Updated from _handle_line().
+        # without going through the callback.  Terminal COMPLETE/error frames
+        # stay latched until the next begin_dock; firmware immediately follows
+        # COMPLETE with IDLE, which would otherwise be missed by a 300 ms poll.
         self._last_unload_state: dict = {}
         self._last_unload_state_ms: float = 0.0
 
@@ -405,6 +462,14 @@ class RealEsp32Bridge:
         # Cached last error string + monotonic timestamp.
         self._last_error: str = ''
         self._last_error_ms: float = 0.0
+        self._last_error_data: dict = {}
+        self._last_ack: dict = {}
+        self._last_move_ack: dict = {}
+        self._last_ir: dict = {}
+        self._last_sharp: dict = {}
+        self._last_tof: dict = {}
+        self._last_cylinder: dict = {}
+        self._last_health: dict = {}
 
     # ----- lifecycle -----
 
@@ -475,10 +540,11 @@ class RealEsp32Bridge:
                          operation_id: str | None = None) -> None:
         """Start firmware dock+unload sequence (heading → VL53L0X → cylinder).
 
-        `operation_id` is an idempotency key — the firmware will reject a
-        duplicate `begin_dock` with the same `operation_id` so the brain
-        can safely retry without firing the cylinder twice.
+        `operation_id` is an idempotency key. A duplicate command for the
+        active operation is acknowledged without firing the cylinder twice.
         """
+        self._last_unload_state = {}
+        self._last_unload_state_ms = 0.0
         cmd: dict[str, Any] = {'cmd': 'begin_dock', 'tag_id': tag_id,
                                'target_distance_mm': target_distance_mm}
         if facing_theta_deg >= 0:
@@ -618,6 +684,11 @@ class RealEsp32Bridge:
         """Last error message from firmware, or '' if none."""
         return self._last_error
 
+    @property
+    def last_error_data(self) -> dict:
+        """Latest structured type-129 error frame, if one has arrived."""
+        return dict(self._last_error_data)
+
     # ----- internals -----
 
     async def send_command(self, cmd: dict) -> None:
@@ -728,9 +799,13 @@ class RealEsp32Bridge:
         if msg_type is None:
             return  # no type field — not a valid protocol frame
 
-        data = msg.get('data') or msg
+        payload = msg.get('data')
+        data = payload if isinstance(payload, dict) else msg
 
-        if msg_type == self.TYPE_STATUS:
+        if msg_type == self.TYPE_ACK:
+            self._last_ack = data
+            self._safe_call(self.on_ack, data)
+        elif msg_type == self.TYPE_STATUS:
             self._safe_call(self.on_status_update, data)
         elif msg_type == self.TYPE_ENCODER:
             motors = data.get('motors') or []
@@ -740,8 +815,12 @@ class RealEsp32Bridge:
             import time as _t
             self._last_error = error_text
             self._last_error_ms = _t.monotonic()
+            self._last_error_data = data
+            self._safe_call(self.on_firmware_error, data)
             self._safe_call(self.on_error, error_text)
         elif msg_type == self.TYPE_MOVE_ACK:
+            self._last_move_ack = data
+            self._safe_call(self.on_move_ack, data)
             status = data.get('status')
             if status == 'rejected':
                 self._safe_call(self.on_error, f"move rejected: {data.get('reason', '?')}")
@@ -755,11 +834,14 @@ class RealEsp32Bridge:
             self._alive_streak += 1
             self._safe_call(self.on_alive, data)
         elif msg_type == self.TYPE_UNLOAD_STATE:
-            # Firmware unload sequence state change (type 140).
-            # Cache for async polling + notify brain via callback.
+            # Preserve a terminal result for the async poller. Firmware moves
+            # COMPLETE -> IDLE on the next 50 Hz tick, far faster than the
+            # brain's polling cadence. The callback still receives every frame.
             import time as _t
-            self._last_unload_state = data
-            self._last_unload_state_ms = _t.monotonic()
+            if not (_is_terminal_unload_state(self._last_unload_state) and
+                    not _is_terminal_unload_state(data)):
+                self._last_unload_state = data
+                self._last_unload_state_ms = _t.monotonic()
             self._safe_call(self.on_unload_state, data)
         elif msg_type == self.TYPE_CARGO:
             # Cargo microswitch state (type 145).  Cache so the brain can
@@ -780,13 +862,25 @@ class RealEsp32Bridge:
             # (odom_node subscribes via /esp32/imu), but fire the callback
             # so live UIs can show heading.
             self._safe_call(self.on_imu, data)
-        else:
-            # IR, SHARP, TOF, ACK, … — ignore by default.
-            pass
+        elif msg_type == self.TYPE_IR:
+            self._last_ir = data
+            self._safe_call(self.on_ir, data)
+        elif msg_type == self.TYPE_SHARP:
+            self._last_sharp = data
+            self._safe_call(self.on_sharp, data)
+        elif msg_type == self.TYPE_TOF:
+            self._last_tof = data
+            self._safe_call(self.on_tof, data)
+        elif msg_type == self.TYPE_CYLINDER:
+            self._last_cylinder = data
+            self._safe_call(self.on_cylinder, data)
+        elif msg_type == self.TYPE_HEALTH:
+            self._last_health = data
+            self._safe_call(self.on_health, data)
 
         # Rising-edge e_stop trigger from any status frame.
         if msg_type == self.TYPE_STATUS:
-            e_stop = bool(data.get('e_stop', False))
+            e_stop = bool(data.get('e_stop', data.get('estop', False)))
             if e_stop and not self._last_e_stop:
                 self._safe_call(self.on_e_stop)
             self._last_e_stop = e_stop
@@ -849,6 +943,22 @@ class MirrorBridge:
                                  self._on_cargo, 10)
         node.create_subscription(_String, '/esp32/alive',
                                  self._on_alive, 10)
+        node.create_subscription(_String, '/esp32/ack',
+                                 self._on_ack, 10)
+        node.create_subscription(_String, '/esp32/move_ack',
+                                 self._on_move_ack, 10)
+        node.create_subscription(_String, '/esp32/error',
+                                 self._on_firmware_error, 10)
+        node.create_subscription(_String, '/esp32/ir',
+                                 self._on_ir, 10)
+        node.create_subscription(_String, '/esp32/sharp',
+                                 self._on_sharp, 10)
+        node.create_subscription(_String, '/esp32/tof',
+                                 self._on_tof, 10)
+        node.create_subscription(_String, '/esp32/cylinder',
+                                 self._on_cylinder, 10)
+        node.create_subscription(_String, '/esp32/health',
+                                 self._on_health, 10)
 
         self._connected = False
 
@@ -862,6 +972,14 @@ class MirrorBridge:
         self.on_alive:          Callable[[dict], None] = lambda _d: None
         self.on_unload_state:   Callable[[dict], None] = lambda _d: None
         self.on_cargo:          Callable[[dict], None] = lambda _d: None
+        self.on_ack:            Callable[[dict], None] = lambda _d: None
+        self.on_move_ack:       Callable[[dict], None] = lambda _d: None
+        self.on_firmware_error: Callable[[dict], None] = lambda _d: None
+        self.on_ir:             Callable[[dict], None] = lambda _d: None
+        self.on_sharp:          Callable[[dict], None] = lambda _d: None
+        self.on_tof:            Callable[[dict], None] = lambda _d: None
+        self.on_cylinder:       Callable[[dict], None] = lambda _d: None
+        self.on_health:         Callable[[dict], None] = lambda _d: None
 
         # Cached state — populated by ROS subscribers
         self._last_unload_state: dict = {}
@@ -914,6 +1032,7 @@ class MirrorBridge:
     async def begin_dock(self, tag_id: int, target_distance_mm: int,
                          facing_theta_deg: float = -999.0,
                          operation_id: str | None = None) -> None:
+        self._last_unload_state = {}
         cmd: dict[str, Any] = {
             'cmd': 'begin_dock',
             'tag_id': tag_id,
@@ -998,7 +1117,9 @@ class MirrorBridge:
             data = json.loads(msg.data)
         except Exception:
             return
-        self._last_unload_state = data
+        if not (_is_terminal_unload_state(self._last_unload_state) and
+                not _is_terminal_unload_state(data)):
+            self._last_unload_state = data
         self._safe_call(self.on_unload_state, data)
 
     def _on_cargo(self, msg: Any) -> None:
@@ -1015,6 +1136,37 @@ class MirrorBridge:
         except Exception:
             return
         self._safe_call(self.on_alive, data)
+
+    def _on_runtime_frame(self, msg: Any, callback: Callable[[dict], None]) -> None:
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        self._safe_call(callback, data)
+
+    def _on_ack(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_ack)
+
+    def _on_move_ack(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_move_ack)
+
+    def _on_firmware_error(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_firmware_error)
+
+    def _on_ir(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_ir)
+
+    def _on_sharp(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_sharp)
+
+    def _on_tof(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_tof)
+
+    def _on_cylinder(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_cylinder)
+
+    def _on_health(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_health)
 
     def _safe_call(self, fn: Callable, *args: Any) -> None:
         try:

@@ -80,6 +80,14 @@ public:
         const AutoRoam* auto_roam, VL53L0XSensor* tof,
         BNO055Sensor* imu, CylinderActuator* cylinder);
 
+    /// Emit generic command acknowledgement (type 128).
+    static size_t emitAck(char* buf, size_t bufsize, const char* command,
+        const char* status = "accepted");
+
+    /// Emit generic firmware error (type 129) for safety/operational failures.
+    static size_t emitError(char* buf, size_t bufsize, const char* code,
+        const char* message, const char* severity = "error");
+
     /// Emit move ACK (type 132).  `seq` echoes the sequence number
     /// from the originating Pi command (0 means no seq supplied).
     /// `status` is "accepted" or "rejected".  `reason` is only

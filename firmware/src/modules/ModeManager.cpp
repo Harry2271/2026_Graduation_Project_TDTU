@@ -53,9 +53,65 @@ void ModeManager::update(uint32_t now_ms)
     obstacle_.update(now_ms);
 }
 
+void ModeManager::enterEStop(uint32_t now_ms)
+{
+    estop_active_ = true;
+    pid_enabled_ = false;
+    nav_vx_ = nav_vy_ = nav_omega_ = 0;
+    for (int i = 0; i < MOTOR_COUNT; i++) {
+        ramped_speeds_[i] = 0;
+        kick_ticks_[i] = 0;
+    }
+    obstacle_.clearObstacles(now_ms);
+    auto_roam_.cancelUnloading(AutoRoam::DOCK_ERROR_E_STOP);
+    Serial.println("[ModeManager] E-STOP activated; autonomous output latched");
+}
+
+void ModeManager::clearEStop(uint32_t now_ms)
+{
+    estop_active_ = false;
+    pid_enabled_ = true;
+    nav_vx_ = nav_vy_ = nav_omega_ = 0;
+    for (int i = 0; i < MOTOR_COUNT; i++) {
+        ramped_speeds_[i] = 0;
+        kick_ticks_[i] = 0;
+    }
+    obstacle_.clearObstacles(now_ms);
+    auto_roam_.reset();
+    Serial.println("[ModeManager] E-STOP cleared; autonomous output remains stopped");
+}
+
+void ModeManager::finishDock(uint32_t now_ms)
+{
+    nav_vx_ = nav_vy_ = nav_omega_ = 0;
+    for (int i = 0; i < MOTOR_COUNT; i++) {
+        ramped_speeds_[i] = 0;
+        kick_ticks_[i] = 0;
+    }
+    obstacle_.clearObstacles(now_ms);
+    watchdog_.setMode(MODE_NAV);
+    Serial.println("[ModeManager] Dock complete; holding still in NAV mode");
+}
+
+bool ModeManager::startLeaveDock(uint32_t now_ms)
+{
+    if (!auto_roam_.startLeaveDock()) return false;
+    watchdog_.setMode(MODE_AUTO_ROAM);
+    Serial.printf("[ModeManager] Leave-dock started at %lu ms\n",
+                  (unsigned long)now_ms);
+    return true;
+}
+
 void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
 {
-    if (estop_active_) return;
+    // A cancel is always allowed so an interrupted unload can be brought to a
+    // known stopped state while the operator keeps the E-stop latched.
+    if (estop_active_) {
+        if (cmd.type == CMD_CANCEL_DOCK) {
+            auto_roam_.cancelUnloading(AutoRoam::DOCK_ERROR_E_STOP);
+        }
+        return;
+    }
 
     watchdog_.onHeartbeatReceived(now_ms);
 
@@ -91,20 +147,11 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
             break;
 
         case CMD_E_STOP:
-            estop_active_ = true;
-            pid_enabled_ = false;
-            nav_vx_ = nav_vy_ = nav_omega_ = 0;
-            for (int i = 0; i < 4; i++) { ramped_speeds_[i] = 0; kick_ticks_[i] = 0; }
-            obstacle_.clearObstacles(now_ms);
-            Serial.println("[ModeManager] E-STOP activated; obstacle state cleared");
+            enterEStop(now_ms);
             break;
 
         case CMD_E_STOP_CLEAR:
-            estop_active_ = false;
-            pid_enabled_ = true;
-            obstacle_.clearObstacles(now_ms);
-            auto_roam_.reset();
-            Serial.println("[ModeManager] E-STOP cleared; avoidance state reset");
+            clearEStop(now_ms);
             break;
 
         case CMD_FORCE_AUTO_ROAM:
@@ -182,22 +229,29 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
             break;
 
         // ---- Docking / unloading sequence (Pi brain) ----
-        case CMD_BEGIN_DOCK:
-            watchdog_.setMode(MODE_AUTO_ROAM);
-            auto_roam_.startDock(cmd.tag_id, cmd.target_distance_mm,
-                                 cmd.facing_theta_deg, cmd.operation_id);
-            Serial.printf("[ModeManager] CMD_BEGIN_DOCK tag=%u target=%u opId=%s\n",
+        case CMD_BEGIN_DOCK: {
+            const bool started = auto_roam_.startDock(
                 cmd.tag_id, cmd.target_distance_mm,
+                cmd.facing_theta_deg, cmd.operation_id);
+            if (started) {
+                watchdog_.setMode(MODE_AUTO_ROAM);
+            }
+            Serial.printf("[ModeManager] CMD_BEGIN_DOCK %s tag=%u target=%u opId=%s\n",
+                started ? "accepted" : "rejected", cmd.tag_id,
+                cmd.target_distance_mm,
                 cmd.operation_id[0] ? cmd.operation_id : "-");
-            break;
+        } break;
 
         case CMD_BEGIN_LEAVE_DOCK:
-            auto_roam_.startLeaveDock();
-            Serial.println("[ModeManager] CMD_BEGIN_LEAVE_DOCK");
+            startLeaveDock(now_ms);
             break;
 
         case CMD_CANCEL_DOCK:
-            auto_roam_.cancelUnloading();
+            // A late cleanup command after a completed/idle dock must not
+            // create a synthetic cancellation error for the next mission.
+            if (auto_roam_.isUnloading()) {
+                auto_roam_.cancelUnloading();
+            }
             Serial.println("[ModeManager] CMD_CANCEL_DOCK");
             break;
 
@@ -294,10 +348,24 @@ void ModeManager::applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
         mecanum->compute(nav_vx_, nav_vy_, nav_omega_, target_speeds);
     }
     else if (mode == MODE_AUTO_ROAM) {
+        // Hold the terminal COMPLETE frame for telemetry and never fall
+        // through to normal sensor roaming before the Pi sends the next goal.
+        if (auto_roam_.getUnloadState() == AutoRoam::UNLOAD_COMPLETE) {
+            finishDock(now_ms);
+            for (int i = 0; i < MOTOR_COUNT; i++) {
+                motors[i].coast();
+                ramped_speeds_[i] = 0;
+            }
+            return;
+        }
+
         int16_t roam_vx = 0, roam_vy = 0, roam_omega = 0;
         if (auto_roam_.compute(now_ms, roam_vx, roam_vy, roam_omega, encoders)) {
             mecanum->compute(roam_vx, roam_vy, roam_omega, target_speeds);
         } else {
+            if (auto_roam_.getUnloadState() == AutoRoam::UNLOAD_COMPLETE) {
+                finishDock(now_ms);
+            }
             // Sharp-triggered soft-hold: zero PWM but DO NOT latch EN low.
             // emergencyStop() would set enabled_=false and stop wheels permanently
             // until E-STOP is cleared. coast() just zeros PWM and leaves the

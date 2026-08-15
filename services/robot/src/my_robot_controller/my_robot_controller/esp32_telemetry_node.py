@@ -3,11 +3,10 @@
 Sits on the Pi 5 and acts as the **sole owner** of the ESP32 UART link
 (`/dev/robot-esp32` or `/dev/ttyACM0`).  This node runs two jobs:
 
-1. **Telemetry mirror (read side).**  ESP32 type-130/131/133/134/140/144/145
-   frames received from the bridge are republished as ROS `std_msgs/String`
-   JSON messages on `/esp32/status`, `/esp32/encoder`, `/esp32/imu`,
-   `/esp32/power`, `/esp32/unload_state`, `/esp32/cargo`, `/esp32/alive`
-   so any ROS node can subscribe.
+1. **Telemetry mirror (read side).** ESP32 runtime frames are republished as
+   ROS `std_msgs/String` JSON messages. This includes command ACK/error,
+   local safety sensors, dock/cylinder state, and firmware module health;
+   boot and wiring diagnostics remain firmware text logs.
 
 2. **Command gateway (write side).**  ROS clients (brain, teleop, web_bridge)
    publish JSON commands on `/esp32/cmd`.  This node validates them,
@@ -51,7 +50,8 @@ from my_robot_controller.esp32_bridge import open_esp32_bridge
 ALLOWED_COMMANDS = frozenset({
     'move', 'stop', 'e_stop', 'e_stop_clear', 'heartbeat',
     'cylinder_extend', 'cylinder_retract', 'cylinder_stop',
-    'begin_dock', 'cancel_dock', 'get_cargo', 'get_imu', 'get_power',
+    'begin_dock', 'begin_leave_dock', 'cancel_dock', 'get_unload_state',
+    'get_cargo', 'get_imu', 'get_power',
     'set_speed', 'set_all_speed', 'set_pid',
     'individual', 'reset_encoder', 'get_encoder',
     'obstacle_front', 'obstacle_left', 'obstacle_right',
@@ -60,9 +60,16 @@ ALLOWED_COMMANDS = frozenset({
     'obstacle_clear',
 })
 
-# Commands that must NEVER be dropped, even under heavy back-pressure.
+# Commands that must be delivered ahead of normal traffic.
 PRIORITY_COMMANDS = frozenset({
-    'stop', 'e_stop', 'e_stop_clear', 'cancel_dock', 'cylinder_stop',
+    'stop', 'e_stop', 'e_stop_clear', 'begin_dock', 'cancel_dock',
+    'cylinder_stop',
+})
+
+# These commands must take effect at the next poll, even when priority traffic
+# is full. Superseding queued motion/actuation is the safe behavior.
+SAFETY_BARRIER_COMMANDS = frozenset({
+    'stop', 'e_stop', 'cancel_dock', 'cylinder_stop',
 })
 
 # High-rate commands — coalesce to latest frame under sustained overload.
@@ -70,6 +77,7 @@ COALESCE_COMMANDS = frozenset({'move'})
 
 # Per-tick queue drain limits
 _MAX_DRAIN_PER_TICK = 8
+_MAX_PRIORITY_QUEUE = 32
 
 # Sustained-overload thresholds
 _OVERLOAD_DEQUE_WINDOW = 5.0      # seconds of high watermark to consider sustained
@@ -98,6 +106,14 @@ class Esp32TelemetryNode(Node):
         self._unload_state_pub  = self.create_publisher(String, '/esp32/unload_state', 10)
         self._cargo_pub         = self.create_publisher(String, '/esp32/cargo', 10)
         self._alive_pub         = self.create_publisher(String, '/esp32/alive', 10)
+        self._ack_pub           = self.create_publisher(String, '/esp32/ack', 10)
+        self._move_ack_pub      = self.create_publisher(String, '/esp32/move_ack', 10)
+        self._error_pub         = self.create_publisher(String, '/esp32/error', 10)
+        self._ir_pub            = self.create_publisher(String, '/esp32/ir', 10)
+        self._sharp_pub         = self.create_publisher(String, '/esp32/sharp', 10)
+        self._tof_pub           = self.create_publisher(String, '/esp32/tof', 10)
+        self._cylinder_pub      = self.create_publisher(String, '/esp32/cylinder', 10)
+        self._firmware_health_pub = self.create_publisher(String, '/esp32/health', 10)
 
         # ── Command gateway publishers (status back to clients) ────────────
         self._cmd_status_pub    = self.create_publisher(String, '/esp32/cmd_status', 10)
@@ -107,6 +123,9 @@ class Esp32TelemetryNode(Node):
             String, '/esp32/cmd', self._on_cmd, 10)
 
         # ── Gateway state ──────────────────────────────────────────────────
+        # Do not use deque(maxlen=...) here: automatic eviction would silently
+        # discard a safety command. Full priority traffic is rejected explicitly.
+        self._priority_cmd_q: deque[dict] = deque()
         self._cmd_q: deque[dict] = deque(maxlen=32)
         self._dropped_total = 0
         self._accepted_total = 0
@@ -139,7 +158,8 @@ class Esp32TelemetryNode(Node):
         # Edge event retained for backward compatibility.  Consumers should
         # now prefer /esp32/bridge_health for lifecycle monitoring, but keep
         # publishing e_stop edge for legacy subscribers.
-        if data.get('e_stop'):
+        e_stop = bool(data.get('e_stop', data.get('estop', False)))
+        if e_stop:
             self._e_stop_pub.publish(String(data=json.dumps({
                 'ts': data.get('ts'),
                 'now': now,
@@ -172,6 +192,34 @@ class Esp32TelemetryNode(Node):
         # link is still up.  This is the canonical "CPS alive" indicator
         # used by the health watchdog below.
         self._last_alive_time = time.time()
+
+    def on_ack(self, data: dict) -> None:
+        self._ack_pub.publish(String(data=json.dumps(data)))
+
+    def on_move_ack(self, data: dict) -> None:
+        self._move_ack_pub.publish(String(data=json.dumps(data)))
+
+    def on_firmware_error(self, data: dict) -> None:
+        self._error_pub.publish(String(data=json.dumps(data)))
+        self.get_logger().warning(
+            f"firmware error {data.get('code', 'UNKNOWN')}: "
+            f"{data.get('error', 'unknown')}"
+        )
+
+    def on_ir(self, data: dict) -> None:
+        self._ir_pub.publish(String(data=json.dumps(data)))
+
+    def on_sharp(self, data: dict) -> None:
+        self._sharp_pub.publish(String(data=json.dumps(data)))
+
+    def on_tof(self, data: dict) -> None:
+        self._tof_pub.publish(String(data=json.dumps(data)))
+
+    def on_cylinder(self, data: dict) -> None:
+        self._cylinder_pub.publish(String(data=json.dumps(data)))
+
+    def on_health(self, data: dict) -> None:
+        self._firmware_health_pub.publish(String(data=json.dumps(data)))
 
     def on_error(self, msg: str) -> None:
         """Surface bridge-side errors to the ROS log."""
@@ -226,9 +274,58 @@ class Esp32TelemetryNode(Node):
             self._emit_cmd_status('rejected', command, reason='unknown command')
             return
 
-        # Priority commands go directly to front of queue
+        # Keep priority commands ahead of normal traffic while preserving their
+        # own arrival order. appendleft() would reverse stop/e-stop sequences.
         if command in PRIORITY_COMMANDS:
-            self._cmd_q.appendleft(cmd)
+            if command in SAFETY_BARRIER_COMMANDS:
+                # Safety commands invalidate queued motion and ordinary control
+                # work, but not earlier safety commands. In particular, an
+                # E-stop followed by cancel_dock must reach firmware in order.
+                discarded = len(self._cmd_q) + int(self._last_pending_move is not None)
+                self._cmd_q.clear()
+                self._last_pending_move = None
+                self._dropped_total += discarded
+
+                if command == 'e_stop':
+                    # The latest E-stop is stronger than every queued request,
+                    # including a previous request to stop or re-arm motion.
+                    self._dropped_total += len(self._priority_cmd_q)
+                    self._priority_cmd_q.clear()
+                else:
+                    # A barrier must not sit behind a queued operation that can
+                    # begin or re-arm motion. Retain earlier barriers in FIFO
+                    # order, so e_stop followed by cancel_dock is transmitted
+                    # as e_stop then cancel_dock.
+                    retained = deque(
+                        queued for queued in self._priority_cmd_q
+                        if queued.get('cmd') in SAFETY_BARRIER_COMMANDS)
+                    self._dropped_total += len(self._priority_cmd_q) - len(retained)
+                    self._priority_cmd_q = retained
+
+                    if any(queued.get('cmd') == command
+                           for queued in self._priority_cmd_q):
+                        # Repeated stop/cancel/cylinder-stop commands are
+                        # idempotent, so one pending instance is sufficient.
+                        self._accepted_total += 1
+                        return
+
+                    if len(self._priority_cmd_q) >= _MAX_PRIORITY_QUEUE:
+                        self._rejected_total += 1
+                        self.get_logger().error(
+                            f'priority safety queue full; rejecting {command!r}')
+                        self._emit_cmd_status(
+                            'rejected', command,
+                            reason='priority safety queue full')
+                        return
+
+            if len(self._priority_cmd_q) >= _MAX_PRIORITY_QUEUE:
+                self._rejected_total += 1
+                self.get_logger().error(
+                    f'priority command queue full; rejecting {command!r}')
+                self._emit_cmd_status(
+                    'rejected', command, reason='priority command queue full')
+                return
+            self._priority_cmd_q.append(cmd)
             self._accepted_total += 1
             return
 
@@ -254,8 +351,13 @@ class Esp32TelemetryNode(Node):
         """
         out: list[dict] = []
 
-        # Drain normal queue (FIFO)
+        # Drain safety commands first, preserving their arrival order, then
+        # normal traffic. A bounded drain prevents a command burst starving ROS.
         drained = 0
+        while self._priority_cmd_q and drained < _MAX_DRAIN_PER_TICK:
+            out.append(self._priority_cmd_q.popleft())
+            drained += 1
+
         while self._cmd_q and drained < _MAX_DRAIN_PER_TICK:
             cmd = self._cmd_q.popleft()
             if cmd.get('cmd') in COALESCE_COMMANDS:
@@ -265,13 +367,15 @@ class Esp32TelemetryNode(Node):
             out.append(cmd)
             drained += 1
 
-        # Coalesce: append only the single latest `move` at the end
-        if self._last_pending_move is not None:
+        # Coalesce: append only the single latest `move` at the end without
+        # exceeding the per-tick drain budget. Keep it for the next tick when
+        # priority traffic already consumed that budget.
+        if self._last_pending_move is not None and drained < _MAX_DRAIN_PER_TICK:
             out.append(self._last_pending_move)
             self._last_pending_move = None
 
         # Overflow tracking
-        q_depth = len(self._cmd_q)
+        q_depth = len(self._priority_cmd_q) + len(self._cmd_q)
         now = time.time()
         if q_depth > 2:
             self._overload_history.append(now)
@@ -298,7 +402,7 @@ class Esp32TelemetryNode(Node):
             'ts': time.time(),
             'status': status,
             'cmd': cmd,
-            'queue_depth': len(self._cmd_q),
+            'queue_depth': len(self._priority_cmd_q) + len(self._cmd_q),
             'dropped_total': self._dropped_total,
             'accepted_total': self._accepted_total,
             'overflow': overflow or self._overflow_active,
@@ -373,6 +477,14 @@ async def _run_bridge(node: Esp32TelemetryNode) -> None:
     bridge.on_unload_state = node.on_unload_state
     bridge.on_cargo = node.on_cargo
     bridge.on_alive = node.on_alive
+    bridge.on_ack = node.on_ack
+    bridge.on_move_ack = node.on_move_ack
+    bridge.on_firmware_error = node.on_firmware_error
+    bridge.on_ir = node.on_ir
+    bridge.on_sharp = node.on_sharp
+    bridge.on_tof = node.on_tof
+    bridge.on_cylinder = node.on_cylinder
+    bridge.on_health = node.on_health
 
     await bridge.connect()
     node._bridge = bridge

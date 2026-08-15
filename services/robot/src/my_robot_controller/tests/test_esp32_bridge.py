@@ -152,6 +152,72 @@ def test_real_bridge_handles_envelope_type_131_status_frame() -> None:
     assert received == [payload]
 
 
+def test_real_bridge_caches_enveloped_numeric_unload_state() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    bridge.on_unload_state = received.append
+    payload = {
+        'state': 7,
+        'state_name': 'complete',
+        'tag_id': 2,
+        'target_mm': 300,
+        'current_mm': 298,
+        'error': False,
+        'error_code': 0,
+        'error_name': 'none',
+    }
+
+    bridge._handle_line(json.dumps({'type': 140, 'data': payload}).encode('utf-8'))
+
+    assert received == [payload]
+    assert bridge.last_unload_state == payload
+
+
+def test_real_bridge_caches_unload_error() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    payload = {
+        'state': 0,
+        'state_name': 'idle',
+        'error': True,
+        'error_code': 3,
+        'error_name': 'imu_unavailable',
+    }
+
+    bridge._handle_line(json.dumps({'type': 140, 'data': payload}).encode('utf-8'))
+
+    assert bridge.last_unload_state['error'] is True
+    assert bridge.last_unload_state['error_name'] == 'imu_unavailable'
+
+
+def test_real_bridge_preserves_complete_across_immediate_idle_frame() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    bridge.on_unload_state = received.append
+    complete = {'state': 7, 'state_name': 'complete', 'error': False}
+    idle = {'state': 0, 'state_name': 'idle', 'error': False}
+
+    bridge._handle_line(json.dumps({'type': 140, 'data': complete}).encode('utf-8'))
+    bridge._handle_line(json.dumps({'type': 140, 'data': idle}).encode('utf-8'))
+
+    assert received == [complete, idle]
+    assert bridge.last_unload_state == complete
+
+
+@pytest.mark.asyncio
+async def test_real_bridge_new_dock_clears_prior_terminal_result() -> None:
+    writer = MagicMock()
+    writer.drain = AsyncMock()
+    bridge = RealEsp32Bridge(writer=writer, reader=MagicMock())
+    bridge._last_unload_state = {'state': 7, 'state_name': 'complete', 'error': False}
+
+    await bridge.begin_dock(tag_id=2, target_distance_mm=300, operation_id='op-2')
+
+    assert bridge.last_unload_state == {}
+    sent = json.loads(writer.write.call_args[0][0].decode('utf-8'))
+    assert sent['cmd'] == 'begin_dock'
+    assert sent['operation_id'] == 'op-2'
+
+
 def test_real_bridge_normalizes_firmware_type_133_accessors() -> None:
     bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
     received: list[dict] = []
@@ -221,3 +287,56 @@ def test_real_bridge_ignores_stale_power_accessors() -> None:
     assert bridge.battery_voltage() is None
     assert bridge.battery_current() is None
     assert bridge.battery_pct() is None
+
+
+@pytest.mark.parametrize(
+    ('frame_type', 'callback_name', 'payload'),
+    [
+        (128, 'on_ack', {'status': 'accepted', 'cmd': 'stop'}),
+        (132, 'on_move_ack', {'seq': 4, 'status': 'accepted'}),
+        (135, 'on_ir', {'left': True, 'right': False}),
+        (136, 'on_sharp', {'distance_cm': 18, 'too_close': True}),
+        (138, 'on_tof', {'distance_mm': 300, 'present': True}),
+        (139, 'on_cylinder', {'state': 'retracting', 'moving': True}),
+        (142, 'on_health', {'modules': [{'id': 'imu', 'state': 'ONLINE'}]}),
+    ],
+)
+def test_real_bridge_forwards_operational_json_frames(
+    frame_type: int, callback_name: str, payload: dict,
+) -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    setattr(bridge, callback_name, received.append)
+
+    bridge._handle_line(json.dumps({'type': frame_type, 'data': payload}).encode('utf-8'))
+
+    assert received == [payload]
+
+
+def test_real_bridge_preserves_structured_firmware_error() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    structured: list[dict] = []
+    text_errors: list[str] = []
+    bridge.on_firmware_error = structured.append
+    bridge.on_error = text_errors.append
+    payload = {
+        'code': 'imu_uncalibrated',
+        'error': 'Dock preflight rejected',
+        'severity': 'error',
+    }
+
+    bridge._handle_line(json.dumps({'type': 129, 'data': payload}).encode('utf-8'))
+
+    assert structured == [payload]
+    assert text_errors == ['Dock preflight rejected']
+    assert bridge.last_error_data == payload
+
+
+def test_real_bridge_accepts_legacy_estop_status_field() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    e_stop_events: list[bool] = []
+    bridge.on_e_stop = lambda: e_stop_events.append(True)
+
+    bridge._handle_line(b'{"type":131,"estop":true}')
+
+    assert e_stop_events == [True]

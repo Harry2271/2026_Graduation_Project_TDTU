@@ -63,24 +63,43 @@ public:
     /// True when the unloading sequence is active (any state other than IDLE).
     [[nodiscard]] bool isUnloading() const { return unload_state_ != UNLOAD_IDLE; }
 
+    /// True only for a non-empty idempotency key matching the active unload.
+    [[nodiscard]] bool isCurrentOperation(const char* operation_id) const;
+
     // ---- Docking / unloading API (Pi brain → ESP32 actuator) ----
 
+    /// Dock errors are retained after the state returns to IDLE so the Pi can
+    /// distinguish a completed unload from a refused/cancelled one.
+    enum DockError : uint8_t {
+        DOCK_ERROR_NONE = 0,
+        DOCK_ERROR_BUSY = 1,
+        DOCK_ERROR_TOF_UNAVAILABLE = 2,
+        DOCK_ERROR_IMU_UNAVAILABLE = 3,
+        DOCK_ERROR_IMU_UNCALIBRATED = 4,
+        DOCK_ERROR_ADJUST_TIMEOUT = 5,
+        DOCK_ERROR_LOCAL_OBSTACLE = 6,
+        DOCK_ERROR_CANCELLED = 7,
+        DOCK_ERROR_E_STOP = 8,
+        DOCK_ERROR_LEAVE_TIMEOUT = 9,
+        DOCK_ERROR_RETRACT_TIMEOUT = 10,
+    };
+
     /// Start the full docking+unloading sequence (triggered by Pi via CMD_BEGIN_DOCK).
+    /// Returns false when pre-flight safety conditions reject the operation.
     /// @param facing_theta_deg target heading for the heading gate. Pass
     ///        -999.0f (or any value outside [0,360)) to use captured heading
     ///        (legacy behavior).
-    /// @param operation_id UUID string for idempotent docking. If the same
-    ///        operation_id is received while already unloading, the call is
-    ///        silently ignored (no double-unload).
-    void startDock(uint16_t tag_id, uint16_t target_distance_mm,
+    bool startDock(uint16_t tag_id, uint16_t target_distance_mm,
                    float facing_theta_deg = -999.0f,
                    const char* operation_id = nullptr);
 
     /// Manually trigger the leave-dock reverse phase.
-    void startLeaveDock();
+    /// Returns false unless the sequence is idle or ready-to-leave.
+    bool startLeaveDock();
 
-    /// Force-reset the unloading sequence back to IDLE.
-    void cancelUnloading();
+    /// Stop the actuator and reset the unloading sequence back to IDLE.
+    /// The terminal error remains available through type-140 telemetry.
+    void cancelUnloading(DockError error = DOCK_ERROR_CANCELLED);
 
     // ---- Docking state getters (for JSON telemetry type 140) ----
 
@@ -88,6 +107,9 @@ public:
     [[nodiscard]] uint16_t  getDockTargetMm() const  { return dock_target_mm_; }
     [[nodiscard]] float     getHeadingErrDeg() const  { return heading_err_deg_; }
     [[nodiscard]] bool      isHeadingOk() const       { return heading_ok_; }
+    [[nodiscard]] bool      hasUnloadError() const     { return unload_error_ != DOCK_ERROR_NONE; }
+    [[nodiscard]] uint8_t   getUnloadErrorCode() const { return (uint8_t)unload_error_; }
+    [[nodiscard]] const char* getUnloadErrorName() const;
 
     /// Unloading sub-state
     enum UnloadState : uint8_t {
@@ -141,6 +163,9 @@ private:
     // Heading gate
     float    heading_err_deg_;
     bool     heading_ok_;
+
+    // Retained terminal error for Pi type-140 telemetry.
+    DockError unload_error_;
 
     // Leave-dock tracking
     int32_t  leave_start_count_;
