@@ -11,8 +11,8 @@ import {
 import { Button, Tooltip, App } from 'antd';
 import {
   Quaternion, Vec3,
-  quatMul, quatConj, quatRotateVec, quatSlerp,
-  wrapDeg, isStationary,
+  bodyToWorld, makeStationaryDetector, normalizeQuat, quatSlerp,
+  wrapDeg,
 } from '@/lib/imuTransform';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,6 +25,7 @@ interface ImuSample {
   accel: Vec3;         // m/s^2 body frame (gravity removed by BNO055)
   gyro: Vec3;          // deg/s
   heading: number;     // deg
+  quatValid?: boolean;
   cal: { sys: number; gyro: number; accel: number; mag: number };
 }
 
@@ -392,9 +393,14 @@ export default function TrajectoryPage() {
   const latestSample = useRef<ImuSample | null>(null);
   const smoothQuatRef = useRef<THREE.Quaternion>(new THREE.Quaternion());
   const smoothQuatPrev = useRef<Quaternion>([1, 0, 0, 0]);
-  const hpFilter = useRef<HighPass3>(new HighPass3(HP_CUTOFF, SAMPLE_RATE));
+  const accelHighPass = useRef<HighPass3>(new HighPass3(HP_CUTOFF, SAMPLE_RATE));
+  const velocityHighPass = useRef<HighPass3>(new HighPass3(HP_CUTOFF, SAMPLE_RATE));
   const velocityRef = useRef<Vec3>([0, 0, 0]);
   const positionRef = useRef<Vec3>([0, 0, 0]);
+  const stationaryDetector = useRef(makeStationaryDetector());
+  const lastTimestampRef = useRef<number | null>(null);
+  const acceptedQuatRef = useRef<Quaternion | null>(null);
+  const heldQuatRef = useRef<Quaternion>([1, 0, 0, 0]);
 
   // ── Trail ──
   const trailRef = useRef<TrailPoint[]>([]);
@@ -421,58 +427,69 @@ export default function TrajectoryPage() {
   const processSample = useCallback((s: ImuSample) => {
     if (!isRecording) return;
 
+    const quat = normalizeQuat(s.quat);
+    if (s.quatValid === false || !quat || !s.accel.every(Number.isFinite) || !s.gyro.every(Number.isFinite)) return;
+
+    const previousTimestamp = lastTimestampRef.current;
+    let dt = previousTimestamp === null ? INTEGRATION_DT : (s.ts - previousTimestamp) / 1000;
+    lastTimestampRef.current = s.ts;
+    if (!Number.isFinite(dt) || dt <= 0 || dt > 0.25) {
+      accelHighPass.current.reset();
+      velocityHighPass.current.reset();
+      stationaryDetector.current.reset();
+      velocityRef.current = [0, 0, 0];
+      dt = INTEGRATION_DT;
+    }
+
     sampleCountRef.current++;
     latestSample.current = s;
 
-    // Smooth quaternion (slerp)
-    const smoothed = quatSlerp(smoothQuatPrev.current, s.quat, QUAT_SMOOTH_ALPHA);
-    smoothQuatPrev.current = smoothed;
-
-    // Convert to THREE.Quaternion (Three.js uses x,y,z,w order)
-    smoothQuatRef.current.set(smoothed[1], smoothed[2], smoothed[3], smoothed[0]);
-
-    // Acceleration in world frame: q^-1 * accel_body * q
-    const qInv = quatConj(smoothed);
-    const worldAccel = quatRotateVec(qInv, s.accel);
-
-    // High-pass filter to remove drift
-    const filteredAccel = hpFilter.current.filter(worldAccel);
-
-    // ZUPT: if stationary, snap velocity to zero
-    const stationary = isStationary(s.accel, s.gyro);
-    if (stationary) {
-      velocityRef.current = [0, 0, 0];
-    } else {
-      // Trapezoidal integration
-      velocityRef.current = [
-        velocityRef.current[0] + filteredAccel[0] * INTEGRATION_DT,
-        velocityRef.current[1] + filteredAccel[1] * INTEGRATION_DT,
-        velocityRef.current[2] + filteredAccel[2] * INTEGRATION_DT,
-      ];
+    const stationary = stationaryDetector.current.update(s.accel, s.gyro, dt);
+    let renderQuat: Quaternion;
+    if (acceptedQuatRef.current === null) {
+      acceptedQuatRef.current = quat;
+      smoothQuatPrev.current = quat;
+      heldQuatRef.current = quat;
     }
 
-    // High-pass filter velocity (additional drift suppression)
-    const velFiltered = hpFilter.current.filter(velocityRef.current);
+    if (stationary) {
+      velocityRef.current = [0, 0, 0];
+      accelHighPass.current.reset();
+      velocityHighPass.current.reset();
+      renderQuat = heldQuatRef.current;
+    } else {
+      const smoothed = quatSlerp(smoothQuatPrev.current, quat, QUAT_SMOOTH_ALPHA);
+      smoothQuatPrev.current = smoothed;
+      acceptedQuatRef.current = smoothed;
+      heldQuatRef.current = smoothed;
+      renderQuat = smoothed;
 
-    // Position integration
-    positionRef.current = [
-      positionRef.current[0] + velFiltered[0] * INTEGRATION_DT,
-      positionRef.current[1] + velFiltered[1] * INTEGRATION_DT,
-      positionRef.current[2] + velFiltered[2] * INTEGRATION_DT,
-    ];
+      // The type-134 contract is body-to-world: q * accel_body * q^-1.
+      const filteredAccel = accelHighPass.current.filter(bodyToWorld(smoothed, s.accel));
+      velocityRef.current = [
+        velocityRef.current[0] + filteredAccel[0] * dt,
+        velocityRef.current[1] + filteredAccel[1] * dt,
+        velocityRef.current[2] + filteredAccel[2] * dt,
+      ];
+      const filteredVelocity = velocityHighPass.current.filter(velocityRef.current);
+      positionRef.current = [
+        positionRef.current[0] + filteredVelocity[0] * dt,
+        positionRef.current[1] + filteredVelocity[1] * dt,
+        positionRef.current[2] + filteredVelocity[2] * dt,
+      ];
+      // The physical Z axis is vertical; keep the flat-floor display bounded.
+      positionRef.current[2] = Math.max(-0.05, Math.min(0.1, positionRef.current[2]));
+    }
 
-    // Clamp Z to near-zero (warehouse robot moves on flat floor)
-    positionRef.current[1] = Math.max(-0.05, Math.min(0.1, positionRef.current[1]));
-
-    // Add trail point (every other sample to keep trail dense but fast)
-    const pos3 = new THREE.Vector3(positionRef.current[0], positionRef.current[1], positionRef.current[2]);
+    // Three.js is Y-up: IMU X/Y/Z becomes rendered X/Z/Y.
+    smoothQuatRef.current.set(renderQuat[1], renderQuat[2], renderQuat[3], renderQuat[0]);
+    const pos3 = new THREE.Vector3(positionRef.current[0], positionRef.current[2], positionRef.current[1]);
     robotPosRef.current.copy(pos3);
 
-    // Gradient color: older=dim, newer=bright
     const hue = (0.53 + sampleCountRef.current * 0.001) % 1;
     trailRef.current.push({
       position: pos3.clone(),
-      quat: smoothed,
+      quat: renderQuat,
       heading: s.heading,
       color: new THREE.Color().setHSL(hue, 0.9, 0.5),
     });
@@ -480,7 +497,6 @@ export default function TrajectoryPage() {
       trailRef.current = trailRef.current.slice(-MAX_TRAIL);
     }
 
-    // Update React display state at ~10 Hz to avoid re-render storm
     displayUpdateCounter.current++;
     if (displayUpdateCounter.current % 2 === 0) {
       setDisplayState({
@@ -511,6 +527,14 @@ export default function TrajectoryPage() {
   const connectWs = useCallback(() => {
     if (typeof window === 'undefined') return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // A reconnect may follow an ESP32 reboot or a switch from mock data;
+    // never carry integration/filter state across that boundary.
+    accelHighPass.current.reset();
+    velocityHighPass.current.reset();
+    stationaryDetector.current.reset();
+    lastTimestampRef.current = null;
+    acceptedQuatRef.current = null;
+    velocityRef.current = [0, 0, 0];
     setWsStatus('connecting');
     try {
       const ws = new WebSocket(WS_URL);
@@ -529,6 +553,7 @@ export default function TrajectoryPage() {
               accel: d.accel ?? [0, 0, 0],
               gyro: d.gyro ?? [0, 0, 0],
               heading: d.heading ?? 0,
+              quatValid: d.quat_valid,
               cal: d.cal ?? { sys: 0, gyro: 0, accel: 0, mag: 0 },
             };
             processSample(sample);
@@ -560,11 +585,26 @@ export default function TrajectoryPage() {
     trailRef.current = [];
     positionRef.current = [0, 0, 0];
     velocityRef.current = [0, 0, 0];
-    hpFilter.current.reset();
+    accelHighPass.current.reset();
+    velocityHighPass.current.reset();
+    stationaryDetector.current.reset();
+    lastTimestampRef.current = null;
+    acceptedQuatRef.current = null;
+    heldQuatRef.current = [1, 0, 0, 0];
+    smoothQuatPrev.current = [1, 0, 0, 0];
+    smoothQuatRef.current.identity();
+    robotPosRef.current.set(0, 0.03, 0);
     sampleCountRef.current = 0;
     mockTick = 0;
-    smoothQuatPrev.current = [1, 0, 0, 0];
-    setDisplayState((prev) => ({ ...prev, trailSnapshot: [], sampleCount: 0, position: [0, 0, 0] }));
+    setDisplayState((prev) => ({
+      ...prev,
+      trailSnapshot: [],
+      sampleCount: 0,
+      position: [0, 0, 0],
+      robotQuat: new THREE.Quaternion(),
+      robotPos: new THREE.Vector3(0, 0.03, 0),
+      stationary: false,
+    }));
   };
 
   const handleExport = () => {
@@ -604,8 +644,8 @@ export default function TrajectoryPage() {
           <div className="flex items-center gap-3">
             <StatChip label="POINTS" value={displayState.sampleCount.toString()} color="var(--accent)" />
             <StatChip label="X" value={`${displayState.position[0].toFixed(2)}m`} color="#ff6666" />
-            <StatChip label="Y" value={`${displayState.position[2].toFixed(2)}m`} color="#66ff66" />
-            <StatChip label="Z" value={`${displayState.position[1].toFixed(2)}m`} color="#6688ff" />
+            <StatChip label="Y" value={`${displayState.position[1].toFixed(2)}m`} color="#66ff66" />
+            <StatChip label="Z" value={`${displayState.position[2].toFixed(2)}m`} color="#6688ff" />
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -758,8 +798,8 @@ export default function TrajectoryPage() {
           <PanelCard title="STATUS">
             <div className="space-y-0.5">
               <StatRow label="POS X" value={`${displayState.position[0].toFixed(3)} m`} color="#ff6666" />
-              <StatRow label="POS Y" value={`${displayState.position[2].toFixed(3)} m`} color="#66ff66" />
-              <StatRow label="POS Z" value={`${displayState.position[1].toFixed(3)} m`} color="#6688ff" />
+              <StatRow label="POS Y" value={`${displayState.position[1].toFixed(3)} m`} color="#66ff66" />
+              <StatRow label="POS Z" value={`${displayState.position[2].toFixed(3)} m`} color="#6688ff" />
               <StatRow label="ZUPT" value={displayState.stationary ? 'STOPPED' : 'MOVING'} color={displayState.stationary ? 'var(--warning)' : 'var(--success)'} />
               <StatRow label="TRAIL" value={`${displayState.trailSnapshot.length} pts`} color="var(--accent)" />
               <StatRow label="MODE" value={wsStatus === 'mock' ? 'SIMULATION' : isOnline ? 'LIVE' : 'OFFLINE'} color="var(--accent)" />

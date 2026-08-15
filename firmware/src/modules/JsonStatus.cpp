@@ -11,10 +11,6 @@
 #include "SharpFrontSensor.h"
 #include "VL53L0XSensor.h"
 
-#include <math.h>
-#ifndef DEG_TO_RAD
-#define DEG_TO_RAD (3.14159265358979323846f / 180.0f)
-#endif
 #include "CylinderActuator.h"
 #include "CargoSensor.h"
 #include "Watchdog.h"
@@ -267,20 +263,15 @@ size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
     doc["type"] = 134;
     doc["ts"]   = millis();
     JsonObject data = doc["data"].to<JsonObject>();
+    data["ts"] = doc["ts"];
     if (imu->isOperational()) {
-        // ── Euler → Quaternion (ZYX intrinsic rotation order) ──
-        float h = imu->getHeading() * DEG_TO_RAD;   // yaw  (around Z)
-        float p = imu->getPitch()  * DEG_TO_RAD;    // pitch (around Y)
-        float r = imu->getRoll()   * DEG_TO_RAD;    // roll  (around X)
-        float ch = cosf(h / 2.0f), sh = sinf(h / 2.0f);
-        float cp = cosf(p / 2.0f), sp = sinf(p / 2.0f);
-        float cr = cosf(r / 2.0f), sr = sinf(r / 2.0f);
-        // q = qZ * qY * qX  (ZYX intrinsic)
+        // Native BNO055 fusion quaternion in the documented [w, x, y, z] order.
         JsonArray qArr = data["q"].to<JsonArray>();
-        qArr.add(ch * cp * cr + sh * sp * sr);    // w
-        qArr.add(ch * cp * sr - sh * sp * cr);    // x
-        qArr.add(ch * sp * cr + sh * cp * sr);    // y
-        qArr.add(sh * cp * cr - ch * sp * sr);    // z
+        qArr.add(imu->getQuatW());
+        qArr.add(imu->getQuatX());
+        qArr.add(imu->getQuatY());
+        qArr.add(imu->getQuatZ());
+        data["quat_valid"] = imu->hasValidQuaternion();
 
         data["heading"] = imu->getHeading();
         data["err"]     = imu->getHeadingError();
@@ -289,7 +280,7 @@ size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
         JsonArray accelArr = data["accel"].to<JsonArray>();
         accelArr.add(imu->getLinearAccelX());
         accelArr.add(imu->getLinearAccelY());
-        accelArr.add(0.0f);                         // Z: flat-floor robot → ~0
+        accelArr.add(imu->getLinearAccelZ());
 
         JsonArray gyroArr = data["gyro"].to<JsonArray>();
         gyroArr.add(imu->getGyroX());
