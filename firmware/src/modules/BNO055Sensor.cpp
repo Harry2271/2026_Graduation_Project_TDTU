@@ -94,7 +94,8 @@ BNO055Sensor::BNO055Sensor()
     : heading_deg_(0.0f), heading_error_deg_(0.0f)
     , roll_deg_(0.0f), pitch_deg_(0.0f)
     , target_heading_deg_(0.0f), has_target_(false)
-    , linear_accel_x_(0.0f), linear_accel_y_(0.0f)
+    , linear_accel_x_(0.0f), linear_accel_y_(0.0f), linear_accel_z_(0.0f)
+    , quat_w_(1.0f), quat_x_(0.0f), quat_y_(0.0f), quat_z_(0.0f), quat_valid_(false)
     , gyro_x_dps_(0.0f), gyro_y_dps_(0.0f), gyro_z_dps_(0.0f)
     , gravity_x_(0.0f), gravity_y_(0.0f), gravity_z_(0.0f)
     , temperature_(0)
@@ -256,6 +257,29 @@ bool BNO055Sensor::read()
     roll_deg_  = (float)r_raw / 16.0f;
     pitch_deg_ = (float)p_raw / 16.0f;
 
+    // Native fusion quaternion (W, X, Y, Z; scale = 1 / 2^14).
+    // Preserve the sensor fusion result rather than reconstructing it from
+    // Euler angles, whose axis/order convention is easy to misapply.
+    uint8_t qbuf[8];
+    if (readRegs(addr_, BNO055_QUATERNION_W_LSB, qbuf, sizeof(qbuf))) {
+        float qw = (int16_t)((qbuf[1] << 8) | qbuf[0]) / 16384.0f;
+        float qx = (int16_t)((qbuf[3] << 8) | qbuf[2]) / 16384.0f;
+        float qy = (int16_t)((qbuf[5] << 8) | qbuf[4]) / 16384.0f;
+        float qz = (int16_t)((qbuf[7] << 8) | qbuf[6]) / 16384.0f;
+        float norm = sqrtf(qw * qw + qx * qx + qy * qy + qz * qz);
+        if (isfinite(norm) && norm > 0.5f && norm < 1.5f) {
+            quat_w_ = qw / norm;
+            quat_x_ = qx / norm;
+            quat_y_ = qy / norm;
+            quat_z_ = qz / norm;
+            quat_valid_ = true;
+        } else {
+            quat_valid_ = false;
+        }
+    } else {
+        quat_valid_ = false;
+    }
+
     // Heading error (target − current), normalised ±180°
     if (has_target_) {
         float err = target_heading_deg_ - heading_deg_;
@@ -278,6 +302,7 @@ bool BNO055Sensor::read()
     if (readRegs(addr_, BNO055_LIA_DATA_X_LSB, buf, 6)) {
         linear_accel_x_ = (int16_t)((buf[1] << 8) | buf[0]) / 100.0f;
         linear_accel_y_ = (int16_t)((buf[3] << 8) | buf[2]) / 100.0f;
+        linear_accel_z_ = (int16_t)((buf[5] << 8) | buf[4]) / 100.0f;
     }
 
     // ── Gyroscope (6 bytes: X, Y, Z angular velocity in °/s, LSB = 1/16) ──
@@ -327,14 +352,16 @@ void BNO055Sensor::printTelemetry() const
                   "\"pitch\":%.2f,"
                   "\"heading_error\":%.2f,"
                   "\"linear_accel_x\":%.2f,"
-                  "\"linear_accel_y\":%.2f,"
+                  "\"linear_accel_y\":%.2f,\"linear_accel_z\":%.2f,"
+                  "\"q\":[%.5f,%.5f,%.5f,%.5f],\"quat_valid\":%s,"
                   "\"gravity_x\":%.2f,\"gravity_y\":%.2f,\"gravity_z\":%.2f,"
                   "\"gyro_x\":%.2f,\"gyro_y\":%.2f,\"gyro_z\":%.2f,"
                   "\"temp\":%d,"
                   "\"cal\":{\"sys\":%u,\"gyro\":%u,\"accel\":%u,\"mag\":%u}"
                   "}}\n",
                   heading_deg_, roll_deg_, pitch_deg_, heading_error_deg_,
-                  linear_accel_x_, linear_accel_y_,
+                  linear_accel_x_, linear_accel_y_, linear_accel_z_,
+                  quat_w_, quat_x_, quat_y_, quat_z_, quat_valid_ ? "true" : "false",
                   gravity_x_, gravity_y_, gravity_z_,
                   gyro_x_dps_, gyro_y_dps_, gyro_z_dps_,
                   temperature_,
@@ -349,6 +376,9 @@ void BNO055Sensor::printReadable() const
     Serial.printf("Heading Error: (%.2f deg)\n", heading_error_deg_);
     Serial.printf("Linear Accel X: (%.2f m/s2)\n", linear_accel_x_);
     Serial.printf("Linear Accel Y: (%.2f m/s2)\n", linear_accel_y_);
+    Serial.printf("Linear Accel Z: (%.2f m/s2)\n", linear_accel_z_);
+    Serial.printf("Quaternion (W,X,Y,Z): (%.5f, %.5f, %.5f, %.5f) valid=%s\n",
+        quat_w_, quat_x_, quat_y_, quat_z_, quat_valid_ ? "yes" : "no");
     Serial.printf("Gravity (X,Y,Z): (%.2f, %.2f, %.2f) m/s2\n",
         gravity_x_, gravity_y_, gravity_z_);
     Serial.printf("Gyro (X,Y,Z): (%.2f, %.2f, %.2f) deg/s\n",

@@ -37,6 +37,14 @@ public:
     // --- Linear acceleration (gravity-compensated, m/s²) ---
     float getLinearAccelX()  const { return linear_accel_x_; }
     float getLinearAccelY()  const { return linear_accel_y_; }
+    float getLinearAccelZ()  const { return linear_accel_z_; }
+
+    // --- Native BNO055 fusion quaternion (w, x, y, z; unit length) ---
+    float getQuatW() const { return quat_w_; }
+    float getQuatX() const { return quat_x_; }
+    float getQuatY() const { return quat_y_; }
+    float getQuatZ() const { return quat_z_; }
+    bool hasValidQuaternion() const { return quat_valid_; }
 
     // --- Gyroscope (angular velocity, °/s) ---
     float getGyroX()         const { return gyro_x_dps_; }
@@ -85,6 +93,9 @@ private:
     float pitch_deg_;
     float linear_accel_x_;      // m/s²
     float linear_accel_y_;      // m/s²
+    float linear_accel_z_;      // m/s²
+    float quat_w_, quat_x_, quat_y_, quat_z_;
+    bool quat_valid_;
     float gravity_x_;           // m/s²
     float gravity_y_;           // m/s²
     float gravity_z_;           // m/s²

@@ -7,7 +7,8 @@
  * a clean body-frame acceleration in m/s^2.  We need three transforms to turn
  * that into a world-frame path:
  *
- *   1. q-rotate: body-frame accel -> earth-frame accel (using inverse quaternion)
+ *   1. q-rotate: body-frame accel -> earth-frame accel using the native
+ *      body-to-world quaternion
  *   2. subtract gravity (BNO055 does this for us, but keep the hook for raw accel)
  *   3. integrate: accel -> velocity -> position (with ZUPT correction)
  *
@@ -19,6 +20,18 @@
 
 export type Quaternion = [number, number, number, number]; // w, x, y, z
 export type Vec3 = [number, number, number];
+
+export function normalizeQuat(q: Quaternion): Quaternion | null {
+  if (!q.every(Number.isFinite)) return null;
+  const norm = Math.hypot(q[0], q[1], q[2], q[3]);
+  if (!Number.isFinite(norm) || norm < 1e-6) return null;
+  return [q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm];
+}
+
+/** Rotate a body-frame vector into the world frame. */
+export function bodyToWorld(qBodyToWorld: Quaternion, v: Vec3): Vec3 {
+  return quatRotateVec(qBodyToWorld, v);
+}
 
 /** Quaternion multiplication q1 * q2 (Hamilton product). */
 export function quatMul(a: Quaternion, b: Quaternion): Quaternion {
@@ -113,6 +126,42 @@ export function isStationary(
   const gyroMag = Math.hypot(gyro[0], gyro[1], gyro[2]);
   const accelMag = Math.hypot(accel[0], accel[1], accel[2]);
   return gyroMag < gyroThreshDegPerSec && accelMag < accelThreshMs2;
+}
+
+export interface StationaryDetector {
+  update(accel: Vec3, gyro: Vec3, dt: number): boolean;
+  reset(): void;
+}
+
+/** Debounces ZUPT transitions so sensor noise cannot flap moving/stopped state. */
+export function makeStationaryDetector(
+  enterDwellSec = 0.35,
+  exitDwellSec = 0.1,
+): StationaryDetector {
+  let stationary = false;
+  let dwellSec = 0;
+
+  return {
+    update(accel, gyro, dt) {
+      const instant = isStationary(
+        accel,
+        gyro,
+        stationary ? 4.0 : 3.0,
+        stationary ? 0.5 : 0.4,
+      );
+      dwellSec = instant === stationary ? 0 : dwellSec + Math.max(0, dt);
+      const required = stationary ? exitDwellSec : enterDwellSec;
+      if (instant !== stationary && dwellSec >= required) {
+        stationary = instant;
+        dwellSec = 0;
+      }
+      return stationary;
+    },
+    reset() {
+      stationary = false;
+      dwellSec = 0;
+    },
+  };
 }
 
 /**
