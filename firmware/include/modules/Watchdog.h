@@ -33,8 +33,10 @@ public:
     // Call when manual/web control is activated
     void setManualActive(bool active);
 
-    // Force a specific mode (used by ASCII 'A' command to enter AUTO_ROAM on demand)
-    void setMode(SystemMode m);
+    // Set controller mode. Only an explicit operator standalone-roam request
+    // may keep AUTO_ROAM alive without a Pi heartbeat; docking AUTO_ROAM must
+    // fail closed when the serial link disappears.
+    void setMode(SystemMode m, bool standalone_auto_roam = false);
 
     [[nodiscard]] SystemMode getMode() const { return mode_; }
     [[nodiscard]] bool hasHeartbeat() const { return heartbeat_seen_; }

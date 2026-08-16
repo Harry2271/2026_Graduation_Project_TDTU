@@ -82,6 +82,7 @@ public:
         DOCK_ERROR_E_STOP = 8,
         DOCK_ERROR_LEAVE_TIMEOUT = 9,
         DOCK_ERROR_RETRACT_TIMEOUT = 10,
+        DOCK_ERROR_PI_LINK_LOST = 11,
     };
 
     /// Start the full docking+unloading sequence (triggered by Pi via CMD_BEGIN_DOCK).

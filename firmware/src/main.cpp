@@ -159,10 +159,9 @@ void setupHardware()
     Serial.println("  ESP32-S3 Mecanum Controller — booting...");
     Serial.println("=====================================================");
 
-    // Pi 5 <-> ESP32-S3 link is now hardware UART0 on GPIO43/44.
-    // Serial.begin() above already started UART0 at 115200 baud.
-    // Pi reads this stream as /dev/ttyACM0 or /dev/ttyUSB0 on Linux.
-    Serial.println("  [OK]   PiSerial = UART0 GPIO43(TX)/GPIO44(RX) @ 115200");
+    // Production transport: native USB CDC (CONFIG_ARDUINO_USB_CDC_ON_BOOT=1).
+    // GPIO43/44 are not part of the Pi link in this build.
+    Serial.println("  [OK]   PiSerial = native USB CDC @ 115200 logical baud");
     PiSerial.setTimeout(1);
 
     pinMode(2, OUTPUT);
@@ -1592,10 +1591,22 @@ void loop()
 
         SystemMode mode = g_modeManager.getMode();
 
+        // SAFE is fail-closed even if an old direct/raw command remains in
+        // memory after Pi-link loss. E-stop is an additional hardware latch.
+        if (g_e_stop_active || mode == MODE_SAFE) {
+            for (int i = 0; i < MOTOR_COUNT; i++) {
+                g_motors[i].coast();
+                g_ramped_speeds[i] = 0;
+                g_target_speeds[i] = 0;
+                g_raw_test_speeds[i] = 0;
+                g_kick_ticks[i] = 0;
+            }
+            g_raw_test_mode = false;
+            g_individual_mode = false;
         // Raw bench-test mode always takes priority over the autonomous
         // output path. Previously AUTO_ROAM bypassed applySpeeds(), so an
         // O<id> <pwm> command was silently overwritten by sensor autonomy.
-        if (g_raw_test_mode) {
+        } else if (g_raw_test_mode) {
             static uint32_t last_raw_beat = 0;
             if (millis() - last_raw_beat >= 500) {
                 last_raw_beat = millis();
