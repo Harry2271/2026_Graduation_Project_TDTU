@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { Activity, Cpu, Power, Radar, Wifi, WifiOff, Brain, Battery } from 'lucide-react';
 import { useRobotTelemetry } from './RobotTelemetryProvider';
 import { useGetRobotHealthQuery } from '@/store/services/inventoryApi';
@@ -108,7 +109,11 @@ function PanelHeader() {
 // ── Brain section (Phase 5) ──────────────────────────────────────────
 
 function BrainSection() {
-  const { data: health } = useGetRobotHealthQuery(undefined, { pollingInterval: 10_000 });
+  const pathname = usePathname();
+  const { data: health } = useGetRobotHealthQuery(undefined, {
+    pollingInterval: 10_000,
+    skip: pathname === '/login' || pathname === '/register',
+  });
   const { power } = useRobotTelemetry();
   const connected = health?.connected ?? false;
   const jobId = health?.runningJobId;

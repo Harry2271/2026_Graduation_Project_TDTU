@@ -136,6 +136,7 @@ export default function MapPage() {
   const [isHeadingUp, setIsHeadingUp] = useState(true);
   const [isRobotLock, setIsRobotLock] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [isZoomMenuOpen, setIsZoomMenuOpen] = useState(false);
   const [lidarAxis, setLidarAxis] = useState(1);
 
   const mapDataRef = useRef<MapData | null>(null);
@@ -161,6 +162,8 @@ export default function MapPage() {
   const obstacleOffscreenRef = useRef<HTMLCanvasElement | null>(null);
   const obstacleDataRef = useRef<MapData | null>(null);
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const zoomDockRef = useRef<HTMLDivElement | null>(null);
+  const zoomTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [scanCount, setScanCount] = useState(0);
 
   // ── Robot control state ────────────────────────────────────────────
@@ -184,6 +187,29 @@ export default function MapPage() {
   useEffect(() => { headingUpRef.current = isHeadingUp; }, [isHeadingUp]);
   useEffect(() => { robotLockRef.current = isRobotLock; }, [isRobotLock]);
   useEffect(() => { lidarAxisRef.current = lidarAxis; }, [lidarAxis]);
+
+  useEffect(() => {
+    if (!isZoomMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!zoomDockRef.current?.contains(event.target as Node)) {
+        setIsZoomMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsZoomMenuOpen(false);
+        zoomTriggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isZoomMenuOpen]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1491,26 +1517,91 @@ export default function MapPage() {
             </Tooltip>
           </div>
 
-          {/* Bottom-right: Zoom controls */}
+          {/* Bottom-right: Compact zoom controls */}
           <div
-            className="absolute bottom-4 right-4 z-10 flex items-center gap-2 p-2 rounded-xl"
+            ref={zoomDockRef}
+            className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 p-1.5 rounded-xl"
             style={{
               background: 'rgba(8,11,16,0.88)',
               backdropFilter: 'blur(16px)',
               border: '1px solid var(--border-mid)',
             }}
           >
-            <Tooltip title="Thu nhỏ">
+            {isZoomMenuOpen && (
+              <div
+                id="map-zoom-options"
+                role="group"
+                aria-label="Tùy chọn mức thu phóng"
+                className="absolute bottom-full right-0 mb-2 w-44 rounded-xl p-2.5 shadow-2xl"
+                style={{
+                  background: 'rgba(8,11,16,0.96)',
+                  backdropFilter: 'blur(16px)',
+                  border: '1px solid var(--border-mid)',
+                }}
+              >
+                <p
+                  className="mb-2 px-1 font-mono text-[10px] font-bold uppercase"
+                  style={{ color: 'var(--text-muted)', letterSpacing: '0.08em' }}
+                >
+                  Mức thu phóng
+                </p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[0.5, 1, 2, 4].map(z => (
+                    <button
+                      key={z}
+                      type="button"
+                      aria-label={`Đặt mức thu phóng ${z} lần`}
+                      onClick={() => {
+                        setZoom(z);
+                        setIsZoomMenuOpen(false);
+                      }}
+                      className="min-h-10 rounded-lg px-2 font-mono text-[11px] font-bold transition-all cursor-pointer"
+                      style={
+                        zoom === z
+                          ? { background: 'var(--accent)', color: '#060910', border: '1px solid var(--accent)' }
+                          : { background: 'var(--bg-raised)', color: 'var(--text-muted)', border: '1px solid var(--border-dim)' }
+                      }
+                    >
+                      {z}×
+                    </button>
+                  ))}
+                </div>
+                <div className="my-2 h-px" style={{ background: 'var(--border-dim)' }} />
+                <button
+                  type="button"
+                  aria-label="Đặt lại khung nhìn"
+                  onClick={() => {
+                    resetView();
+                    setIsZoomMenuOpen(false);
+                  }}
+                  className="flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-2 font-mono text-[10px] font-bold transition-all cursor-pointer"
+                  style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-mid)', color: 'var(--text-secondary)' }}
+                >
+                  <Maximize2 size={14} />
+                  Đặt lại khung nhìn
+                </button>
+              </div>
+            )}
+
+            <Tooltip title="Thu nhỏ bản đồ">
               <button
+                type="button"
+                aria-label="Thu nhỏ bản đồ"
                 onClick={handleZoomOut}
-                className="w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer"
+                className="h-10 w-10 rounded-lg flex items-center justify-center transition-all cursor-pointer"
                 style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-mid)', color: 'var(--text-secondary)' }}
               >
                 <ZoomOut size={16} />
               </button>
             </Tooltip>
-            <div
-              className="px-2 py-1 rounded-lg text-center min-w-13"
+            <button
+              ref={zoomTriggerRef}
+              type="button"
+              aria-label={isZoomMenuOpen ? 'Đóng tùy chọn mức thu phóng' : 'Mở tùy chọn mức thu phóng'}
+              aria-expanded={isZoomMenuOpen}
+              aria-controls="map-zoom-options"
+              onClick={() => setIsZoomMenuOpen(v => !v)}
+              className="h-10 min-w-14 rounded-lg px-2 text-center transition-all cursor-pointer"
               style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-dim)' }}
             >
               <span
@@ -1519,40 +1610,16 @@ export default function MapPage() {
               >
                 {Math.round(zoom * 100)}%
               </span>
-            </div>
-            <Tooltip title="Phóng to">
+            </button>
+            <Tooltip title="Phóng to bản đồ">
               <button
+                type="button"
+                aria-label="Phóng to bản đồ"
                 onClick={handleZoomIn}
-                className="w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer"
+                className="h-10 w-10 rounded-lg flex items-center justify-center transition-all cursor-pointer"
                 style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-mid)', color: 'var(--text-secondary)' }}
               >
                 <ZoomIn size={16} />
-              </button>
-            </Tooltip>
-            <div className="w-px h-6 mx-0.5" style={{ background: 'var(--border-dim)' }} />
-            {/* Zoom presets */}
-            {[0.5, 1, 2, 4].map(z => (
-              <button
-                key={z}
-                onClick={() => setZoom(z)}
-                className="px-2 py-1 rounded-lg font-mono text-[10px] font-bold cursor-pointer transition-all"
-                style={
-                  zoom === z
-                    ? { background: 'var(--accent)', color: '#060910', border: '1px solid var(--accent)' }
-                    : { background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border-dim)' }
-                }
-              >
-                {z}×
-              </button>
-            ))}
-            <div className="w-px h-6 mx-0.5" style={{ background: 'var(--border-dim)' }} />
-            <Tooltip title="Đặt lại tầm nhìn">
-              <button
-                onClick={resetView}
-                className="w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer"
-                style={{ background: 'var(--bg-raised)', border: '1px solid var(--border-mid)', color: 'var(--text-secondary)' }}
-              >
-                <Maximize2 size={16} />
               </button>
             </Tooltip>
           </div>
