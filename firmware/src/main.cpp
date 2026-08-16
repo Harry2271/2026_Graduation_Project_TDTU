@@ -41,6 +41,7 @@ MecanumDrive  g_mecanum;
 CommandParser g_parser;
 ModeManager   g_modeManager;
 BNO055Sensor  g_imu;
+ImuSafetyEvaluator g_imu_safety;
 INA226Sensor  g_power;
 IRProximitySensor g_ir;
 SharpFrontSensor g_sharp;
@@ -503,6 +504,7 @@ void applySpeeds()
 void emitFirmwareError(const char* code, const char* message,
                        const char* severity = "error");
 void emitCommandAck(const char* command, const char* status = "accepted");
+void emitImuSafetyEvent(ImuSafetyEvaluator::Event event);
 
 void handleForward(int speed)
 {
@@ -648,6 +650,31 @@ void emitCommandAck(const char* command, const char* status)
     size_t n = JsonStatus::emitAck(g_json_buf, sizeof(g_json_buf),
                                    command, status);
     PiSerial.write(g_json_buf, n);
+}
+
+void emitImuSafetyEvent(ImuSafetyEvaluator::Event event)
+{
+    switch (event) {
+        case ImuSafetyEvaluator::EVENT_TILT_WARNING_ENTERED:
+            emitFirmwareError("IMU_TILT_WARNING",
+                              "BNO055 tilt warning observed; enforcement disabled",
+                              "warning");
+            break;
+        case ImuSafetyEvaluator::EVENT_TILT_OBSERVED:
+            emitFirmwareError("IMU_TILT_OBSERVED",
+                              "BNO055 sustained tilt observed; enforcement disabled",
+                              "warning");
+            break;
+        case ImuSafetyEvaluator::EVENT_SHOCK_OBSERVED:
+            emitFirmwareError("IMU_SHOCK_OBSERVED",
+                              "BNO055 confirmed shock observed; enforcement disabled",
+                              "warning");
+            break;
+        case ImuSafetyEvaluator::EVENT_TILT_WARNING_CLEARED:
+        case ImuSafetyEvaluator::EVENT_NONE:
+        default:
+            break;
+    }
 }
 
 void handleUnloadState()
@@ -1077,8 +1104,20 @@ static void readSensorsSlow(uint32_t now_ms)
         if (g_imu.isOperational()) {
             if (g_imu.read()) {
                 g_health.reportOk(MOD_IMU, now_ms);
+                const bool heading_calibrated =
+                    g_imu.getCalSys() >= 2 && g_imu.getCalMag() >= 2;
+                const ImuSafetyEvaluator::Event event = g_imu_safety.update(
+                    now_ms,
+                    g_imu.getRoll(), g_imu.getPitch(),
+                    g_imu.getLinearAccelX(), g_imu.getLinearAccelY(),
+                    g_imu.getLinearAccelZ(),
+                    g_imu.getGyroX(), g_imu.getGyroY(), g_imu.getGyroZ(),
+                    g_imu.hasValidQuaternion(), heading_calibrated);
+                emitImuSafetyEvent(event);
             } else {
                 g_health.reportError(MOD_IMU, 1, now_ms);
+                g_imu_safety.update(now_ms, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                    0.0f, 0.0f, 0.0f, false, false);
             }
         }
     }
@@ -1205,7 +1244,8 @@ void publishSensors(uint32_t now_ms)
     if (now_ms - last_imu_ms >= 50) {
         last_imu_ms = now_ms;
         if (g_imu.isOperational()) {
-            size_t n = JsonStatus::emitIMU(g_json_buf, sizeof(g_json_buf), &g_imu);
+            size_t n = JsonStatus::emitIMU(g_json_buf, sizeof(g_json_buf),
+                                           &g_imu, &g_imu_safety);
             PiSerial.write(g_json_buf, n);
             yield();
         }

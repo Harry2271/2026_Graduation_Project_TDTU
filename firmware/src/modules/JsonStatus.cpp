@@ -6,6 +6,7 @@
 #include "Encoder.h"
 #include "PIDController.h"
 #include "BNO055Sensor.h"
+#include "ImuSafetyEvaluator.h"
 #include "INA226Sensor.h"
 #include "IRProximitySensor.h"
 #include "SharpFrontSensor.h"
@@ -257,7 +258,8 @@ size_t JsonStatus::emitObstacle(char* buf, size_t bufsize,
 //   temp_c: temperature
 //   cal:    {sys, gyro, accel, mag}  0–3 each
 // =======================================================================
-size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
+size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu,
+                           const ImuSafetyEvaluator* safety)
 {
     JsonDocument doc;
     doc["type"] = 134;
@@ -295,6 +297,26 @@ size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
         cal["mag"]   = imu->getCalMag();
     } else {
         data["ok"] = false;
+    }
+
+    // Keep this nested object stable even when the sensor is unavailable so
+    // Pi consumers can distinguish stale/invalid data from a missing field.
+    if (safety) {
+        const ImuSafetyEvaluator::Snapshot& s = safety->snapshot();
+        JsonObject safety_obj = data["safety"].to<JsonObject>();
+        safety_obj["config_rev"] = IMU_SAFETY_CONFIG_REV;
+        safety_obj["enforcement"] = safety->enforcementEnabled();
+        safety_obj["sample_valid"] = s.sample_valid && imu->isOperational();
+        safety_obj["heading_calibrated"] = s.heading_calibrated;
+        safety_obj["tilt_deg"] = s.tilt_deg;
+        safety_obj["linear_accel_mps2"] = s.linear_accel_mps2;
+        safety_obj["gyro_dps"] = s.gyro_dps;
+        safety_obj["tilt_warning"] = s.tilt_warning;
+        safety_obj["tilt_observed"] = s.tilt_observed;
+        safety_obj["shock_candidate"] = s.shock_candidate;
+        safety_obj["shock_observed"] = s.shock_observed;
+        safety_obj["observed_at_ms"] = s.observed_at_ms;
+        safety_obj["event"] = safety->eventName(s.event);
     }
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }

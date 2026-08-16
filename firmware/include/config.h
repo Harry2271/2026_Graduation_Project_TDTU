@@ -203,6 +203,21 @@ enum MotorState {
 #define I2C_EXTERNAL_PULLUP_OHMS    4700 // Required on SDA/SCL for stable shared bus
 #define IMU_PUBLISH_MS         50       // Publish heading at 20 Hz
 
+// BNO055 attitude/impact observation thresholds. @bench-tune: record normal
+// braking, strafing, payload, unload, ramp and controlled-impact data before
+// enabling enforcement. Observation mode never changes motor/cylinder output.
+#define IMU_SAFETY_ENFORCEMENT_ENABLED false
+#define IMU_SAFETY_CONFIG_REV          1
+#define IMU_TILT_WARNING_DEG           10.0f
+#define IMU_TILT_WARNING_DWELL_MS      250
+#define IMU_TILT_OBSERVE_DEG           18.0f
+#define IMU_TILT_OBSERVE_DWELL_MS      500
+#define IMU_TILT_CLEAR_DEG             8.0f
+#define IMU_TILT_CLEAR_DWELL_MS        2000
+#define IMU_SHOCK_CANDIDATE_MPS2       6.0f
+#define IMU_SHOCK_PEAK_MPS2            8.0f
+#define IMU_SHOCK_CONFIRM_WINDOW_MS    150
+
 // ============================================================
 // INA226 Power Monitor (CJMCU-226, I2C address 0x40)
 // ============================================================

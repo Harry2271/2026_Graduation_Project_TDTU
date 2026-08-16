@@ -7,6 +7,7 @@
 class BTS7960Driver;
 class Encoder;
 class BNO055Sensor;
+class ImuSafetyEvaluator;
 class INA226Sensor;
 class IRProximitySensor;
 class SharpFrontSensor;
@@ -70,7 +71,8 @@ public:
         IRProximitySensor* ir, SharpFrontSensor* sharp);
 
     /// Emit IMU telemetry (type 134)
-    static size_t emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu);
+    static size_t emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu,
+        const ImuSafetyEvaluator* safety = nullptr);
 
     /// Emit power telemetry (type 133)
     static size_t emitPower(char* buf, size_t bufsize, INA226Sensor* power);
