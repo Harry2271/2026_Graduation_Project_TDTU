@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
-import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power, Keyboard, Rocket, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Cpu, ArrowUp, ArrowDown, Square, OctagonAlert, Route, CircleStop, Radio } from 'lucide-react';
+import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power } from 'lucide-react';
 import { Button, App, Tooltip } from 'antd';
+import { FloatingControlDock } from '@/components/FloatingControlDock';
 
 const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL || 'wss://map.nguyen-robot.io.vn';
@@ -171,6 +172,7 @@ export default function MapPage() {
   const [controlModeStatus, setControlModeStatus] = useState<ControlModeStatus>({});
   const [demoStatus, setDemoStatus] = useState<DemoStatus>({});
   const [esp32Status, setEsp32Status] = useState<Esp32Status | null>(null);
+  const [isKeyboardTeleopAvailable, setIsKeyboardTeleopAvailable] = useState(true);
   const [ackLog, setAckLog] = useState<{ ts: number; type: string; data: unknown }[]>([]);
   const [robotErrors, setRobotErrors] = useState<Array<{ ts: number; severity: string; code: string; message: string }>>([]);
   const pendingCommandLabelsRef = useRef<Map<string, string>>(new Map());
@@ -896,7 +898,7 @@ export default function MapPage() {
   }, [modal, sendEsp32]);
 
   const sendKeyboardMotion = useCallback(() => {
-    if (controlMode !== 'MANUAL') return;
+    if (controlMode !== 'MANUAL' || !isKeyboardTeleopAvailable) return;
     const keys = keysPressed.current;
     const speed = 120;
     const vx = (keys.has('w') || keys.has('arrowup') ? speed : 0) + (keys.has('s') || keys.has('arrowdown') ? -speed : 0);
@@ -905,7 +907,7 @@ export default function MapPage() {
     const motion = { vx, vy, omega };
     teleopRef.current = motion;
     sendTeleop(vx, vy, omega);
-  }, [controlMode, sendTeleop]);
+  }, [controlMode, isKeyboardTeleopAvailable, sendTeleop]);
 
   const stopManualMotion = useCallback((key?: string) => {
     if (key) {
@@ -919,24 +921,33 @@ export default function MapPage() {
   }, [sendKeyboardMotion, sendTeleop]);
 
   const startManualMotion = useCallback((key: string, event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (controlMode !== 'MANUAL') return;
+    if (controlMode !== 'MANUAL' || !isKeyboardTeleopAvailable) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     keysPressed.current.add(key);
     sendKeyboardMotion();
-  }, [controlMode, sendKeyboardMotion]);
+  }, [controlMode, isKeyboardTeleopAvailable, sendKeyboardMotion]);
+
+  const handleKeyboardTeleopAvailabilityChange = useCallback((isAvailable: boolean) => {
+    setIsKeyboardTeleopAvailable(isAvailable);
+    if (!isAvailable) {
+      keysPressed.current.clear();
+      teleopRef.current = null;
+      sendTeleop(0, 0, 0);
+    }
+  }, [sendTeleop]);
 
   useEffect(() => {
     const controlledKeys = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
     const onKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if (!controlledKeys.has(key) || controlMode !== 'MANUAL') return;
+      if (!controlledKeys.has(key) || controlMode !== 'MANUAL' || !isKeyboardTeleopAvailable) return;
       event.preventDefault();
       keysPressed.current.add(key);
       sendKeyboardMotion();
     };
     const onKeyUp = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if (!controlledKeys.has(key)) return;
+      if (!controlledKeys.has(key) || !isKeyboardTeleopAvailable) return;
       event.preventDefault();
       keysPressed.current.delete(key);
       sendKeyboardMotion();
@@ -954,7 +965,7 @@ export default function MapPage() {
     window.addEventListener('blur', stopOnBlur);
     document.addEventListener('visibilitychange', stopOnVisibilityChange);
     teleopSendTimerRef.current = setInterval(() => {
-      if (controlMode === 'MANUAL' && teleopRef.current) sendKeyboardMotion();
+      if (controlMode === 'MANUAL' && isKeyboardTeleopAvailable && teleopRef.current) sendKeyboardMotion();
     }, 50);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
@@ -965,7 +976,7 @@ export default function MapPage() {
       teleopSendTimerRef.current = null;
       stopOnBlur();
     };
-  }, [controlMode, sendKeyboardMotion, sendTeleop]);
+  }, [controlMode, isKeyboardTeleopAvailable, sendKeyboardMotion, sendTeleop]);
 
   const handleModeSwitch = useCallback((mode: 'AUTO' | 'MANUAL') => {
     keysPressed.current.clear();
@@ -1231,70 +1242,22 @@ export default function MapPage() {
         </div>
       </div>
 
-      {/* ─── Robot Control Panel ─────────────────────────────────────────── */}
-      <section
-        className="relative z-10 border-t px-4 py-4 md:px-8"
-        style={{ background: 'rgba(8,11,16,0.96)', borderColor: 'var(--border-dim)' }}
-        aria-label="Bảng điều khiển robot"
-      >
-        <div className="mx-auto grid max-w-[1540px] gap-3 xl:grid-cols-[minmax(330px,1.08fr)_minmax(300px,1fr)_minmax(280px,0.82fr)]">
-          <div className="glass flex flex-col gap-3 rounded-lg p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-label">Điều khiển trực tiếp</p>
-                <p className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>Giữ nút để di chuyển</p>
-              </div>
-              <div className="flex rounded-lg p-1" style={{ border: '1px solid var(--border-mid)' }} role="group" aria-label="Chế độ điều khiển">
-                <button type="button" onClick={() => handleModeSwitch('MANUAL')} aria-pressed={controlMode === 'MANUAL'} className="flex min-h-11 items-center gap-1.5 rounded-md px-3 text-[11px] font-bold transition-colors" style={controlMode === 'MANUAL' ? { background: 'var(--accent-dim)', color: 'var(--accent)', boxShadow: 'inset 0 0 0 1px var(--accent-border)' } : { color: 'var(--text-muted)' }}><Keyboard size={14} />THỦ CÔNG</button>
-                <button type="button" onClick={() => handleModeSwitch('AUTO')} aria-pressed={controlMode === 'AUTO'} className="flex min-h-11 items-center gap-1.5 rounded-md px-3 text-[11px] font-bold transition-colors" style={controlMode === 'AUTO' ? { background: 'var(--success-dim)', color: 'var(--success)', boxShadow: 'inset 0 0 0 1px var(--success-border)' } : { color: 'var(--text-muted)' }}><Rocket size={14} />TỰ ĐỘNG</button>
-              </div>
-            </div>
-            {controlMode === 'MANUAL' ? (
-              <div className="grid grid-cols-[1fr_auto] items-center gap-4">
-                <div className="grid grid-cols-3 gap-1.5" aria-label="Điều khiển hướng">
-                  <div />
-                  <Tooltip title="Tiến, giữ để chạy"><button type="button" aria-label="Di chuyển tiến, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('w', event)} onPointerUp={() => stopManualMotion('w')} onPointerCancel={() => stopManualMotion('w')} onLostPointerCapture={() => stopManualMotion('w')}><ChevronUp size={22} /></button></Tooltip>
-                  <div />
-                  <Tooltip title="Sang trái, giữ để chạy"><button type="button" aria-label="Di chuyển sang trái, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('a', event)} onPointerUp={() => stopManualMotion('a')} onPointerCancel={() => stopManualMotion('a')} onLostPointerCapture={() => stopManualMotion('a')}><ChevronLeft size={22} /></button></Tooltip>
-                  <Tooltip title="Dừng ngay"><button type="button" aria-label="Dừng robot ngay" className="map-motion-stop" onClick={() => { stopManualMotion(); sendEsp32({ cmd: 'stop' }); }}><Square size={17} fill="currentColor" /></button></Tooltip>
-                  <Tooltip title="Sang phải, giữ để chạy"><button type="button" aria-label="Di chuyển sang phải, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('d', event)} onPointerUp={() => stopManualMotion('d')} onPointerCancel={() => stopManualMotion('d')} onLostPointerCapture={() => stopManualMotion('d')}><ChevronRight size={22} /></button></Tooltip>
-                  <div />
-                  <Tooltip title="Lùi, giữ để chạy"><button type="button" aria-label="Di chuyển lùi, giữ để chạy" className="map-motion-button" onPointerDown={(event) => startManualMotion('s', event)} onPointerUp={() => stopManualMotion('s')} onPointerCancel={() => stopManualMotion('s')} onLostPointerCapture={() => stopManualMotion('s')}><ChevronDown size={22} /></button></Tooltip>
-                  <div />
-                </div>
-                <div className="hidden text-right text-[10px] leading-5 md:block" style={{ color: 'var(--text-muted)' }}>W A S D: di chuyển<br />Q / E: xoay<br />Mũi tên: điều hướng</div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {['A', 'B', 'C', 'D'].map((zone) => <button key={zone} type="button" onClick={() => sendDemo(zone)} className="map-auto-button">KHU {zone}</button>)}
-                <button type="button" onClick={() => sendDemo('full')} className="map-route-button"><Route size={16} />LỘ TRÌNH</button>
-                <button type="button" onClick={() => sendDemo('stop')} className="map-auto-stop"><CircleStop size={16} />DỪNG</button>
-              </div>
-            )}
-          </div>
-
-          <div className="glass flex flex-col gap-3 rounded-lg p-3">
-            <div className="flex items-center justify-between gap-2"><div><p className="text-label">Tác vụ khu vực</p><p className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>{controlMode === 'AUTO' ? 'Chọn lộ trình tự động' : 'Chuyển sang Tự động để kích hoạt'}</p></div><Radio size={18} style={{ color: controlMode === 'AUTO' ? 'var(--success)' : 'var(--text-muted)' }} /></div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:hidden">
-              {['A', 'B', 'C', 'D'].map((zone) => <button key={zone} type="button" disabled={controlMode !== 'AUTO'} onClick={() => sendDemo(zone)} className="map-auto-button">KHU {zone}</button>)}
-              <button type="button" disabled={controlMode !== 'AUTO'} onClick={() => sendDemo('full')} className="map-route-button"><Route size={16} />LỘ TRÌNH</button>
-              <button type="button" onClick={() => sendDemo('stop')} className="map-auto-stop"><CircleStop size={16} />DỪNG</button>
-            </div>
-            <div className="grid grid-cols-3 gap-2 border-t pt-3" style={{ borderColor: 'var(--border-dim)' }}>
-              <button type="button" onClick={() => sendCylinder('extend')} className="map-cylinder-button" style={{ color: 'var(--warning)' }}><ArrowUp size={16} />NÂNG</button>
-              <button type="button" onClick={() => sendCylinder('stop')} className="map-cylinder-button" style={{ color: 'var(--text-secondary)' }}><Square size={14} fill="currentColor" />DỪNG</button>
-              <button type="button" onClick={() => sendCylinder('retract')} className="map-cylinder-button" style={{ color: 'var(--accent)' }}><ArrowDown size={16} />HẠ</button>
-            </div>
-          </div>
-
-          <div className="glass flex flex-col gap-3 rounded-lg p-3">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-label">Trạng thái an toàn</p><div className="mt-2 flex items-center gap-2 text-[12px] font-bold" style={{ color: esp32Status?.estop ? 'var(--danger)' : esp32Status ? 'var(--success)' : 'var(--text-muted)' }}><Cpu size={15} />{esp32Status?.estop ? 'E-STOP ĐANG BẬT' : esp32Status?.mode?.toUpperCase() || 'CHỜ TELEMETRY'}</div></div><button type="button" onClick={handleEStop} className="map-estop-button" aria-label="Dừng khẩn cấp"><OctagonAlert size={18} />E-STOP</button></div>
-            <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]" style={{ color: 'var(--text-secondary)' }}><span className="rounded-md px-1.5 py-2" style={{ background: 'rgba(255,255,255,0.035)' }}>TOF<br /><b style={{ color: 'var(--text-primary)' }}>{esp32Status?.st?.tof_mm ?? '--'} mm</b></span><span className="rounded-md px-1.5 py-2" style={{ background: 'rgba(255,255,255,0.035)' }}>XYLANH<br /><b style={{ color: 'var(--text-primary)' }}>{esp32Status?.st?.cyl ?? '--'}</b></span><span className="rounded-md px-1.5 py-2" style={{ background: 'rgba(255,255,255,0.035)' }}>VẬT CẢN<br /><b style={{ color: esp32Status?.st?.obs ? 'var(--warning)' : 'var(--text-primary)' }}>{esp32Status?.st?.obs ? 'CÓ' : 'KHÔNG'}</b></span></div>
-            {(demoStatus.state && demoStatus.state !== 'idle') || controlModeStatus.reason ? <p className="min-h-5 text-[10px] leading-5" style={{ color: 'var(--text-muted)' }}>{demoStatus.state && demoStatus.state !== 'idle' ? `TÁC VỤ: ${demoStatus.action?.toUpperCase() || demoStatus.state.toUpperCase()}` : `${controlMode}: ${controlModeStatus.reason}`}</p> : <p className="min-h-5 text-[10px] leading-5" style={{ color: 'var(--text-muted)' }}>Tín hiệu điều khiển: {isOnline ? 'đã kết nối' : 'đang kết nối lại'}</p>}
-          </div>
-        </div>
-      </section>
-
+      <FloatingControlDock
+        controlMode={controlMode}
+        esp32Status={esp32Status}
+        demoStatus={demoStatus}
+        controlModeStatus={controlModeStatus}
+        isOnline={isOnline}
+        onControlModeChange={handleModeSwitch}
+        onStartManualMotion={startManualMotion}
+        onStopManualMotion={stopManualMotion}
+        onEmergencyStop={handleEStop}
+        onZoneSelect={sendDemo}
+        onRouteStart={() => sendDemo('full')}
+        onAutoStop={() => sendDemo('stop')}
+        onCylinderAction={sendCylinder}
+        onKeyboardTeleopAvailabilityChange={handleKeyboardTeleopAvailabilityChange}
+      />
 
       {/* ─── Robot error banner ──────────────────────────────────────────────── */}
       {robotErrors.length > 0 && (() => {
