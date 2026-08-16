@@ -110,6 +110,7 @@ const char* AutoRoam::getUnloadErrorName() const
         case DOCK_ERROR_E_STOP: return "e_stop";
         case DOCK_ERROR_LEAVE_TIMEOUT: return "leave_timeout";
         case DOCK_ERROR_RETRACT_TIMEOUT: return "retract_timeout";
+        case DOCK_ERROR_PI_LINK_LOST: return "pi_link_lost";
         default: return "unknown";
     }
 }

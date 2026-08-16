@@ -3,10 +3,9 @@
 // ========================================================================
 #pragma once
 
-// Pi 5 <-> ESP32-S3 link uses hardware UART0 on GPIO43/44 (via CH343 bridge).
-// PiSerial = Serial = UART0 (when USB CDC on boot is disabled).  Both debug
-// text and JSON protocol go on the same port; the Pi parser filters
-// non-JSON lines.
+// The production firmware uses native USB CDC. PiSerial aliases Serial, so
+// debug text and JSON protocol share that endpoint; the Pi parser filters
+// non-JSON lines. GPIO43/44 UART is not configured by this build.
 #ifndef PiSerial
 #define PiSerial Serial
 #endif

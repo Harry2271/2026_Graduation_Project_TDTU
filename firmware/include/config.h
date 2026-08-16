@@ -143,10 +143,10 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 // ignores baud — actual throughput is full-speed USB.
 #define PI_UART_BAUD       115200
 
-// Alias: PiSerial goes to the Pi via hardware UART0 (GPIO 43/44).
-// When CONFIG_ARDUINO_USB_CDC_ON_BOOT=0, Serial = UART0.
-// This lets the CH343 bridge (COM8) carry both flash commands and
-// runtime telemetry.  The Pi5 reads this via /dev/ttyACM0 or /dev/ttyUSB0.
+// The production build enables CONFIG_ARDUINO_USB_CDC_ON_BOOT, so PiSerial
+// is the native USB CDC stream exposed by Serial. GPIO 43/44 are not used by
+// this firmware transport. If a future build intentionally disables USB CDC,
+// it must configure and validate a separate HardwareSerial instance instead.
 #ifndef PiSerial
 #define PiSerial Serial
 #endif

@@ -47,6 +47,18 @@ void ModeManager::update(uint32_t now_ms)
     if (curr != prev) {
         Serial.printf("[ModeManager] Mode changed: %s -> %s\n",
             Watchdog::modeName(prev), Watchdog::modeName(curr));
+        if (curr == MODE_SAFE && !watchdog_.isForcedAutoRoam()) {
+            nav_vx_ = nav_vy_ = nav_omega_ = 0;
+            for (int i = 0; i < MOTOR_COUNT; i++) {
+                ramped_speeds_[i] = 0;
+                kick_ticks_[i] = 0;
+            }
+            if (auto_roam_.isUnloading()) {
+                auto_roam_.cancelUnloading(AutoRoam::DOCK_ERROR_PI_LINK_LOST);
+            }
+            obstacle_.clearObstacles(now_ms);
+            Serial.println("[ModeManager] Pi heartbeat lost; motion stopped in SAFE mode");
+        }
         last_mode_ = curr;
     }
 
@@ -78,7 +90,11 @@ void ModeManager::clearEStop(uint32_t now_ms)
     }
     obstacle_.clearObstacles(now_ms);
     auto_roam_.reset();
-    Serial.println("[ModeManager] E-STOP cleared; autonomous output remains stopped");
+    // Clearing the hardware latch must not resume a dock's AUTO_ROAM mode.
+    // A new Pi heartbeat or an explicit operator command is required before
+    // any motion path can become active again.
+    watchdog_.setMode(MODE_SAFE);
+    Serial.println("[ModeManager] E-STOP cleared; waiting in SAFE for a new command");
 }
 
 void ModeManager::finishDock(uint32_t now_ms)
@@ -156,8 +172,8 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
 
         case CMD_FORCE_AUTO_ROAM:
             auto_roam_.reset();
-            watchdog_.setMode(MODE_AUTO_ROAM);
-            Serial.println("[ModeManager] FORCED into AUTO_ROAM");
+            watchdog_.setMode(MODE_AUTO_ROAM, true);
+            Serial.println("[ModeManager] FORCED into standalone AUTO_ROAM");
             break;
 
         case CMD_OBSTACLE_LEFT:
@@ -332,8 +348,6 @@ void ModeManager::applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
                                       PIDController* pids, MecanumDrive* mecanum,
                                       uint32_t now_ms, uint32_t dt_us)
 {
-    (void)now_ms;
-
     if (estop_active_) {
         for (int i = 0; i < MOTOR_COUNT; i++) {
             motors[i].emergencyStop();
@@ -343,6 +357,15 @@ void ModeManager::applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
 
     SystemMode mode = watchdog_.getMode();
     int16_t target_speeds[4];
+
+    if (mode == MODE_SAFE) {
+        for (int i = 0; i < MOTOR_COUNT; i++) {
+            motors[i].coast();
+            ramped_speeds_[i] = 0;
+            kick_ticks_[i] = 0;
+        }
+        return;
+    }
 
     if (mode == MODE_NAV && (nav_vx_ != 0 || nav_vy_ != 0 || nav_omega_ != 0)) {
         mecanum->compute(nav_vx_, nav_vy_, nav_omega_, target_speeds);

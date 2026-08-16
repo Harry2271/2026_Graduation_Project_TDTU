@@ -38,7 +38,7 @@
 1. `rplidar_ros2` — RPLidar driver (apt package `ros-jazzy-rplidar-ros2`), publishes `/scan`
 2. `slam_toolbox` (online_async) — scan-matching, TF, map building
 3. `my_robot_controller/map_manager` — state machine, obstacle awareness zone
-4. `my_robot_controller/esp32_telemetry_node` — opens `/dev/ttyACM0`, forwards ESP32 type-130/131/133/134/140/144/145 frames to ROS topics
+4. `my_robot_controller/esp32_telemetry_node` — opens `/dev/robot-esp32`, forwards ESP32 type-130/131/133/134/140/144/145 frames to ROS topics
 5. `my_robot_controller/web_bridge` — WebSocket server on port 9091 (token auth required)
 6. `my_robot_controller/brain_node` — high-level state machine (EXPLORE, MAPPING_DONE, IDLE, JOB_*, WAREHOUSE_*, E_STOP), drives ESP32 via `esp32_telemetry_node`
 7. `my_robot_controller/odom_node` — odometry fusion (encoders + IMU) published on `/odom`
@@ -292,7 +292,7 @@ Forwarded from `/esp32/power`. Battery state-of-charge is calculated in firmware
 ### `esp32_status` — Raw ESP32 Type-131 Frame (as emitted by firmware)
 
 Forwarded verbatim from `/esp32/status`, which `esp32_telemetry_node.py`
-populates by reading `/dev/ttyACM0` directly. Consumed by the right-side
+populates by reading `/dev/robot-esp32` directly. Consumed by the right-side
 "ESP32" tab in the web UI.
 
 ```json
@@ -355,7 +355,7 @@ ws.send(JSON.stringify({ type: 'cmd', command: 'reset' }));
 | map_manager | `/obstacle_layer` | OccupancyGrid | one-shot | `obstacle_layer.*` |
 | slam_toolbox | TF (`map→base_footprint`) | TransformStamped | ~10 Hz | `pose.*` (via web_bridge TF lookup) |
 | map_manager | `/mapping_status` | String | on change | `status.*`, `mode.*` |
-| ESP32 (`/dev/ttyACM0`) | `/esp32/status`, `/esp32/encoder` | std_msgs/String | ~2 Hz (status), on event (encoder) | `esp32_status.*`, `esp32_encoder.*` |
+| ESP32 (`/dev/robot-esp32`) | `/esp32/status`, `/esp32/encoder` | std_msgs/String | ~2 Hz (status), on event (encoder) | `esp32_status.*`, `esp32_encoder.*` |
 | web_bridge | — | — | 5s | `info.*` |
 
 ---
@@ -400,7 +400,7 @@ Supported commands are `obstacle_front`, `obstacle_front_left`, `obstacle_front_
 
 ## ESP32 Telemetry Node
 
-`esp32_telemetry_node.py` is the **sole owner** of the ESP32 USB CDC serial link (`/dev/ttyACM0`). All other nodes interact with the ESP32 exclusively through this node's ROS topics.
+`esp32_telemetry_node.py` is the **sole owner** of the ESP32 USB CDC serial link (`/dev/robot-esp32`). All other nodes interact with the ESP32 exclusively through this node's ROS topics.
 
 ### ROS topics
 

@@ -1,7 +1,7 @@
 """esp32_telemetry_node — ESP32 serial gateway for the robot stack.
 
-Sits on the Pi 5 and acts as the **sole owner** of the ESP32 UART link
-(`/dev/robot-esp32` or `/dev/ttyACM0`).  This node runs two jobs:
+Sits on the Pi 5 and acts as the **sole owner** of the ESP32 USB CDC link
+(`/dev/robot-esp32`). This node runs two jobs:
 
 1. **Telemetry mirror (read side).** ESP32 runtime frames are republished as
    ROS `std_msgs/String` JSON messages. This includes command ACK/error,

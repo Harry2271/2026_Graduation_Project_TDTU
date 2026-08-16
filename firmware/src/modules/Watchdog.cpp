@@ -30,14 +30,13 @@ void Watchdog::onHeartbeatReceived(uint32_t now_ms)
     last_heartbeat_ms_ = now_ms;
     heartbeat_seen_ = true;
 
-    // Respect forced AUTO_ROAM — don't bounce back to NAV on heartbeat.
-    // The user pressed 'A' explicitly to enter sensor-only mode.
-    if (forced_auto_roam_) return;
+    // Keep an active autonomous dock in AUTO_ROAM while heartbeats continue;
+    // the dock state machine owns the motor output until it reaches terminal
+    // state. Standalone AUTO_ROAM is likewise pinned by forced_auto_roam_.
+    if (mode_ == MODE_AUTO_ROAM) return;
 
-    // Any Pi connection → switch to NAV mode
-    if (mode_ != MODE_NAV) {
-        mode_ = MODE_NAV;
-    }
+    // Any Pi connection → switch to NAV mode.
+    if (mode_ != MODE_NAV) mode_ = MODE_NAV;
 }
 
 SystemMode Watchdog::update(uint32_t now_ms)
@@ -50,39 +49,30 @@ SystemMode Watchdog::update(uint32_t now_ms)
                               : (UINT32_MAX - then + now + 1);
     };
 
-    // First boot: after init delay, enter AUTO_ROAM if no Pi connected yet.
-    // Note: this only fires on a *fresh* boot (heartbeat_seen_ is false
-    // until the first serial command lands). It does NOT help if the user
-    // had a Pi connected, then yanked the cable — that path is handled by
-    // the heartbeat-timeout branch below.
-    if (!heartbeat_seen_ && mode_ == MODE_SAFE && !forced_auto_roam_) {
-        if (elapsedSince(now_ms, startup_ms_) >= AUTO_ROAM_BOOT_DELAY_MS) {
-            mode_ = MODE_AUTO_ROAM;
-        }
-        return mode_;
-    }
-
+    // Boot and Pi-link loss are fail-closed. The chassis may enter sensor-only
+    // roaming only after an explicit standalone request, never merely because
+    // the Pi stopped sending commands.
     if (!heartbeat_seen_) return mode_;
 
-    // Forced AUTO_ROAM never goes back to NAV (user pressed 'A' explicitly).
+    // An explicit operator standalone-roam request remains independent from
+    // Pi link health. Docking uses setMode(MODE_AUTO_ROAM) without this flag.
     if (forced_auto_roam_) {
         mode_ = MODE_AUTO_ROAM;
         return mode_;
     }
 
-    // Heartbeat timeout from NAV → enter AUTO_ROAM (keep driving with sensors).
-    // This is the path that triggers when the user unplugs the UART cable.
-    if (mode_ == MODE_NAV &&
-        elapsedSince(now_ms, last_heartbeat_ms_) >= HEARTBEAT_TIMEOUT_MS) {
-        mode_ = MODE_AUTO_ROAM;
+    if (mode_ == MODE_NAV || mode_ == MODE_AUTO_ROAM) {
+        if (elapsedSince(now_ms, last_heartbeat_ms_) >= HEARTBEAT_TIMEOUT_MS) {
+            mode_ = MODE_SAFE;
+        }
     }
     return mode_;
 }
 
 void Watchdog::onHeartbeatTimeout()
 {
-    if (mode_ == MODE_NAV) {
-        mode_ = MODE_AUTO_ROAM;
+    if (!forced_auto_roam_) {
+        mode_ = MODE_SAFE;
     }
 }
 
@@ -94,14 +84,10 @@ void Watchdog::setManualActive(bool active)
     }
 }
 
-void Watchdog::setMode(SystemMode m)
+void Watchdog::setMode(SystemMode m, bool standalone_auto_roam)
 {
     mode_ = m;
-    if (m == MODE_AUTO_ROAM) {
-        forced_auto_roam_ = true;
-    } else {
-        forced_auto_roam_ = false;
-    }
+    forced_auto_roam_ = (m == MODE_AUTO_ROAM && standalone_auto_roam);
 }
 
 const char* Watchdog::modeName(SystemMode m)

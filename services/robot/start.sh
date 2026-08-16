@@ -10,7 +10,7 @@
 #
 # Environment variables (all optional, defaults shown):
 #   LIDAR_MODEL=a1                  # a1 | a2m8 | ...
-#   ESP32_PORT=/dev/ttyACM0         # ESP32 serial port
+#   ESP32_PORT=/dev/robot-esp32   # ESP32 serial port (stable udev symlink)
 #   CAMERA_DEVICE=/dev/video0       # USB camera device
 #   API_SOCKET_URL=https://api.nguyen-robot.io.vn
 #   ROBOT_BRAIN_TOKEN=...           # shared secret for brain<->API auth
@@ -38,18 +38,30 @@ if ! python3 -c 'import serial_asyncio' 2>/dev/null; then
     sudo apt-get install -y python3-serial-asyncio
 fi
 
-find_lidar_port() {
-    for dev in /dev/ttyUSB* /dev/ttyACM*; do
-        [ -e "$dev" ] && echo "$dev" && return 0
-    done
-    echo "/dev/ttyUSB0"
-}
-LIDAR_PORT=$(find_lidar_port)
-echo "📍 Lidar Port: $LIDAR_PORT"
-sudo chmod 666 "$LIDAR_PORT" 2>/dev/null || echo "⚠️  Warning: Could not chmod $LIDAR_PORT"
+# Do not pick the first ttyUSB/ttyACM device: enumeration order can swap the
+# LiDAR and ESP32 after a reboot. Install config/udev/99-robot-ports.rules
+# first, then use the stable device identities below.
+LIDAR_PORT="${LIDAR_PORT:-/dev/robot-lidar}"
+ESP32_PORT="${ESP32_PORT:-/dev/robot-esp32}"
 
-ESP32_PORT="${ESP32_PORT:-/dev/ttyACM0}"
-sudo chmod 666 "$ESP32_PORT" 2>/dev/null || echo "⚠️  Warning: Could not chmod $ESP32_PORT"
+require_serial_device() {
+    local label=$1
+    local device=$2
+    if [ ! -e "$device" ]; then
+        echo "❌ $label device not found: $device"
+        echo "   Connect the device and install services/robot/tools/install_udev_rules.sh."
+        exit 1
+    fi
+    if [ ! -c "$device" ]; then
+        echo "❌ $label path is not a character device: $device"
+        exit 1
+    fi
+}
+
+require_serial_device "LiDAR" "$LIDAR_PORT"
+require_serial_device "ESP32" "$ESP32_PORT"
+echo "📍 Lidar Port: $LIDAR_PORT"
+echo "📍 ESP32 Port: $ESP32_PORT"
 
 # --- [2] Stop existing PM2 processes (idempotent) ---
 echo "🔄 Stopping existing robot nodes..."

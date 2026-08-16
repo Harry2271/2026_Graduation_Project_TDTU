@@ -9,8 +9,8 @@ The brain only ever talks to the Esp32Bridge Protocol; it never sees
 the concrete implementation.
 
 Two transports are supported:
-  - USB CDC: device appears as /dev/ttyACM0 on the Pi (default for the
-    WeAct ESP32-S3).  Firmware alias: PiSerial = Serial.
+  - USB CDC: device appears as /dev/robot-esp32 on the Pi via the stable
+    udev symlink. Firmware alias: PiSerial = Serial.
   - UART GPIO 43/44: legacy hardware UART.  Only kept for old hardware;
     avoid on Pi 5 because it triggers PL011 DMA "non-idle" hangs.
 
@@ -130,7 +130,7 @@ async def _open_serial(port: str, baudrate: int = 115200):
     Uses pyserial-asyncio's open_serial_connection() under the hood.
 
     Args:
-        port: device path, e.g. '/dev/ttyACM0' (USB CDC) or '/dev/ttyAMA0' (UART).
+        port: device path, e.g. '/dev/robot-esp32' (USB CDC) or '/dev/ttyAMA0' (UART).
         baudrate: baud rate (ignored for USB CDC, kept for clarity).
 
     Returns:
@@ -509,10 +509,9 @@ class RealEsp32Bridge:
         await self._send_line({'cmd': 'e_stop_clear'})
 
     async def heartbeat(self) -> None:
-        # ASCII 'Z' is mapped to CMD_HEARTBEAT by CommandParser.
-        # The JSON {"cmd":"heartbeat"} path has a subtle parsing bug on
-        # ArduinoJson 7.x that silently drops the command, so we use the
-        # ASCII fallback which is reliable.
+        # ASCII 'Z' is mapped to CMD_HEARTBEAT by CommandParser. Keep the
+        # compact fallback on the high-rate watchdog path; JSON heartbeat is
+        # also accepted by current firmware for MirrorBridge compatibility.
         await self._send_line_raw(b'Z\n')
 
     async def cylinder_extend(self) -> None:
@@ -1186,12 +1185,11 @@ async def open_esp32_bridge(
     """Open the ESP32 USB CDC link and return a connected RealEsp32Bridge.
 
     Default port is /dev/robot-esp32 — a stable udev symlink created by
-    services/robot/config/udev/99-robot-ports.rules.  Falls back to
-    /dev/ttyACM0 if the symlink is missing.
+    services/robot/config/udev/99-robot-ports.rules. Production startup
+    scripts require that symlink and fail closed if it is absent, preventing
+    accidental connection to the LiDAR after USB enumeration changes.
 
-    Note: only one of these will exist on a given Pi 5, so you can pass
-    either.  Pass /dev/ttyAMA0 for the legacy GPIO 43/44 UART (NOT
-    recommended on Pi 5 — PL011 DMA bug).
+    Pass an explicit alternate port only for an intentional bench setup.
 
     Remember to set up the callbacks BEFORE calling .connect():
 
