@@ -111,6 +111,7 @@ class Esp32TelemetryNode(Node):
         self._error_pub         = self.create_publisher(String, '/esp32/error', 10)
         self._ir_pub            = self.create_publisher(String, '/esp32/ir', 10)
         self._sharp_pub         = self.create_publisher(String, '/esp32/sharp', 10)
+        self._front_tof_pub     = self.create_publisher(String, '/esp32/front_tof', 10)
         self._tof_pub           = self.create_publisher(String, '/esp32/tof', 10)
         self._cylinder_pub      = self.create_publisher(String, '/esp32/cylinder', 10)
         self._firmware_health_pub = self.create_publisher(String, '/esp32/health', 10)
@@ -210,7 +211,13 @@ class Esp32TelemetryNode(Node):
         self._ir_pub.publish(String(data=json.dumps(data)))
 
     def on_sharp(self, data: dict) -> None:
-        self._sharp_pub.publish(String(data=json.dumps(data)))
+        """Forward type-136 to legacy Sharp and canonical front-ToF topics."""
+        payload = dict(data)
+        payload.setdefault('source', 'front_tof')
+        payload.setdefault('sensor', 'vl53l1x')
+        encoded = json.dumps(payload)
+        self._sharp_pub.publish(String(data=encoded))
+        self._front_tof_pub.publish(String(data=encoded))
 
     def on_tof(self, data: dict) -> None:
         self._tof_pub.publish(String(data=json.dumps(data)))

@@ -132,7 +132,7 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
         } break;
 
         case 'J': case 'j': {
-            out.type = CMD_GET_SHARP;
+            out.type = CMD_GET_FRONT_TOF;
         } break;
 
         case 'P': case 'p': {
@@ -343,8 +343,10 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     else if (strcmp(cmd, "get_ir") == 0) {
         out.type = CMD_GET_IR;
     }
-    else if (strcmp(cmd, "get_sharp") == 0) {
-        out.type = CMD_GET_SHARP;
+    else if (strcmp(cmd, "get_front_tof") == 0 ||
+             strcmp(cmd, "get_sharp") == 0) {
+        // get_sharp remains a protocol alias during the rollout.
+        out.type = CMD_GET_FRONT_TOF;
     }
     else if (strcmp(cmd, "get_tof") == 0) {
         out.type = CMD_GET_TOF;

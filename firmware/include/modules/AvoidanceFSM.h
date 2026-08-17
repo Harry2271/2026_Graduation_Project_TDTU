@@ -3,18 +3,18 @@
 #include <stdint.h>
 
 class IRProximitySensor;
-class SharpFrontSensor;
+class FrontTofSensor;
 
 // =====================================================================
 // AvoidanceFSM — Multi-sensor obstacle avoidance state machine
 //
-// Uses 4 IR proximity sensors (digital) + 1 Sharp front sensor (analog)
+// Uses 4 IR proximity sensors (digital) + 1 Front ToF sensor (analog)
 // + optional BNO055 heading feedback + encoder distance feedback.
 //
 // Decision priority (highest → lowest):
-//   1. Sharp < 15cm → HARD STOP
+//   1. Front ToF < 15cm → HARD STOP
 //   2. IR sensors → evaluate + dodge (strafe/rotate/reverse)
-//   3. Sharp < 60cm → slow down
+//   3. Front ToF < 60cm → slow down
 //   4. No obstacles → normal roaming
 //
 // Encoder-based reverse: tracks wheel encoder pulses to stop after 30cm.
@@ -48,10 +48,10 @@ public:
     void begin();
 
     /// Main tick — call every PID cycle (20ms / 50Hz).
-    /// Reads IR + Sharp sensors, runs state machine, returns motor command.
+    /// Reads IR + Front ToF sensors, runs state machine, returns motor command.
     AvoidanceAction tick(uint32_t now_ms,
                          const IRProximitySensor& ir,
-                         const SharpFrontSensor& sharp,
+                         const FrontTofSensor& front_tof,
                          int16_t nav_vx,
                          int16_t nav_vy,
                          int16_t nav_omega);
@@ -79,8 +79,8 @@ private:
 
     // Decision inputs (latest snapshot)
     uint8_t ir_mask_;
-    bool    sharp_too_close_;
-    bool    sharp_slowing_;
+    bool    front_tof_too_close_;
+    bool    front_tof_slowing_;
 
     // Heading feedback
     float heading_deg_;

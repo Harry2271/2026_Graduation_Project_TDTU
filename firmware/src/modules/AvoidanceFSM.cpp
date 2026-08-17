@@ -1,6 +1,6 @@
 #include "AvoidanceFSM.h"
 #include "IRProximitySensor.h"
-#include "SharpFrontSensor.h"
+#include "FrontTofSensor.h"
 #include "config.h"
 #include <Arduino.h>
 
@@ -80,7 +80,7 @@ uint8_t AvoidanceFSM::irMaskBit(uint8_t pos) {
 
 AvoidanceFSM::AvoidanceFSM()
     : state_(STATE_IDLE), state_enter_ms_(0)
-    , ir_mask_(0), sharp_too_close_(false), sharp_slowing_(false)
+    , ir_mask_(0), front_tof_too_close_(false), front_tof_slowing_(false)
     , heading_deg_(0.0f), rotate_start_heading_(0.0f)
     , rotate_target_heading_(0.0f), rotate_heading_valid_(false)
     , reverse_start_pulse_(0), reverse_pulse_now_(0)
@@ -94,8 +94,8 @@ void AvoidanceFSM::begin()
     state_ = STATE_IDLE;
     state_enter_ms_ = millis();
     ir_mask_ = 0;
-    sharp_too_close_ = false;
-    sharp_slowing_ = false;
+    front_tof_too_close_ = false;
+    front_tof_slowing_ = false;
     heading_deg_ = 0.0f;
     rotate_heading_valid_ = false;
     reverse_start_pulse_ = 0;
@@ -158,8 +158,8 @@ AvoidanceAction AvoidanceFSM::doRoaming(int16_t nav_vx, int16_t nav_vy, int16_t 
 {
     AvoidanceAction a = {nav_vx, nav_vy, nav_omega, false, "roam"};
 
-    // If IR sensors detect anything OR Sharp is slowing us, evaluate
-    if (ir_mask_ != 0 || sharp_slowing_) {
+    // If IR sensors detect anything OR Front ToF is slowing us, evaluate
+    if (ir_mask_ != 0 || front_tof_slowing_) {
         enterState(STATE_EVALUATING, millis());
     }
     return a;
@@ -182,7 +182,7 @@ AvoidanceAction AvoidanceFSM::doStrafing()
     bool rr   = (ir_mask_ & 0x02) != 0;
     bool left = (ir_mask_ & 0x04) != 0;
     bool right= (ir_mask_ & 0x08) != 0;
-    bool front= sharp_slowing_;  // Sharp < 60cm
+    bool front= front_tof_slowing_;  // Front ToF < 60cm
 
     // Rear sensors (RL, RR) matter when reversing.
     // During forward dodge, rear is ignored — robot is moving forward.
@@ -394,7 +394,7 @@ AvoidanceAction AvoidanceFSM::doFrontStop()
     AvoidanceAction a = {0, 0, 0, true, "front_stop"};
     uint32_t now_ms = millis();
 
-    // Hard stop while Sharp < 15cm. After 2s timeout → E-STOP
+    // Hard stop while Front ToF < 15cm. After 2s timeout → E-STOP
     if (getElapsed(now_ms) > FRONT_STOP_TIMEOUT_MS) {
         Serial.println("[AVOID] FRONT_STOP timeout — escalating to E-STOP");
         enterState(STATE_E_STOPPED, now_ms);
@@ -411,7 +411,7 @@ AvoidanceAction AvoidanceFSM::evaluate(uint32_t now_ms)
     bool rear_right = (ir_mask_ & 0x02) != 0;
     bool left       = (ir_mask_ & 0x04) != 0;
     bool right      = (ir_mask_ & 0x08) != 0;
-    bool front      = sharp_slowing_;  // Sharp < 60cm = front obstacle
+    bool front      = front_tof_slowing_;  // Front ToF < 60cm = front obstacle
     bool any_ir     = (ir_mask_ != 0);
     bool any_rear   = (rear_left || rear_right);
 
@@ -430,7 +430,7 @@ AvoidanceAction AvoidanceFSM::evaluate(uint32_t now_ms)
         return a;
     }
 
-    // CASE 2: Sharp slowing only (no IR) → strafe to the clearer side
+    // CASE 2: front-ToF slowing only (no IR) → strafe to the clearer side
     if (front && !any_ir) {
         // The front-only case has no side IR report; use the short bounded
         // strafe first.  A subsequent evaluation can escalate to reverse/
@@ -459,7 +459,7 @@ AvoidanceAction AvoidanceFSM::evaluate(uint32_t now_ms)
 
 AvoidanceAction AvoidanceFSM::tick(uint32_t now_ms,
                                     const IRProximitySensor& ir,
-                                    const SharpFrontSensor& sharp,
+                                    const FrontTofSensor& front_tof,
                                     int16_t nav_vx,
                                     int16_t nav_vy,
                                     int16_t nav_omega)
@@ -472,18 +472,18 @@ AvoidanceAction AvoidanceFSM::tick(uint32_t now_ms,
     //   bit 0 = REAR_LEFT, bit 1 = REAR_RIGHT, bit 2 = LEFT, bit 3 = RIGHT
     ir_mask_ = mask & 0x0F;
 
-    sharp_too_close_ = sharp.isTooClose();   // < 15cm
-    sharp_slowing_   = sharp.isSlowing();     // < 60cm
+    front_tof_too_close_ = front_tof.isTooClose(now_ms);   // < 15cm
+    front_tof_slowing_   = front_tof.isSlowing(now_ms);     // < 60cm
 
-    // ── 2. PRIORITY 1: Sharp too close → HARD STOP ──
-    if (sharp_too_close_) {
+    // ── 2. PRIORITY 1: Front ToF too close → HARD STOP ──
+    if (front_tof_too_close_) {
         if (state_ != STATE_FRONT_STOP) {
             enterState(STATE_FRONT_STOP, now_ms);
         }
         return doFrontStop();
     }
 
-    // ── 3. If Sharp just became clear, exit FRONT_STOP → ROAMING ──
+    // ── 3. If Front ToF just became clear, exit FRONT_STOP → ROAMING ──
     if (state_ == STATE_FRONT_STOP) {
         enterState(STATE_ROAMING, now_ms);
     }
@@ -520,7 +520,7 @@ AvoidanceAction AvoidanceFSM::tick(uint32_t now_ms,
             return doReversing();
 
         case STATE_FRONT_STOP:
-            // Sharp no longer too close (handled in step 3)
+            // Front ToF no longer too close (handled in step 3)
             return doFrontStop();
 
         default:

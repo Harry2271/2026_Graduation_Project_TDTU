@@ -12,7 +12,7 @@ class PIDController;
 class MecanumDrive;
 class BNO055Sensor;
 class IRProximitySensor;
-class SharpFrontSensor;
+class FrontTofSensor;
 class INA226Sensor;
 class VL53L0XSensor;
 class CylinderActuator;
@@ -38,7 +38,7 @@ public:
 
     void attachSensors(BNO055Sensor* imu,
                        IRProximitySensor* ir,
-                       SharpFrontSensor* sharp,
+                       FrontTofSensor* front_tof,
                        INA226Sensor* power,
                        VL53L0XSensor* tof,
                        CylinderActuator* cylinder);

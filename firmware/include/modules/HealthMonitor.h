@@ -24,8 +24,8 @@ enum ModuleId : uint8_t {
     MOD_BATTERY,        // INA226 power monitor
     MOD_E_STOP,         // Emergency stop state
     MOD_IR,             // IR proximity sensors
-    MOD_SHARP,          // Sharp front distance sensor
-    MOD_TOF,            // VL53L0X TOF distance sensor
+    MOD_FRONT_TOF,      // VL53L1X front TOF distance sensor
+    MOD_TOF,            // VL53L0X rear docking distance sensor
     MOD_CYLINDER,       // Cylinder actuator
     MOD_Pi_LINK,        // Heartbeat from Pi
     MOD_I2C_BUS,        // Shared I2C bus health

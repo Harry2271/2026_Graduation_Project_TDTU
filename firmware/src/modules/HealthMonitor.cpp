@@ -26,7 +26,7 @@ static const char* STATE_NAMES[] = {
 
 static const char* MODULE_NAMES[] = {
     "imu", "encoders", "motor_driver", "battery", "e_stop",
-    "ir", "sharp", "tof", "cylinder", "pi_link", "i2c_bus"
+    "ir", "front_tof", "dock_tof", "cylinder", "pi_link", "i2c_bus"
 };
 
 HealthMonitor::HealthMonitor()
@@ -44,7 +44,7 @@ void HealthMonitor::begin()
         2000,  // MOD_BATTERY        — 1 Hz read, 2 cycles
         0,     // MOD_E_STOP         — managed by e_stop flag, not stale
         200,   // MOD_IR             — 50 Hz poll, 10 frames
-        200,   // MOD_SHARP          — 20 Hz poll, 4 frames
+        200,   // MOD_FRONT_TOF          — 20 Hz poll, 4 frames
         200,   // MOD_TOF            — 10 Hz, 2 frames
         500,   // MOD_CYLINDER       — low frequency
         4000,  // MOD_Pi_LINK        — 2× HEARTBEAT_TIMEOUT_MS
@@ -57,7 +57,7 @@ void HealthMonitor::begin()
         true,   // Battery (critical only)
         true,   // E-stop
         false,  // IR
-        false,  // Sharp
+        false,  // Front ToF
         false,  // TOF
         false,  // Cylinder
         false,  // Pi link (degrades, doesn't e-stop)

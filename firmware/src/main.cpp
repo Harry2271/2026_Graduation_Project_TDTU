@@ -4,6 +4,8 @@
 #include <string.h>
 #include <Wire.h>
 #include <esp_task_wdt.h>
+#include <VL53L0X.h>
+#include <VL53L1X.h>
 
 #include "config.h"
 #include "modules.h"
@@ -44,7 +46,7 @@ BNO055Sensor  g_imu;
 ImuSafetyEvaluator g_imu_safety;
 INA226Sensor  g_power;
 IRProximitySensor g_ir;
-SharpFrontSensor g_sharp;
+FrontTofSensor g_front_tof;
 VL53L0XSensor   g_tof;
 CylinderActuator g_cylinder;
 CargoSensor      g_cargo;
@@ -70,11 +72,11 @@ int16_t g_nav_omega  = 0;
 // Per-wheel override (CMD_INDIVIDUAL) — bypasses mecanum when active
 bool g_individual_mode = false;
 
-// Obstacle avoidance state (from IR + Sharp + Pi LiDAR events)
+// Obstacle avoidance state (from IR + front-ToF + Pi LiDAR events)
 ObstacleAvoidance g_obstacle;
 
 // Local hard-stop latch.  Kept separate from the LiDAR dodge state so a
-// Pi move command or CMD_INDIVIDUAL cannot override a physical IR/Sharp
+// Pi move command or CMD_INDIVIDUAL cannot override a physical IR/front-ToF
 // obstacle while the obstacle is present.
 static bool g_local_obstacle_stop = false;
 static uint32_t g_local_clear_since_ms = 0;
@@ -136,6 +138,47 @@ void setupLEDC()
 // Hardware Initialization
 // ========================================================================
 
+static bool sequenceTofAddresses()
+{
+    pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
+    pinMode(VL53L1X_XSHUT_PIN, OUTPUT);
+    digitalWrite(VL53L0X_XSHUT_PIN, LOW);
+    digitalWrite(VL53L1X_XSHUT_PIN, LOW);
+    delay(30);
+
+    VL53L0X rear_probe;
+    rear_probe.setBus(&Wire);
+    rear_probe.setTimeout(200);
+    digitalWrite(VL53L0X_XSHUT_PIN, HIGH);
+    delay(30);
+    if (I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L0X_DEFAULT_I2C_ADDR) != 0) {
+        Serial.println("  [WARN] Rear VL53L0X missing at default 0x29");
+        digitalWrite(VL53L1X_XSHUT_PIN, HIGH);
+        return false;
+    }
+    rear_probe.setAddress(VL53L0X_I2C_ADDR);
+    delay(10);
+
+    VL53L1X front_probe;
+    front_probe.setBus(&Wire);
+    front_probe.setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
+    digitalWrite(VL53L1X_XSHUT_PIN, HIGH);
+    delay(30);
+    if (I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L1X_DEFAULT_I2C_ADDR) != 0) {
+        Serial.println("  [WARN] Front VL53L1X missing at default 0x29");
+        return false;
+    }
+    front_probe.setAddress(VL53L1X_I2C_ADDR);
+    delay(10);
+
+    const bool rear_ok = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L0X_I2C_ADDR) == 0;
+    const bool front_ok = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L1X_I2C_ADDR) == 0;
+    Serial.printf("  [TOF] XSHUT addresses rear=0x%02X (%s), front=0x%02X (%s)\n",
+                  VL53L0X_I2C_ADDR, rear_ok ? "OK" : "FAIL",
+                  VL53L1X_I2C_ADDR, front_ok ? "OK" : "FAIL");
+    return rear_ok && front_ok;
+}
+
 // Helper: log sensor init result with timing
 #define LOG_SENSOR_INIT_RESULT(name, ok_call) \
     do { \
@@ -165,8 +208,10 @@ void setupHardware()
     Serial.println("  [OK]   PiSerial = native USB CDC @ 115200 logical baud");
     PiSerial.setTimeout(1);
 
-    pinMode(2, OUTPUT);
-    digitalWrite(2, LOW);  // LED off — ESP32-S3 WeAct built-in
+    // GPIO2 = CYLINDER_IN1 (L298N extend).  Do NOT pinMode/digitalWrite it
+    // here — that would conflict with CylinderActuator::begin() which also
+    // configures GPIO2 as cylinder control.  No free output GPIO remains on
+    // this pin map for a status LED; see PIN_MAP.md.
 
     // ---- I2C bus (shared: BNO055 + INA226 + VL53L0X) ----
     Serial.printf("  [INIT] I2C bus SDA=GPIO%d SCL=GPIO%d @ %u kHz...\n",
@@ -199,15 +244,17 @@ void setupHardware()
                                      BNO055_I2C_FREQ_HZ);
     if (!i2c_ok) {
         Serial.println("  [FATAL] I2C bus init FAILED — scan + sensors skipped");
+    } else if (!sequenceTofAddresses()) {
+        Serial.println("  [WARN] ToF address sequencing failed — front motion will remain blocked");
     }
 
-    // ---- I2C scan: probe ONLY the 3 known device addresses ----
+    // ---- I2C scan: probe only known device addresses ----
     // A full 0x01-0x7E scan is unsafe on ESP32 when buses may be shared.
     int found = 0;
     if (i2c_ok) {
         Serial.println("  [SCAN] I2C device probe...");
-        static const uint8_t known_addrs[] = {0x28, 0x29, 0x40};
-        static const char*  known_names[]  = {"BNO055", "VL53L0X", "INA226"};
+        static const uint8_t known_addrs[] = {0x28, 0x30, 0x31, 0x40};
+        static const char*  known_names[]  = {"BNO055", "VL53L0X(rear)", "VL53L1X(front)", "INA226"};
         for (size_t k = 0; k < sizeof(known_addrs); k++) {
             int err = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, known_addrs[k]);
             if (err == 0) {
@@ -267,6 +314,7 @@ void setupHardware()
     // would cause avoidable Wire timeouts during boot.
     bool imu_ok = false;
     bool tof_ok = false;
+    bool front_tof_ok = false;
     bool pwr_ok = false;
     if (i2c_ok) {
         // Wire bus is already initialised. Init sensors sequentially without
@@ -277,9 +325,13 @@ void setupHardware()
         imu_ok = g_imu.begin(BNO055_I2C_ADDR);
         Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
 
-        Serial.println("  [INIT] VL53L0X TOF sensor (Pololu)...");
+        Serial.println("  [INIT] VL53L0X rear docking sensor...");
         tof_ok = g_tof.begin();
-        Serial.printf("  [%s] VL53L0X\n", tof_ok ? "OK  " : "WARN");
+        Serial.printf("  [%s] VL53L0X rear\n", tof_ok ? "OK  " : "WARN");
+
+        Serial.println("  [INIT] VL53L1X front TOF400C sensor...");
+        front_tof_ok = g_front_tof.begin();
+        Serial.printf("  [%s] VL53L1X front\n", front_tof_ok ? "OK  " : "WARN");
 
         Serial.println("  [INIT] INA226 power monitor...");
         pwr_ok = g_power.begin(INA226_I2C_ADDR);
@@ -289,15 +341,15 @@ void setupHardware()
     }
 
     // Wire sensors into ModeManager for AUTO_ROAM (Pi-less) operation
-    g_modeManager.attachSensors(&g_imu, &g_ir, &g_sharp, &g_power, &g_tof, &g_cylinder);
+    g_modeManager.attachSensors(&g_imu, &g_ir, &g_front_tof, &g_power, &g_tof, &g_cylinder);
 
     // IR proximity sensors
     g_ir.begin();
     Serial.println("  [OK]   IR proximity sensors");
 
-    // Sharp front distance sensor
-    g_sharp.begin();
-    Serial.println("  [OK]   Sharp front distance sensor");
+    // Front TOF400C was initialized in the shared-I2C init sequence.
+    Serial.printf("  [%s] Front TOF400C distance sensor\n",
+                  g_front_tof.isPresent() ? "OK  " : "WARN");
 
     // ---- Cylinder actuator (12V lift cylinder via L298N) ----
     g_cylinder.begin();
@@ -317,8 +369,8 @@ void setupHardware()
     Serial.printf("  IMU:  %s\n", g_imu.isOperational() ? "BNO055 (heading + accel + gyro)" : "NONE");
     Serial.printf("  PWR:  %s\n", g_power.isOperational() ? "INA226 (V + I + P)" : "NONE");
     Serial.printf("  IR:   %d proximity sensors\n", IR_SENSOR_COUNT);
-    Serial.printf("  SHARP: GP2Y0A21YK0F front (GPIO %u, < %dcm)\n",
-        SHARP_FRONT_PIN, SHARP_FRONT_THRESHOLD_CM);
+    Serial.printf("  FRONT TOF: VL53L1X @ 0x%02X (< %dcm)\n",
+        VL53L1X_I2C_ADDR, VL53L1X_FRONT_THRESHOLD_CM);
     Serial.printf("  Heartbeat timeout: %d ms\n", HEARTBEAT_TIMEOUT_MS);
     Serial.printf("=====================================================\n");
     Serial.printf("\n");
@@ -331,7 +383,7 @@ void computeNavTargets()
 {
     // Apply obstacle avoidance to nav velocity.  Physical local sensors
     // have priority over every Pi command: a direct move/individual command
-    // must not be able to drive through an object while IR/Sharp is active.
+    // must not be able to drive through an object while IR/front-ToF is active.
     int16_t adj_vx    = g_nav_vx;
     int16_t adj_vy    = g_nav_vy;
     int16_t adj_omega = g_nav_omega;
@@ -344,7 +396,7 @@ void computeNavTargets()
         const bool rear_blocked = (mask & 0x03) != 0;
         const bool left_blocked = (mask & 0x04) != 0;
         const bool right_blocked = (mask & 0x08) != 0;
-        const bool front_blocked = g_sharp.isTooClose() || g_sharp.isSlowing();
+        const bool front_blocked = g_front_tof.isTooClose(millis()) || g_front_tof.isSlowing(millis());
 
         if (rear_blocked) adj_vx = max<int16_t>(0, adj_vx);
         if (front_blocked) adj_vx = min<int16_t>(0, adj_vx);
@@ -353,7 +405,7 @@ void computeNavTargets()
 
         // A hard front stop may not rotate into the obstacle.  Rotation is
         // allowed only when a lateral escape direction remains available.
-        if (g_sharp.isTooClose() && left_blocked && right_blocked) {
+        if (g_front_tof.isTooClose(millis()) && left_blocked && right_blocked) {
             adj_vx = 0;
             adj_vy = 0;
             adj_omega = 0;
@@ -630,7 +682,7 @@ void handleGetStatus()
         g_json_buf, sizeof(g_json_buf), millis(),
         &g_modeManager, &g_mecanum,
         g_encoders, g_pid, g_motors,
-        &g_imu, &g_power, &g_ir, &g_sharp,
+        &g_imu, &g_power, &g_ir, &g_front_tof,
         &g_tof, &g_cylinder,
         g_nav_vx, g_nav_vy, g_nav_omega,
         g_e_stop_active, g_max_speed_pct);
@@ -729,7 +781,7 @@ void handleHelp()
     Serial.println("  I           Read IMU (type 134)");
     Serial.println("  W           Read power (type 133)");
     Serial.println("  N           Read IR proximity (type 135)");
-    Serial.println("  J           Read Sharp front distance (type 136)");
+    Serial.println("  J           Read Front TOF distance (type 136)");
     Serial.println("  O<id> <pwm> Raw motor test (0=FL,1=FR,2=RL,3=RR, bypass PID)");
     Serial.println("  O0 0        Exit raw test mode");
     Serial.println("  Y           Read VL53L0X TOF distance (type 138)");
@@ -772,7 +824,7 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             case CMD_GET_IMU:
             case CMD_GET_POWER:
             case CMD_GET_IR:
-            case CMD_GET_SHARP:
+            case CMD_GET_FRONT_TOF:
             case CMD_GET_TOF:
             case CMD_GET_UNLOAD_STATE:
             case CMD_GET_CARGO:
@@ -881,8 +933,8 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             g_ir.printStatusJson();
             break;
 
-        case CMD_GET_SHARP:
-            g_sharp.printStatusJson();
+        case CMD_GET_FRONT_TOF:
+            g_front_tof.printStatusJson();
             break;
 
         case CMD_GET_TOF:
@@ -1059,9 +1111,12 @@ void readSerial()
 }
 
 // ========================================================================
-// LED Blink
 // ========================================================================
-// LED disabled — keep no-op stub to avoid refactoring call sites
+// LED Blink / Physical Alerting
+// ========================================================================
+// GPIO2 is CYLINDER_IN1 — NOT a free LED pin.  No output-capable GPIO is
+// reserved for status indication (see PIN_MAP.md).  updateLED() is a no-op
+// until a buzzer/LED module is wired to a confirmed free GPIO.
 void updateLED(uint32_t) {}
 
 // ========================================================================
@@ -1183,7 +1238,7 @@ static void publishTelemetry(uint32_t now_ms)
     size_t n = JsonStatus::emitTickStatus(
         g_json_buf, sizeof(g_json_buf), now_ms,
         &g_modeManager, g_encoders, g_motors,
-        &g_imu, &g_power, &g_ir, &g_sharp,
+        &g_imu, &g_power, &g_ir, &g_front_tof,
         &g_tof, &g_cylinder,
         &g_cargo,
         g_nav_vx, g_nav_vy, g_nav_omega,
@@ -1238,7 +1293,7 @@ void publishSensors(uint32_t now_ms)
     static uint32_t last_enc_ms   = 0;
     static uint32_t last_tof_ms   = 0;
     static uint32_t last_ir_ms    = 0;
-    static uint32_t last_sharp_ms = 0;
+    static uint32_t last_front_tof_ms = 0;
 
     // IMU — 20 Hz (50 ms)
     if (now_ms - last_imu_ms >= 50) {
@@ -1287,10 +1342,10 @@ void publishSensors(uint32_t now_ms)
         yield();
     }
 
-    // Sharp front — 20 Hz (50 ms)
-    if (now_ms - last_sharp_ms >= 50) {
-        last_sharp_ms = now_ms;
-        g_sharp.printStatusJson();
+    // Front TOF — 20 Hz (50 ms)
+    if (now_ms - last_front_tof_ms >= 50) {
+        last_front_tof_ms = now_ms;
+        g_front_tof.printStatusJson();
         yield();
     }
 
@@ -1357,13 +1412,13 @@ void setup()
     esp_task_wdt_add(NULL);
 
     Serial.println();
-    Serial.println("Ready. F/B/L/R/Q/E <0-255> | S stop | D e-stop | K clear | M <fl> <fr> <rl> <rr> | V status | I IMU | W power | N IR | J Sharp | T test | A auto-roam | ? help");
+    Serial.println("Ready. F/B/L/R/Q/E <0-255> | S stop | D e-stop | K clear | M <fl> <fr> <rl> <rr> | V status | I IMU | W power | N IR | J Front-ToF | T test | A auto-roam | ? help");
     Serial.println();
 }
 
 
 // ========================================================================
-// Poll IR + Sharp sensors → feed ObstacleAvoidance
+// Poll IR + front-ToF sensors → feed ObstacleAvoidance
 // ========================================================================
 void pollLocalSensors(uint32_t now)
 {
@@ -1378,7 +1433,7 @@ void pollLocalSensors(uint32_t now)
 
         if (mask != 0) {
             g_local_clear_since_ms = 0;
-            // Local IR/Sharp protection is applied by the physical interlock
+            // Local IR/front-ToF protection is applied by the physical interlock
             // in computeNavTargets().  Do not mirror it into the Pi/LiDAR
             // ObstacleAvoidance object: doing so creates a second owner and
             // can turn a safe escape command into a permanent front stop.
@@ -1394,12 +1449,16 @@ void pollLocalSensors(uint32_t now)
         }
     }
 
-    // ---- Sharp front sensor: always read distance, feed if close ----
-    g_sharp.update(now);
-    g_health.reportOk(MOD_SHARP, now);
-    if (g_sharp.isTooClose() || g_sharp.isSlowing()) {
+    // ---- Front TOF400C: invalid, stale, or close data all block front motion ----
+    const bool front_updated = g_front_tof.update(now);
+    if (front_updated && g_front_tof.isReadingValid() && !g_front_tof.isStale(now)) {
+        g_health.reportOk(MOD_FRONT_TOF, now);
+    } else if (!g_front_tof.isPresent() || g_front_tof.isStale(now)) {
+        g_health.reportError(MOD_FRONT_TOF, 1, now);
+    }
+    if (g_front_tof.isTooClose(now) || g_front_tof.isSlowing(now)) {
         g_local_clear_since_ms = 0;
-        // Keep local Sharp safety separate from the Pi LiDAR event owner.
+        // Keep local front-ToF safety separate from the Pi LiDAR event owner.
         // This allows a validated reverse/strafe escape to pass while still
         // clamping any command component that drives toward the obstacle.
         g_local_obstacle_stop = true;
@@ -1554,6 +1613,12 @@ void loop()
     // ---- Per-module recovery attempts ----
     // If any I2C module is RECOVERING and retry interval elapsed,
     // call begin() again.  Failures bump retry_count toward FAILED.
+    if (g_health.recoveryDue(MOD_FRONT_TOF, now)) {
+        Serial.println("[HEALTH] Front TOF recovery attempt...");
+        const bool ok = g_front_tof.begin();
+        if (ok) g_health.reportOk(MOD_FRONT_TOF, now);
+        else    g_health.reportRecoveryFailure(MOD_FRONT_TOF, 3, now);
+    }
     if (g_health.recoveryDue(MOD_IMU, now)) {
         // BNO055 is I2C-only (config.h SPI pins conflict with motor/encoder).
         // Just re-call begin() — I2CBus::probeWithRecovery handles the bus
@@ -1600,9 +1665,16 @@ void loop()
     pollLocalSensors(now);
 
     // Poll the slow sensors / actuators (independent of PID tick)
+    if (g_front_tof.isPresent()) {
+        // Local front safety uses the most recent valid sample. pollLocalSensors()
+        // reports failures and keeps forward movement blocked while stale.
+    } else {
+        g_health.reportState(MOD_FRONT_TOF, ST_OFFLINE, 0, now);
+    }
+
     if (g_tof.isPresent()) {
         // update() returns false between poll intervals; that is not a
-        // sensor failure.  Presence plus a responsive I2C bus is sufficient
+        // sensor failure. Presence plus a responsive I2C bus is sufficient
         // to keep the optional TOF module ONLINE.
         g_tof.update(now);
         g_health.reportOk(MOD_TOF, now);

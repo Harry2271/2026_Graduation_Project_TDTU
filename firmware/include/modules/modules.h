@@ -24,7 +24,7 @@
 #include "ImuSafetyEvaluator.h"
 #include "INA226Sensor.h"
 #include "IRProximitySensor.h"
-#include "SharpFrontSensor.h"
+#include "FrontTofSensor.h"
 #include "VL53L0XSensor.h"
 #include "CylinderActuator.h"
 #include "CargoSensor.h"

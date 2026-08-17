@@ -10,7 +10,8 @@
                           │   Logitech BRIO 100 (USB)   │
                           └──────────────┬───────────────┘
                                          │
-                              UART 115200 8N1 (GPIO 43/44)
+                              USB CDC (native USB)
+                              /dev/ttyACM0 on Raspberry Pi 5
                               JSON: move, heartbeat,
                                     obstacle_*, status, imu, power
                                          │
@@ -116,62 +117,73 @@
 
 ---
 
-## Sharp GP2Y0A21YK0F — Front Distance Sensor (Analog)
+## Front ToF400C — VL53L1X Laser Distance Sensor (I2C)
 
-| Function | GPIO |
-|----------|------|
-| **Analog Out** | GPIO **9** (ADC1_CH8) |
+The analog Sharp GP2Y0A21YK0F has been removed. The front sensor is now a
+VL53L1X/TOF400C and is the authoritative close-range forward safety sensor.
 
-### Sharp Sensor Wiring
+| Function | Connection | Notes |
+|----------|------------|-------|
+| **VIN** | 3.3V or 5V | Follow the carrier-board rating |
+| **GND** | Common ground | Must share ground with ESP32 and all I2C devices |
+| **SDA** | GPIO **10** | Shared I2C bus |
+| **SCL** | GPIO **11** | Shared I2C bus |
+| **XSHUT** | GPIO **44** | Active-LOW hardware shutdown/address sequencing |
 
-```
-          Sharp GP2Y0A21YK0F
-            │
-  VCC ◄─────┤ 5V
-  GND ◄─────┤ Common ground
-  Vout ─────► ESP32 GPIO 9 (analog read, 10-bit ADC)
-            │
-  Output: 0.3V (far) → 3.0V (10cm)
-  Range: 10–80 cm
-  Hard-stop threshold: < 30 cm
-  Slow-down zone: < 60 cm
-```
-
-> ⚠️ GPIO 9 is a strapping pin — safe as ADC input after boot.
+| Parameter | Value |
+|-----------|-------|
+| **Boot/default I2C address** | **0x29** |
+| **Runtime assigned address** | **0x31** |
+| **Range** | Up to approximately 4000 mm (carrier/target dependent) |
+| **Poll rate** | 20 Hz (every 50 ms) |
+| **Stop threshold** | 15 cm |
+| **Slow-down zone** | 60 cm |
+| **Safety behavior** | Missing, invalid, timed-out, or stale data blocks forward travel |
+| **Telemetry** | Type 136; canonical `front_tof`, legacy `sharp` alias retained |
 
 ---
 
 ## VL53L0X V2 — TOF Laser Distance Sensor (Rear, I2C)
 
+| Function | Connection | Notes |
+|----------|------------|-------|
+| **VIN** | 3.3V or 5V | Follow the carrier-board rating |
+| **GND** | Common ground | Must share ground with ESP32 and all I2C devices |
+| **SDA** | GPIO **10** | Shared I2C bus |
+| **SCL** | GPIO **11** | Shared I2C bus |
+| **XSHUT** | GPIO **43** | Active-LOW hardware shutdown/address sequencing |
+
 | Parameter | Value |
 |-----------|-------|
-| **I2C Address** | **0x29** |
-| **I2C Bus** | Shared with BNO055 (0x28) + INA226 (0x40) on GPIO 10/11 |
+| **Boot/default I2C address** | **0x29** |
+| **Runtime assigned address** | **0x30** |
+| **I2C bus** | GPIO 10/11 at 100 kHz |
 | **Range** | 30 mm – 2000 mm |
-| **Measurement Budget** | 33 ms (high-accuracy mode) |
-| **Poll Rate** | 20 Hz (every 50 ms) |
-| **Target Distance** | **40 mm** (4 cm — runtime configurable via `target_distance_mm` JSON field) |
-| **Tolerance** | ±10 mm (±1 cm) |
-| **Mounting** | Rear of vehicle, pointing at warehouse floor / dock surface |
+| **Poll rate** | 20 Hz (every 50 ms) |
+| **Target distance** | 40 mm (runtime configurable) |
+| **Mounting** | Rear of vehicle, pointing at dock surface |
+| **Telemetry** | Type 138; docking/alignment only |
 
-### VL53L0X Wiring
+### Shared I2C ToF Wiring and XSHUT Sequencing
 
 ```
-          VL53L0X V2 Sensor (Pololu)
-            │
-  VIN ◄─────┤ 3.3V or 5V (module-dependent)
-  GND ◄─────┤ Common ground
-  SDA ◄────► ESP32 GPIO 10  ┐ (shared I2C bus)
-  SCL ◄────► ESP32 GPIO 11  ┤
-            │                ├─ BNO055 (0x28)
-          (no new GPIOs)     ├─ INA226 (0x40)
-                             └─ VL53L0X (0x29)
+  ESP32-S3 WeAct                         Shared I2C bus
+  ┌──────────────┐                 ┌──────────────────────┐
+  │ GPIO 10 SDA ─┼─────────────────┼─ BNO055       0x28  │
+  │ GPIO 11 SCL ─┼─────────────────┼─ VL53L0X rear 0x30  │
+  │ GPIO 43 ─────┼── XSHUT rear    ├─ VL53L1X front 0x31 │
+  │ GPIO 44 ─────┼── XSHUT front   └─ INA226       0x40  │
+  └──────────────┘
 ```
 
-> The I2C pull-ups noted in the BNO055 section above (2.2k–4.7k to 3.3V)
-> cover this whole shared bus.
+Both ToF modules power up at `0x29`, so they **must remain held LOW on
+XSHUT during boot**. Firmware enables the rear VL53L0X first and assigns
+`0x30`, then enables the front VL53L1X and assigns `0x31`, before normal
+sensor initialization. Never connect the two XSHUT lines together.
 
-> The VL53L0X adds zero new GPIOs — uses the existing shared I2C bus. Pin-shield on module lets you re-address if needed; default 0x29 works here.
+Use one external pull-up pair of 2.2 kΩ–4.7 kΩ from SDA/SCL to 3.3 V for
+the complete bus. Keep the rear VL53L0X dedicated to docking; do not use it
+for front obstacle safety decisions.
 
 ---
 
@@ -190,6 +202,47 @@
 | Max run time | **8 000 ms** (safety auto-stop) |
 | Hold-at-top time | **3 000 ms** (dump window) |
 | Mounting | Cylinder base on chassis, rod attached to dump body |
+
+### Cargo Limit Switch — Microswitch on Cargo Bed
+
+| Function | GPIO | Notes |
+|----------|------|-------|
+| **Signal** | GPIO **36** | ⚠ INPUT-ONLY (no output driver) |
+
+| Parameter | Value |
+|-----------|-------|
+| Switch type | NO (normally open) |
+| Wiring | One side → GPIO 36, other side → GND |
+| INPUT_PULLUP | Enabled internally |
+| Active state | **LOW = cargo present** (NO switch pressed by package weight → GND) |
+| Debounce | 100 ms |
+| Poll rate | 50 Hz (every PID tick, 20 ms) |
+| Telemetry | Type 131 (compact) + Type 145 (on-demand `get_cargo`) |
+
+### Cargo Limit Switch Wiring
+
+```
+          ESP32-S3
+            │
+
+  GPIO 36 ◄─┤ INPUT_PULLUP (internal)
+
+            │
+
+          Microswitch (NO)
+
+            │
+
+  Signal ◄───┤ Common (one terminal)
+
+            │
+
+          GND ◄───── Other terminal (shorts to GPIO 36 when pressed)
+```
+
+> ⚠️ **GPIO 36 is INPUT-ONLY on ESP32-S3** — cannot drive output. Use only
+> as a digital input. The internal pull-up replaces the external one,
+> simplifying the wiring to a 2-wire connection (signal + GND).
 
 ### L298N + Cylinder Wiring
 
@@ -364,9 +417,9 @@ idle → adjusting → extending → holding → retracting → done →
 | **6** | Encoder FR CHB | INPUT | PCNT unit 1 |
 | **7** | Motor FR EN | OUTPUT | BTS7960 enable |
 | **8** | IR REAR_RIGHT | INPUT | Proximity sensor |
-| **9** | Sharp Front | INPUT (ADC) | Strapping pin — safe after boot |
-| **10** | I2C SDA | BIDIR | BNO055 + INA226 + VL53L0X shared bus |
-| **11** | I2C SCL | OUTPUT | BNO055 + INA226 + VL53L0X shared bus |
+| **9** | — | FREE | Former Sharp ADC input; no longer connected |
+| **10** | I2C SDA | BIDIR | BNO055 + INA226 + VL53L0X + VL53L1X shared bus |
+| **11** | I2C SCL | OUTPUT | BNO055 + INA226 + VL53L0X + VL53L1X shared bus |
 | **12** | Motor FL RPWM | OUTPUT | BTS7960 PWM forward |
 | **13** | Motor FL LPWM | OUTPUT | BTS7960 PWM reverse |
 | **14** | Motor FR RPWM | OUTPUT | BTS7960 PWM forward |
@@ -386,14 +439,14 @@ idle → adjusting → extending → holding → retracting → done →
 | **40** | Encoder FL CHA | INPUT | PCNT unit 0 |
 | **41** | Encoder FL CHB | INPUT | PCNT unit 0 |
 | **42** | Encoder FR CHA | INPUT | PCNT unit 1 |
-| **43** | UART TX | OUTPUT | To Raspberry Pi RX |
-| **44** | UART RX | INPUT | From Raspberry Pi TX |
+| **43** | VL53L0X rear XSHUT | OUTPUT | Active-LOW; also reserved from Pi serial |
+| **44** | VL53L1X front XSHUT | OUTPUT | Active-LOW; also reserved from Pi serial |
 | **45** | IR LEFT | INPUT | Strapping pin — safe after boot |
 | **46** | IR RIGHT | INPUT | Strapping pin — safe after boot |
 | **47** | Motor RR EN | OUTPUT | BTS7960 enable |
 | **48** | Motor RL EN | OUTPUT | BTS7960 enable |
 
-**Summary:** 31 GPIO used, 1 free input-only (37), 4 unavailable (22-25). All 8 LEDC channels consumed by 4 motors.
+**Summary:** 31 GPIO used, GPIO 9 is no longer connected (former Sharp ADC), 1 free input-only (37), 4 unavailable (22-25). GPIO 43/44 are dedicated to ToF XSHUT; Raspberry Pi communication uses native USB CDC. All 8 LEDC channels are consumed by 4 motors.
 
 ---
 
@@ -423,8 +476,8 @@ idle → adjusting → extending → holding → retracting → done →
 | Rail | Voltage | Powers |
 |------|---------|--------|
 | VM (BTS7960) | **12V** (bucked from 21V) | Motor windings |
-| Logic 5V | **5V** (bucked from 21V) | BTS7960 VCC, E18-D80NK, Sharp |
-| Logic 3.3V | **3.3V** (ESP32 internal or buck) | BNO055, INA226, encoder pullups |
+| Logic 5V | **5V** (bucked from 21V) | BTS7960 VCC, E18-D80NK, ToF carrier boards (module-dependent) |
+| Logic 3.3V | **3.3V** (ESP32 internal or buck) | BNO055, INA226, VL53L0X, VL53L1X, encoder pullups |
 | Battery (planned) | **11.1V nom** (3S 18650) | Replace 21V PSU |
 
 > ⚠️ **ALL modules MUST share a common ground** — ESP32, Pi, all BTS7960s, all sensors, all power supplies.

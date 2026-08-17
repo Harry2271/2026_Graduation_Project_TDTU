@@ -6,7 +6,7 @@
 // Forward declarations — avoid pulling all sensor headers into one place
 class BNO055Sensor;
 class IRProximitySensor;
-class SharpFrontSensor;
+class FrontTofSensor;
 class INA226Sensor;
 class VL53L0XSensor;
 class CylinderActuator;
@@ -20,8 +20,8 @@ class Encoder;
  *
  *   ┌─ Heading PID (BNO055)  ─► keep heading straight (omega correction)
  *   │
- *   ├─ Sharp front  (< 30 cm)  ► E-STOP
- *   ├─ Sharp slow    (< 60 cm)  ► slow + scan IR for escape route
+ *   ├─ Front ToF  (< 30 cm)  ► E-STOP
+ *   ├─ front-ToF slow    (< 60 cm)  ► slow + scan IR for escape route
  *   ├─ IR rear hit              ► stop backward, nudge forward
  *   ├─ IR left hit              ► strafe right
  *   ├─ IR right hit             ► strafe left
@@ -42,7 +42,7 @@ public:
     /// Wire sensor pointers (call once in setup)
     void attachSensors(BNO055Sensor* imu,
                        IRProximitySensor* ir,
-                       SharpFrontSensor* sharp,
+                       FrontTofSensor* front_tof,
                        INA226Sensor* power,
                        VL53L0XSensor* tof,
                        CylinderActuator* cylinder);
@@ -57,7 +57,7 @@ public:
                  int16_t& out_vx, int16_t& out_vy, int16_t& out_omega,
                  Encoder* encoders = nullptr);
 
-    /// True while a Sharp-triggered hard stop is engaged.
+    /// True while a front-ToF-triggered hard stop is engaged.
     [[nodiscard]] bool isHardStopped() const { return hard_stop_; }
 
     /// True when the unloading sequence is active (any state other than IDLE).
@@ -136,7 +136,7 @@ private:
 
     // Wall-clock for edge-triggered state changes
     uint32_t last_obstacle_ms_;
-    uint32_t sharp_clear_ms_;
+    uint32_t front_tof_clear_ms_;
     bool     hard_stop_;
     uint8_t  last_ir_mask_;
     int32_t  last_encoder_count_;   // for FSM reverse-distance tracking
@@ -144,7 +144,7 @@ private:
     // Sensors
     BNO055Sensor*      imu_;
     IRProximitySensor* ir_;
-    SharpFrontSensor*  sharp_;
+    FrontTofSensor*  front_tof_;
     INA226Sensor*      power_;
     VL53L0XSensor*     tof_;
     CylinderActuator*  cylinder_;
@@ -173,7 +173,7 @@ private:
     uint32_t leave_start_ms_;
     float    leave_target_heading_;
 
-    // Time the AUTO_ROAM driving loop first started (for Sharp boot-skip)
+    // Time the AUTO_ROAM driving loop first started (for Front ToF boot-skip)
     uint32_t drive_start_ms_ = 0;
 
     // Idempotency key — tracks current operationId to reject duplicate dock commands
@@ -187,8 +187,7 @@ private:
     static constexpr int16_t REVERSE_NUDGE      = 40;
     static constexpr int16_t SCAN_ROTATE        = 50;
     static constexpr uint32_t HEADING_HOLD_MS   = 1500;
-    static constexpr uint32_t SHARP_HOLD_MS     = 500;
-    static constexpr uint32_t SHARP_BOOT_SKIP_MS = 2000;  // ignore Sharp for 2 s after AUTO_ROAM entry (ADC settling)
+    static constexpr uint32_t FRONT_TOF_HOLD_MS     = 500;
     static constexpr int16_t ADJUST_FWD_SPEED   = 40;
     static constexpr uint32_t ADJUST_TIMEOUT_MS = 5000;
 };
