@@ -39,7 +39,8 @@ enum CommandType {
     CMD_GET_IMU,       // IMU heading (type 134)
     CMD_GET_POWER,     // Power telemetry (type 133)
     CMD_GET_IR,        // IR proximity (type 135)
-    CMD_GET_SHARP,     // Sharp front distance (type 136)
+    CMD_GET_FRONT_TOF, // Canonical front VL53L1X query (type 136)
+    CMD_GET_SHARP = CMD_GET_FRONT_TOF, // Legacy get_sharp / ASCII J alias
 
     // Raw motor test (bypass PID + ramp)
     CMD_RAW_MOTOR,     // O<id> <speed> — direct PWM to one motor

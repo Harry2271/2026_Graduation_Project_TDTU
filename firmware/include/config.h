@@ -203,6 +203,21 @@ enum MotorState {
 #define I2C_EXTERNAL_PULLUP_OHMS    4700 // Required on SDA/SCL for stable shared bus
 #define IMU_PUBLISH_MS         50       // Publish heading at 20 Hz
 
+// BNO055 attitude/impact observation thresholds. @bench-tune: record normal
+// braking, strafing, payload, unload, ramp and controlled-impact data before
+// enabling enforcement. Observation mode never changes motor/cylinder output.
+#define IMU_SAFETY_ENFORCEMENT_ENABLED false
+#define IMU_SAFETY_CONFIG_REV          1
+#define IMU_TILT_WARNING_DEG           10.0f
+#define IMU_TILT_WARNING_DWELL_MS      250
+#define IMU_TILT_OBSERVE_DEG           18.0f
+#define IMU_TILT_OBSERVE_DWELL_MS      500
+#define IMU_TILT_CLEAR_DEG             8.0f
+#define IMU_TILT_CLEAR_DWELL_MS        2000
+#define IMU_SHOCK_CANDIDATE_MPS2       6.0f
+#define IMU_SHOCK_PEAK_MPS2            8.0f
+#define IMU_SHOCK_CONFIRM_WINDOW_MS    150
+
 // ============================================================
 // INA226 Power Monitor (CJMCU-226, I2C address 0x40)
 // ============================================================
@@ -238,7 +253,7 @@ enum MotorState {
 // ============================================================
 #define AUTO_ROAM_BOOT_DELAY_MS  3000   // wait this long on boot before going AUTO_ROAM
 #define AUTO_ROAM_FORWARD_SPEED  70     // base forward PWM (out of 255)
-#define AUTO_ROAM_SLOW_SPEED     30     // forward speed inside Sharp slow-zone
+#define AUTO_ROAM_SLOW_SPEED     30     // forward speed inside front-ToF slow zone
 #define AUTO_ROAM_ESCAPE_STRAFE  90     // IR side-trigger escape
 #define AUTO_ROAM_ESCAPE_ROTATE  70     // IR both-sides-trigger escape
 #define AUTO_ROAM_REVERSE_NUDGE  40     // gentle forward push when rear IR triggers while reversing
@@ -249,27 +264,37 @@ enum MotorState {
 #define IR_RIGHT_PIN          46       // Strapping pin — safe as input after boot
 
 // ============================================================
-// Sharp GP2Y0A21YK0F — Front-mounted analog distance sensor
-// (10-80 cm range, analog voltage output)
+// Front TOF400C — VL53L1X laser distance sensor
+// Replaces the Sharp GP2Y0A21YK0F analog front sensor.
 // ============================================================
-#define SHARP_FRONT_PIN       9        // ADC1_CH8
-#define SHARP_FRONT_THRESHOLD_CM  15   // Hard-stop distance (cm)
-#define SHARP_FRONT_SLOW_CM       60   // Begin slowing down (cm)
-#define SHARP_FRONT_POLL_MS       20   // Read at 50 Hz
+#define VL53L1X_DEFAULT_I2C_ADDR       0x29
+#define VL53L1X_I2C_ADDR               0x31  // Assigned after XSHUT boot
+#define VL53L1X_SDA_PIN                10
+#define VL53L1X_SCL_PIN                11
+#define VL53L1X_I2C_FREQ_HZ            100000
+#define VL53L1X_FRONT_THRESHOLD_CM     15    // Hard-stop / front block
+#define VL53L1X_FRONT_SLOW_CM          60    // Begin slowing
+#define VL53L1X_FRONT_POLL_MS          20    // 50 Hz cache update
+#define VL53L1X_FRONT_STALE_MS         250   // No fresh sample => blocked
+#define VL53L1X_FRONT_MIN_MM            40
+#define VL53L1X_FRONT_MAX_MM          4000
+#define VL53L1X_FRONT_TIMEOUT_MS       200
+
+// XSHUT pins are available because production Pi transport is USB CDC.
+#define VL53L0X_XSHUT_PIN              43    // Rear VL53L0X
+#define VL53L1X_XSHUT_PIN              44    // Front VL53L1X
+#define VL53L0X_DEFAULT_I2C_ADDR       0x29
+#define VL53L0X_I2C_ADDR               0x30  // Assigned after XSHUT boot
 
 // ============================================================
-// VL53L0X V2 — TOF Laser Distance Sensor (I2C address 0x29)
-// Rear-mounted, points at ground/shelf for precise alignment
-// before unloading. Used in DistanceCheck (4 cm target).
-// Shares I2C bus with BNO055 (0x28) and INA226 (0x40).
+// Rear VL53L0X — docking/alignment distance sensor
 // ============================================================
-#define VL53L0X_I2C_ADDR         0x29
-#define VL53L0X_SDA_PIN          10       // Shared I2C bus with BNO055 (GPIO10)
-#define VL53L0X_SCL_PIN          11       // Shared I2C bus with BNO055 (GPIO11)
-#define VL53L0X_I2C_FREQ_HZ      100000   // Shared bus clock; BNO055 clone requires 100 kHz
-#define VL53L0X_UNLOAD_DISTANCE_MM  40    // 4 cm — flowchart target distance
-#define VL53L0X_TOLERANCE_MM       10    // ±1 cm tolerance band
-#define VL53L0X_POLL_MS            50    // 20 Hz (33 ms budget + slack)
+#define VL53L0X_SDA_PIN               10
+#define VL53L0X_SCL_PIN               11
+#define VL53L0X_I2C_FREQ_HZ           100000
+#define VL53L0X_UNLOAD_DISTANCE_MM    40
+#define VL53L0X_TOLERANCE_MM          10
+#define VL53L0X_POLL_MS               50
 
 // ============================================================
 // Cylinder Actuator — 12VDC electric cylinder + L298N driver

@@ -7,9 +7,10 @@
 class BTS7960Driver;
 class Encoder;
 class BNO055Sensor;
+class ImuSafetyEvaluator;
 class INA226Sensor;
 class IRProximitySensor;
-class SharpFrontSensor;
+class FrontTofSensor;
 class VL53L0XSensor;
 class CylinderActuator;
 class CargoSensor;
@@ -27,7 +28,7 @@ class AutoRoam;
 // 133 = power telemetry
 // 134 = IMU telemetry
 // 135 = IR proximity
-// 136 = Sharp front
+// 136 = Front ToF
 // 138 = TOF distance
 // 140 = unload / docking state (transition notify + query response)
 // 141 = cargo sensor (presence-only, mapped from VL53L0X/CargoSensor)
@@ -44,7 +45,7 @@ public:
         Encoder encoders[], PIDController pids[],
         BTS7960Driver motors[],
         BNO055Sensor* imu, INA226Sensor* power,
-        IRProximitySensor* ir, SharpFrontSensor* sharp,
+        IRProximitySensor* ir, FrontTofSensor* front_tof,
         VL53L0XSensor* tof, CylinderActuator* cylinder,
         int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
         bool e_stop, uint8_t max_pct);
@@ -55,7 +56,7 @@ public:
         Encoder encoders[],
         BTS7960Driver motors[],
         BNO055Sensor* imu, INA226Sensor* power,
-        IRProximitySensor* ir, SharpFrontSensor* sharp,
+        IRProximitySensor* ir, FrontTofSensor* front_tof,
         VL53L0XSensor* tof, CylinderActuator* cylinder,
         CargoSensor* cargo,
         int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
@@ -67,10 +68,11 @@ public:
 
     /// Emit obstacle state (types 135 + 136 merged)
     static size_t emitObstacle(char* buf, size_t bufsize,
-        IRProximitySensor* ir, SharpFrontSensor* sharp);
+        IRProximitySensor* ir, FrontTofSensor* front_tof);
 
     /// Emit IMU telemetry (type 134)
-    static size_t emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu);
+    static size_t emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu,
+        const ImuSafetyEvaluator* safety = nullptr);
 
     /// Emit power telemetry (type 133)
     static size_t emitPower(char* buf, size_t bufsize, INA226Sensor* power);

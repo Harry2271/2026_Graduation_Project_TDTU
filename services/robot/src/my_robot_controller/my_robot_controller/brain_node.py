@@ -98,6 +98,23 @@ CARGO_STARTUP_DELAY_S = 20.0
 CARGO_RELEASE_TIMEOUT_S = 15.0
 CARGO_RELEASE_STABLE_S = 0.8
 
+# AprilTag safety gates.  Vision is only allowed to authorize docking after
+# several recent, plausible observations of the expected tag.  Recovery uses
+# in-place rotation only; it must never drive toward a shelf without a tag.
+TAG_MIN_CONFIDENCE = float(os.environ.get('APRILTAG_MIN_CONFIDENCE', '20.0'))
+TAG_MIN_DISTANCE_M = float(os.environ.get('APRILTAG_MIN_DISTANCE_M', '0.20'))
+TAG_MAX_DISTANCE_M = float(os.environ.get('APRILTAG_MAX_DISTANCE_M', '5.0'))
+TAG_MAX_AGE_S = float(os.environ.get('APRILTAG_MAX_AGE_S', '0.60'))
+TAG_OBSERVATION_WINDOW_S = float(os.environ.get('APRILTAG_OBSERVATION_WINDOW_S', '1.20'))
+TAG_REQUIRED_OBSERVATIONS = int(os.environ.get('APRILTAG_REQUIRED_OBSERVATIONS', '5'))
+TAG_MAX_X_SPREAD_M = float(os.environ.get('APRILTAG_MAX_X_SPREAD_M', '0.12'))
+TAG_MAX_Z_SPREAD_M = float(os.environ.get('APRILTAG_MAX_Z_SPREAD_M', '0.25'))
+TAG_SEARCH_GRACE_S = float(os.environ.get('APRILTAG_SEARCH_GRACE_S', '1.50'))
+TAG_RECOVERY_TIMEOUT_S = float(os.environ.get('APRILTAG_RECOVERY_TIMEOUT_S', '8.0'))
+TAG_RECOVERY_ROTATE_SPEED = int(os.environ.get('APRILTAG_RECOVERY_ROTATE_SPEED', '35'))
+TAG_RECOVERY_ROTATE_S = float(os.environ.get('APRILTAG_RECOVERY_ROTATE_S', '0.55'))
+TAG_ALIGN_MISSING_GRACE_S = float(os.environ.get('APRILTAG_ALIGN_MISSING_GRACE_S', '0.40'))
+
 # ── Demo delivery zones (4 zones A/B/C/D for capstone demo) ─────────────────
 # Hard-coded coordinates suitable for the demo mat.  Each zone is 0.9×1.1 m
 # with a 15×15 cm AprilTag at the centre of its approach face.  The robot
@@ -149,8 +166,11 @@ class BrainNode(Node):
 
         self._error_pub = self.create_publisher(String, '/robot/errors', 10)
 
-        # AprilTag detection subscriber — cache all visible tags by ID.
+        # AprilTag detection subscriber — cache all visible tags by ID and
+        # retain a short observation history for multi-frame dock validation.
         self._tag_cache: dict[int, dict] = {}
+        self._tag_observations: dict[int, list[dict[str, float]]] = {}
+        self._last_tag_detection_s: float = 0.0
         self._tag_sub = self.create_subscription(
             String, '/detected_tags', self._on_tag_detected, 10)
 
@@ -577,49 +597,66 @@ class BrainNode(Node):
 
     async def _dock_align(self, tag_id: int, target_mm: int,
                           timeout_s: float = 15.0) -> bool:
-        """Camera-based AprilTag alignment using VL53L0X distance.
+        """Align only to a previously verified AprilTag.
 
-        Proportional control:
-          - Tag visible: steer toward tag_x → omega = Kp * tag_x
-          - Tag_x centered: drive forward/backward toward target_mm
-          - Within ±15 mm of target: stop, return True
-          - Timeout: return False
+        Vision loss is a stop condition, not permission to nudge toward the
+        shelf. The ESP32 physical interlocks remain authoritative during the
+        close dock phase: generic `_safe_drive()` would treat the intended
+        shelf face as a LiDAR obstacle and prevent final alignment entirely.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         t0 = loop.time()
-        self.get_logger().info(f'Dock align: tag={tag_id} target={target_mm}mm')
+        missing_since: float | None = None
+        self.get_logger().info(f'Dock align: verified tag={tag_id} target={target_mm}mm')
 
         while (loop.time() - t0) < timeout_s:
             await asyncio.sleep(0.1)
-
-            tag = self._get_tag(tag_id)
+            tag = self._qualifying_tag(tag_id)
             if tag is None:
-                # Tag not visible — slowly nudge forward to find it
-                await self._drive(20.0, 0.0, 0.0)
-                continue
+                if missing_since is None:
+                    missing_since = loop.time()
+                    # Do not let observations from before vision loss qualify a
+                    # single newly-arrived frame during re-acquisition.
+                    self._tag_observations.pop(tag_id, None)
+                    await self._stop()
+                    self.get_logger().warn('Dock align: expected tag lost — holding position')
+                if (loop.time() - missing_since) <= TAG_ALIGN_MISSING_GRACE_S:
+                    continue
+                # Reacquisition is stationary; no blind forward movement.
+                tag = await self._wait_for_verified_tag(tag_id, TAG_SEARCH_GRACE_S)
+                if tag is None:
+                    self.get_logger().warn('Dock align: expected tag could not be reacquired')
+                    await self._stop()
+                    return False
+                missing_since = None
+            else:
+                missing_since = None
 
-            tag_z_m = tag['z']          # distance camera→tag (metres)
+            try:
+                tag_z_m = float(tag['z'])
+                tag_x = float(tag['x'])
+            except (KeyError, TypeError, ValueError):
+                await self._stop()
+                return False
+            if not math.isfinite(tag_z_m) or not math.isfinite(tag_x):
+                await self._stop()
+                return False
             tag_z_mm = tag_z_m * 1000.0
-            tag_x = tag['x']           # horizontal offset in camera frame
 
             self.get_logger().debug(
                 f'Dock: tag_z={tag_z_mm:.0f}mm offset_x={tag_x:.3f}m')
 
-            # Horizontal alignment — rotate to center the tag
-            omega = 0.0
-            if abs(tag_x) > 0.05:   # >5 cm off-centre in camera frame
-                omega = 0.5 * tag_x  # proportional
-                omega = max(-0.3, min(0.3, omega))
+            if abs(tag_x) > 0.05:
+                # ESP32 `move.omega` is PWM units (-255..255), not rad/s.
+                omega = max(-35.0, min(35.0, 120.0 * tag_x))
                 await self._drive(0.0, 0.0, omega)
                 continue
 
-            # Distance check — within tolerance
-            if abs(tag_z_mm - target_mm) < 15:  # ±15 mm
+            if abs(tag_z_mm - target_mm) < 15:
                 self.get_logger().info('Dock: at target distance — done')
                 await self._stop()
                 return True
 
-            # Drive forward/backward proportionally
             error_mm = target_mm - tag_z_mm
             vx = max(-40.0, min(40.0, error_mm * 0.5))
             await self._drive(vx, 0.0, 0.0)
@@ -726,44 +763,141 @@ class BrainNode(Node):
         return await self._nav_to_pose(*self._home_pose)
 
     def _on_tag_detected(self, msg: String) -> None:
-        """Cache all tags from the AprilTag detector payload.
+        """Cache valid tag observations and retain a bounded history.
 
-        Supports two payload formats:
-          - New:  {"ts": ..., "tags": [{tag_id, x, y, z, ...}, ...]}
-          - Legacy single-tag: {"tag_id": ..., "x": ..., ...}
+        Supports the detector's multi-tag payload and the legacy single-tag
+        payload. Invalid numeric values are discarded before they can affect
+        route decisions; unexpected IDs remain cached for diagnostics only.
         """
         try:
             payload = json.loads(msg.data)
-        except Exception:
+        except (TypeError, ValueError):
             return
 
         tags = payload.get('tags')
         if not isinstance(tags, list):
-            # Legacy single-tag format — wrap in list
             if isinstance(payload, dict) and 'tag_id' in payload:
                 tags = [payload]
             else:
                 return
 
         now = time.time()
-        for tag in tags:
+        accepted_frame = False
+        for raw_tag in tags:
+            if not isinstance(raw_tag, dict):
+                continue
             try:
-                tid = int(tag.get('tag_id', -1))
-            except (TypeError, ValueError):
+                tid = int(raw_tag.get('tag_id', -1))
+                x = float(raw_tag['x'])
+                z = float(raw_tag['z'])
+                confidence = float(raw_tag.get('confidence', 0.0))
+            except (KeyError, TypeError, ValueError):
                 continue
-            if tid < 0:
+            if (tid < 0 or not math.isfinite(x) or not math.isfinite(z) or
+                    not math.isfinite(confidence)):
                 continue
-            self._tag_cache[tid] = {**tag, '_age': now}
+            tag = {**raw_tag, '_age': now}
+            self._tag_cache[tid] = tag
+            accepted_frame = True
+            if (confidence >= TAG_MIN_CONFIDENCE and
+                    TAG_MIN_DISTANCE_M <= z <= TAG_MAX_DISTANCE_M):
+                history = self._tag_observations.setdefault(tid, [])
+                history.append({'ts': now, 'x': x, 'z': z,
+                                'confidence': confidence})
+                cutoff = now - TAG_OBSERVATION_WINDOW_S
+                self._tag_observations[tid] = [
+                    item for item in history if item['ts'] >= cutoff
+                ][-TAG_REQUIRED_OBSERVATIONS * 2:]
 
-    def _get_tag(self, tag_id: int, max_age_s: float = 2.0) -> Optional[dict]:
+        if accepted_frame:
+            self._last_tag_detection_s = now
+
+    def _get_tag(self, tag_id: int, max_age_s: float = TAG_MAX_AGE_S) -> Optional[dict]:
         """Return the latest detection for a specific tag if fresh enough."""
         tag = self._tag_cache.get(tag_id)
         if tag is None:
             return None
-        age = time.time() - tag.get('_age', 0)
+        try:
+            age = time.time() - float(tag.get('_age', 0))
+        except (TypeError, ValueError):
+            return None
         if age > max_age_s:
             return None
         return tag
+
+    def _qualifying_tag(self, tag_id: int) -> Optional[dict]:
+        """Return one fresh observation that meets basic physical gates."""
+        tag = self._get_tag(tag_id)
+        if tag is None:
+            return None
+        try:
+            x = float(tag['x'])
+            z = float(tag['z'])
+            confidence = float(tag.get('confidence', 0.0))
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (not math.isfinite(x) or not math.isfinite(z) or
+                not math.isfinite(confidence) or
+                confidence < TAG_MIN_CONFIDENCE or
+                not TAG_MIN_DISTANCE_M <= z <= TAG_MAX_DISTANCE_M):
+            return None
+        return tag
+
+    def _verified_tag(self, tag_id: int) -> Optional[dict]:
+        """Return a tag only after enough stable, recent observations."""
+        tag = self._qualifying_tag(tag_id)
+        if tag is None:
+            return None
+        now = time.time()
+        observations = [item for item in self._tag_observations.get(tag_id, [])
+                        if now - item['ts'] <= TAG_OBSERVATION_WINDOW_S]
+        if len(observations) < TAG_REQUIRED_OBSERVATIONS:
+            return None
+        xs = [item['x'] for item in observations[-TAG_REQUIRED_OBSERVATIONS:]]
+        zs = [item['z'] for item in observations[-TAG_REQUIRED_OBSERVATIONS:]]
+        if max(xs) - min(xs) > TAG_MAX_X_SPREAD_M:
+            return None
+        if max(zs) - min(zs) > TAG_MAX_Z_SPREAD_M:
+            return None
+        return tag
+
+    def _tag_failure_message(self, code: str, tag_id: int) -> str:
+        """Return a concise Vietnamese error message for route observability."""
+        messages = {
+            'TAG_NOT_FOUND': 'Không tìm thấy AprilTag mong đợi',
+            'TAG_RECOVERY_FAILED': 'Không tìm thấy AprilTag sau khi quét lại',
+            'WRONG_TAG': 'Phát hiện AprilTag khác với tag đích',
+            'TAG_LOW_CONFIDENCE': 'AprilTag có độ tin cậy quá thấp',
+            'TAG_UNSTABLE': 'AprilTag không ổn định giữa các khung hình',
+            'TAG_TOO_CLOSE': 'Robot ở quá gần AprilTag để căn an toàn',
+            'TAG_TOO_FAR': 'AprilTag ở ngoài khoảng cách căn an toàn',
+            'TAG_RECOVERY_BLOCKED': 'Vật cản hoặc dữ liệu cảm biến không cho phép quét lại tag',
+        }
+        return f'{messages.get(code, "Không xác thực được AprilTag")} #{tag_id}'
+
+    def _tag_failure_reason(self, expected_id: int) -> str:
+        """Classify why an expected tag cannot yet be verified."""
+        if time.time() - self._last_tag_detection_s > TAG_SEARCH_GRACE_S:
+            return 'TAG_NOT_FOUND'
+        visible = [tid for tid in self._tag_cache
+                   if self._get_tag(tid) is not None]
+        if visible and expected_id not in visible:
+            return 'WRONG_TAG'
+        tag = self._get_tag(expected_id)
+        if tag is None:
+            return 'TAG_NOT_FOUND'
+        try:
+            confidence = float(tag.get('confidence', 0.0))
+            distance = float(tag.get('z', 0.0))
+        except (TypeError, ValueError):
+            return 'TAG_LOW_CONFIDENCE'
+        if confidence < TAG_MIN_CONFIDENCE:
+            return 'TAG_LOW_CONFIDENCE'
+        if distance < TAG_MIN_DISTANCE_M:
+            return 'TAG_TOO_CLOSE'
+        if distance > TAG_MAX_DISTANCE_M:
+            return 'TAG_TOO_FAR'
+        return 'TAG_UNSTABLE'
 
     def _get_any_tag(self, max_age_s: float = 1.0) -> Optional[dict]:
         """Return the freshest tag detection (used during autonomous explore)."""
@@ -805,8 +939,68 @@ class BrainNode(Node):
         return result
 
     def _clear_tag(self) -> None:
-        """Invalidate cached tags so a fresh scan is needed for the next dock."""
+        """Invalidate cached tags and observations for the next dock attempt."""
         self._tag_cache.clear()
+        self._tag_observations.clear()
+        self._last_tag_detection_s = 0.0
+
+    async def _wait_for_verified_tag(self, tag_id: int, timeout_s: float) -> Optional[dict]:
+        """Wait while stationary until the expected tag passes safety gates."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while loop.time() < deadline:
+            tag = self._verified_tag(tag_id)
+            if tag is not None:
+                return tag
+            await asyncio.sleep(0.10)
+        return None
+
+    async def _acquire_expected_tag(self, tag_id: int) -> tuple[Optional[dict], str]:
+        """Safely find and verify the expected AprilTag at an approach pose.
+
+        This routine never moves toward a shelf. It waits stationary first,
+        then performs a small left/right in-place scan only when all safety
+        sensors permit it. Every recovery leg ends with a stop.
+        """
+        await self._stop()
+        self._clear_tag()
+        tag = await self._wait_for_verified_tag(tag_id, TAG_SEARCH_GRACE_S)
+        if tag is not None:
+            return tag, ''
+
+        first_reason = self._tag_failure_reason(tag_id)
+        if first_reason == 'WRONG_TAG':
+            await self._stop()
+            return None, first_reason
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + TAG_RECOVERY_TIMEOUT_S
+        # Scan left, scan right, then return toward the approach heading.
+        for omega, duration_s in (
+                (-TAG_RECOVERY_ROTATE_SPEED, TAG_RECOVERY_ROTATE_S),
+                (TAG_RECOVERY_ROTATE_SPEED, TAG_RECOVERY_ROTATE_S * 2),
+                (-TAG_RECOVERY_ROTATE_SPEED, TAG_RECOVERY_ROTATE_S)):
+            if loop.time() >= deadline:
+                break
+            if not self._safe_drive(0.0, 0.0, float(omega)):
+                await self._stop()
+                return None, 'TAG_RECOVERY_BLOCKED'
+            await self._drive(0.0, 0.0, float(omega))
+            await asyncio.sleep(duration_s)
+            await self._stop()
+            tag = await self._wait_for_verified_tag(
+                tag_id, min(TAG_SEARCH_GRACE_S, max(0.0, deadline - loop.time())))
+            if tag is not None:
+                return tag, ''
+            reason = self._tag_failure_reason(tag_id)
+            if reason == 'WRONG_TAG':
+                return None, reason
+
+        await self._stop()
+        reason = self._tag_failure_reason(tag_id)
+        if reason == 'TAG_NOT_FOUND':
+            reason = 'TAG_RECOVERY_FAILED'
+        return None, reason
 
     def _get_robot_pose(self) -> tuple[float, float, float] | None:
         """Return (x, y, yaw) from TF (map→base_footprint), or None."""
@@ -941,9 +1135,16 @@ class BrainNode(Node):
 
                 # Clear stale detections; fresh ones arrive from the detector
                 # at 10 Hz once we are at the new position.
-                self._clear_tag()
                 self._snapshot_pose = self._get_robot_pose()
                 self.transition_to(BrainState.WAREHOUSE_DOCK, f'tag {tag_id}')
+                self._publish_demo_status('SEARCHING_TAG', str(tag_id),
+                                          f'Đang xác thực AprilTag #{tag_id}')
+                verified_tag, tag_error = await self._acquire_expected_tag(tag_id)
+                if verified_tag is None:
+                    message = self._tag_failure_message(tag_error, tag_id)
+                    await self._emit_error('error', tag_error, message)
+                    self._publish_demo_status('FAILED', str(tag_id), message)
+                    raise RuntimeError(message)
                 self._publish_demo_status('DOCKING', str(tag_id),
                                           f'Đang căn AprilTag #{tag_id}')
                 if not await self._dock_align(
@@ -1204,10 +1405,15 @@ class BrainNode(Node):
                 raise RuntimeError('Nav2 không đến được tọa độ khu đổ hàng')
 
             self._publish_demo_status('SEARCHING_TAG', zone_id,
-                                      f'Tìm AprilTag ID {zone["tag_id"]}')
+                                      f'Đang xác thực AprilTag ID {zone["tag_id"]}')
             self.transition_to(BrainState.JOB_DOCK_UNLOAD,
                                f'demo zone {zone_id} tag')
-            self._clear_tag()
+            verified_tag, tag_error = await self._acquire_expected_tag(zone['tag_id'])
+            if verified_tag is None:
+                message = self._tag_failure_message(tag_error, zone['tag_id'])
+                await self._emit_error('error', tag_error, message)
+                self._publish_demo_status('FAILED', zone_id, message)
+                raise RuntimeError(message)
             dock_distance_mm = (self._route_plan.dock_distance_mm
                                 if self._route_plan else DEMO_DOCK_DISTANCE_MM)
             dock_ok = await self._dock_align(
@@ -1842,23 +2048,38 @@ class BrainNode(Node):
         return True
 
     def _esp32_obstacle_blocking(self) -> bool:
-        """Return True if ESP32's local sensors (IR / Sharp) report an
-        immediate obstacle.  Used as a fast e-stop layer before LiDAR.
+        """Return True if ESP32 local safety sensing blocks motion.
 
         IR detection range: 15 cm (E18-D80NK potentiometer-adjusted).
-        Sharp zones:
-          < 15cm  → hard stop (front too close)
-          < 60cm  → obstacle detected (slowing zone — must react)
+        Front ToF zones:
+          < 15cm  -> hard stop
+          < 60cm  -> obstacle / slow zone
+        Missing, invalid, or stale canonical front-ToF data is fail closed.
         """
         status_age = (time.monotonic() - self._esp32_status_last_update
                       if self._esp32_status_last_update else float('inf'))
         if not self._esp32_status or status_age > 1.0 or self._bridge_health == 'STALE':
             return True
         st = self._esp32_status.get('st', {})
-        # Sharp: trigger at BOTH hard-stop AND slow-down zones
-        sharp = st.get('sharp', 999)
-        if isinstance(sharp, (int, float)) and 0 < sharp < 60:
-            return True
+        # Canonical front-ToF fields are authoritative. A missing or stale
+        # canonical payload blocks locally; legacy sharp is only a rollout
+        # fallback for older firmware that does not publish front_tof_valid.
+        has_canonical = any(key in st for key in (
+            'front_tof_valid', 'front_tof_stale', 'front_tof_cm'))
+        if has_canonical:
+            front_valid = st.get('front_tof_valid') is True
+            front_stale = st.get('front_tof_stale') is True
+            front_cm = st.get('front_tof_cm')
+            if not front_valid or front_stale:
+                return True
+            if isinstance(front_cm, (int, float)) and 0 < front_cm < 60:
+                return True
+            if not isinstance(front_cm, (int, float)):
+                return True
+        else:
+            sharp = st.get('sharp', 999)
+            if isinstance(sharp, (int, float)) and 0 < sharp < 60:
+                return True
         # Any IR sensor detects obstacle (15 cm detection range)
         ir = st.get('ir', [False, False, False, False])
         if isinstance(ir, list) and any(ir):
@@ -2093,10 +2314,16 @@ class BrainNode(Node):
         # ── Phase 3: Dock + firmware unload sequence ────────────────────
         t_unload_start = time.time()
 
-        # 3a: Camera-based AprilTag alignment
+        # 3a: Verify the expected tag before camera-based alignment. A visible
+        # wrong tag can never authorize dock/unload for this job.
         if tag_id is not None:
             self.transition_to(BrainState.JOB_DOCK_UNLOAD, f'job {job_id}')
             await self._api_client.emit_job_phase(job_id, 'AT_DOCK')
+            verified_tag, tag_error = await self._acquire_expected_tag(tag_id)
+            if verified_tag is None:
+                message = f'Job {job_id}: {self._tag_failure_message(tag_error, tag_id)}'
+                await self._emit_error('error', tag_error, message)
+                raise RuntimeError(message)
             dock_ok = await self._dock_align(tag_id, target_mm)
             if not dock_ok:
                 await self._emit_error('error', 'DOCK_ALIGN_TIMEOUT',
@@ -2215,12 +2442,24 @@ class BrainNode(Node):
                 if ir_mask[1]: ir_pressed.add('right')
                 if ir_mask[2]: ir_pressed.add('left')
                 if ir_mask[3]: ir_pressed.add('right')
-        # Sharp very close (<30cm) → treat as front-blocked
-        sharp_close = False
+        # Canonical front-ToF is fail closed. Keep the legacy sharp value as
+        # an alias only for mixed-firmware rollout.
+        front_close = False
         if self._esp32_status:
-            sharp = self._esp32_status.get('st', {}).get('sharp', 999)
-            if isinstance(sharp, (int, float)) and 0 < sharp < 30:
-                sharp_close = True
+            front_st = self._esp32_status.get('st', {})
+            has_canonical = any(key in front_st for key in (
+                'front_tof_valid', 'front_tof_stale', 'front_tof_cm'))
+            if has_canonical:
+                front_cm = front_st.get('front_tof_cm')
+                front_close = (
+                    front_st.get('front_tof_valid') is not True or
+                    front_st.get('front_tof_stale') is True or
+                    not isinstance(front_cm, (int, float)) or
+                    (0 < front_cm < 30)
+                )
+            else:
+                sharp = front_st.get('sharp', 999)
+                front_close = isinstance(sharp, (int, float)) and 0 < sharp < 30
 
         # Stale LiDAR is unknown, never maximally clear.  Unknown zones get a
         # conservative score and cannot authorize autonomous escape.
@@ -2251,7 +2490,7 @@ class BrainNode(Node):
         for side in ('left', 'right'):
             if side in ir_pressed:
                 score_z[side] = -1.0
-        if sharp_close:
+        if front_close:
             score_z['front_center'] = -1.0
 
         # ── Build candidate escape directions (mechanum-friendly) ──
@@ -2287,7 +2526,7 @@ class BrainNode(Node):
         # (robot physically surrounded by IR-detectable obstacles).
         # This is a genuine safety stop — no maneuver is safe.
         # ─────────────────────────────────────────────────────────────
-        all_ir_blocked = all(ir_mask) and sharp_close
+        all_ir_blocked = all(ir_mask) and front_close
         if all_ir_blocked:
             self.get_logger().warn(
                 'E-STOP: all 4 IR + Sharp sensors triggered — '
@@ -2309,7 +2548,7 @@ class BrainNode(Node):
 
         # Case 1 (single-side IR, forward drive): use strafe to other
         # side, RESUME FORWARD when corridor is clear.
-        if (('left' in ir_pressed) ^ ('right' in ir_pressed)) and not sharp_close:
+        if (('left' in ir_pressed) ^ ('right' in ir_pressed)) and not front_close:
             # Only ONE side blocked by IR → strafe to the OTHER side
             if 'left' in ir_pressed:
                 candidates['strafe_right'] = (1.5, (0, +100, 0))

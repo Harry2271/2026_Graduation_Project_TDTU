@@ -194,6 +194,7 @@ class FakeEsp32Bridge:
         self.on_firmware_error: Callable[[dict], None] = lambda _data: None
         self.on_ir: Callable[[dict], None] = lambda _data: None
         self.on_sharp: Callable[[dict], None] = lambda _data: None
+        self.on_front_tof: Callable[[dict], None] = lambda _data: None
         self.on_tof: Callable[[dict], None] = lambda _data: None
         self.on_cylinder: Callable[[dict], None] = lambda _data: None
         self.on_health: Callable[[dict], None] = lambda _data: None
@@ -392,7 +393,8 @@ class RealEsp32Bridge:
     TYPE_POWER       = 133
     TYPE_IMU         = 134
     TYPE_IR          = 135
-    TYPE_SHARP       = 136
+    TYPE_SHARP       = 136  # legacy name; payload is front VL53L1X
+    TYPE_FRONT_TOF   = TYPE_SHARP
     TYPE_TOF         = 138
     TYPE_CYLINDER    = 139
     TYPE_UNLOAD_STATE = 140
@@ -439,6 +441,7 @@ class RealEsp32Bridge:
         self.on_firmware_error: Callable[[dict], None] = lambda _data: None
         self.on_ir: Callable[[dict], None] = lambda _data: None
         self.on_sharp: Callable[[dict], None] = lambda _data: None
+        self.on_front_tof: Callable[[dict], None] = lambda _data: None
         self.on_tof: Callable[[dict], None] = lambda _data: None
         self.on_cylinder: Callable[[dict], None] = lambda _data: None
         self.on_health: Callable[[dict], None] = lambda _data: None
@@ -865,8 +868,13 @@ class RealEsp32Bridge:
             self._last_ir = data
             self._safe_call(self.on_ir, data)
         elif msg_type == self.TYPE_SHARP:
+            # Type 136 retains its legacy dispatch name while firmware now
+            # identifies it as a front VL53L1X ToF payload.
+            data.setdefault('source', 'front_tof')
+            data.setdefault('sensor', 'vl53l1x')
             self._last_sharp = data
             self._safe_call(self.on_sharp, data)
+            self._safe_call(self.on_front_tof, data)
         elif msg_type == self.TYPE_TOF:
             self._last_tof = data
             self._safe_call(self.on_tof, data)
@@ -952,6 +960,8 @@ class MirrorBridge:
                                  self._on_ir, 10)
         node.create_subscription(_String, '/esp32/sharp',
                                  self._on_sharp, 10)
+        node.create_subscription(_String, '/esp32/front_tof',
+                                 self._on_front_tof, 10)
         node.create_subscription(_String, '/esp32/tof',
                                  self._on_tof, 10)
         node.create_subscription(_String, '/esp32/cylinder',
@@ -1157,6 +1167,9 @@ class MirrorBridge:
 
     def _on_sharp(self, msg: Any) -> None:
         self._on_runtime_frame(msg, self.on_sharp)
+
+    def _on_front_tof(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_front_tof)
 
     def _on_tof(self, msg: Any) -> None:
         self._on_runtime_frame(msg, self.on_tof)

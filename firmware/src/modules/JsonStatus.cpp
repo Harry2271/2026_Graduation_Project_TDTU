@@ -6,9 +6,10 @@
 #include "Encoder.h"
 #include "PIDController.h"
 #include "BNO055Sensor.h"
+#include "ImuSafetyEvaluator.h"
 #include "INA226Sensor.h"
 #include "IRProximitySensor.h"
-#include "SharpFrontSensor.h"
+#include "FrontTofSensor.h"
 #include "VL53L0XSensor.h"
 
 #include "CylinderActuator.h"
@@ -26,7 +27,7 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
     Encoder encoders[], PIDController pids[],
     BTS7960Driver motors[],
     BNO055Sensor* imu, INA226Sensor* power,
-    IRProximitySensor* ir, SharpFrontSensor* sharp,
+    IRProximitySensor* ir, FrontTofSensor* front_tof,
     VL53L0XSensor* tof, CylinderActuator* cylinder,
     int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
     bool e_stop, uint8_t max_pct)
@@ -70,11 +71,24 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
     ir_obj["L"]    = ir->isDetected(IRPosition::LEFT);
     ir_obj["R"]    = ir->isDetected(IRPosition::RIGHT);
 
+    const bool front_stale = front_tof->isStale(now_ms);
+    const bool front_valid = front_tof->isReadingValid() && !front_stale;
+    JsonObject front = doc.createNestedObject("front_tof");
+    front["sensor"] = "vl53l1x";
+    front["distance_mm"] = front_tof->getDistanceMm();
+    front["distance_cm"] = front_tof->getDistanceCm();
+    front["valid"] = front_valid;
+    front["stale"] = front_stale;
+    front["present"] = front_tof->isPresent();
+    front["too_close"] = front_tof->isTooClose(now_ms);
+    front["slowing"] = front_tof->isSlowing(now_ms);
+
+    // Legacy full-status alias retained during the Pi/UI rollout.
     JsonObject shp = doc.createNestedObject("sharp");
-    shp["dist_cm"]   = sharp->getDistanceCm();
-    shp["too_close"] = sharp->isTooClose();
-    shp["slowing"]   = sharp->isSlowing();
-    shp["present"]   = sharp->isPresent();
+    shp["dist_cm"] = front_tof->getDistanceCm();
+    shp["too_close"] = front_tof->isTooClose(now_ms);
+    shp["slowing"] = front_tof->isSlowing(now_ms);
+    shp["present"] = front_tof->isPresent();
 
     JsonObject imu_obj = doc.createNestedObject("imu");
     if (imu->isOperational()) {
@@ -137,7 +151,7 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     Encoder encoders[],
     BTS7960Driver motors[],
     BNO055Sensor* imu, INA226Sensor* power,
-    IRProximitySensor* ir, SharpFrontSensor* sharp,
+    IRProximitySensor* ir, FrontTofSensor* front_tof,
     VL53L0XSensor* tof, CylinderActuator* cylinder,
     CargoSensor* cargo,
     int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
@@ -178,9 +192,15 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     JsonObject st = doc.createNestedObject("st");
     st["imu"] = imu->isOperational();
     st["pwr"] = power->isOperational();
-    st["sharp"] = sharp->getDistanceCm();
+    const bool front_stale = front_tof->isStale(now_ms);
+    const bool front_valid = front_tof->isReadingValid() && !front_stale;
+    st["front_tof_cm"] = front_tof->getDistanceCm();
+    st["front_tof_valid"] = front_valid;
+    st["front_tof_stale"] = front_stale;
+    st["front_tof_sensor"] = "vl53l1x";
+    st["sharp"] = front_tof->getDistanceCm();  // legacy cm alias
     const ObstacleAvoidance& avoidance = modeManager->getObstacleAvoidance();
-    st["obs"] = sharp->isTooClose() || sharp->isSlowing() || (ir->detectedMask() != 0) ||
+    st["obs"] = front_tof->isTooClose(now_ms) || front_tof->isSlowing(now_ms) || (ir->detectedMask() != 0) ||
                  avoidance.hasActiveObstacle();
     st["obstacle_dir"] = (int)avoidance.getLastDirection();
     st["obstacle_dodge"] = avoidance.isDodging();
@@ -225,16 +245,18 @@ size_t JsonStatus::emitEncoderSnapshot(char* buf, size_t bufsize,
 }
 
 // =======================================================================
-// Type 137 — combined IR + Sharp obstacle state
+// Type 137 — combined IR + Front ToF obstacle state
 // =======================================================================
 size_t JsonStatus::emitObstacle(char* buf, size_t bufsize,
-    IRProximitySensor* ir, SharpFrontSensor* sharp)
+    IRProximitySensor* ir, FrontTofSensor* front_tof)
 {
     JsonDocument doc;
     doc["type"] = 137;
     doc["ts"]   = millis();
-    doc["sharp_cm"]    = sharp->getDistanceCm();
-    doc["sharp_close"] = sharp->isTooClose();
+    doc["front_tof_cm"]    = front_tof->getDistanceCm();
+    doc["front_tof_close"] = front_tof->isTooClose(millis());
+    doc["sharp_cm"] = front_tof->getDistanceCm();
+    doc["sharp_close"] = front_tof->isTooClose(millis());
     JsonArray ir_arr = doc.createNestedArray("ir");
     ir_arr.add(ir->isDetected(IRPosition::REAR_LEFT));
     ir_arr.add(ir->isDetected(IRPosition::REAR_RIGHT));
@@ -257,7 +279,8 @@ size_t JsonStatus::emitObstacle(char* buf, size_t bufsize,
 //   temp_c: temperature
 //   cal:    {sys, gyro, accel, mag}  0–3 each
 // =======================================================================
-size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
+size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu,
+                           const ImuSafetyEvaluator* safety)
 {
     JsonDocument doc;
     doc["type"] = 134;
@@ -295,6 +318,26 @@ size_t JsonStatus::emitIMU(char* buf, size_t bufsize, BNO055Sensor* imu)
         cal["mag"]   = imu->getCalMag();
     } else {
         data["ok"] = false;
+    }
+
+    // Keep this nested object stable even when the sensor is unavailable so
+    // Pi consumers can distinguish stale/invalid data from a missing field.
+    if (safety) {
+        const ImuSafetyEvaluator::Snapshot& s = safety->snapshot();
+        JsonObject safety_obj = data["safety"].to<JsonObject>();
+        safety_obj["config_rev"] = IMU_SAFETY_CONFIG_REV;
+        safety_obj["enforcement"] = safety->enforcementEnabled();
+        safety_obj["sample_valid"] = s.sample_valid && imu->isOperational();
+        safety_obj["heading_calibrated"] = s.heading_calibrated;
+        safety_obj["tilt_deg"] = s.tilt_deg;
+        safety_obj["linear_accel_mps2"] = s.linear_accel_mps2;
+        safety_obj["gyro_dps"] = s.gyro_dps;
+        safety_obj["tilt_warning"] = s.tilt_warning;
+        safety_obj["tilt_observed"] = s.tilt_observed;
+        safety_obj["shock_candidate"] = s.shock_candidate;
+        safety_obj["shock_observed"] = s.shock_observed;
+        safety_obj["observed_at_ms"] = s.observed_at_ms;
+        safety_obj["event"] = safety->eventName(s.event);
     }
     size_t n = serializeJson(doc, buf, bufsize);
     if (n < bufsize) { buf[n] = '\n'; buf[n + 1] = '\0'; n++; }

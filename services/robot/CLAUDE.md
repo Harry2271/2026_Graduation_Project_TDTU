@@ -263,7 +263,14 @@ Forwarded from `/esp32/imu`. Used by the brain for heading correction and the ri
     "accel": [0.0, 0.0, 9.81],
     "gyro": [0.0, 0.0, 0.0],
     "temp_c": 28,
-    "cal": {"sys": 3, "gyr": 3, "acc": 3, "mag": 0}
+    "cal": {"sys": 3, "gyr": 3, "acc": 3, "mag": 0},
+    "safety": {
+      "config_rev": 1, "enforcement": false, "sample_valid": true,
+      "tilt_deg": 0.2, "linear_accel_mps2": 0.1, "gyro_dps": 0.3,
+      "tilt_warning": false, "tilt_observed": false,
+      "shock_candidate": false, "shock_observed": false,
+      "event": "none"
+    }
   }
 }
 ```

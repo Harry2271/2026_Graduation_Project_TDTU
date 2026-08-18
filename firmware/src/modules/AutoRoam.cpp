@@ -1,7 +1,7 @@
 #include "AutoRoam.h"
 #include "BNO055Sensor.h"
 #include "IRProximitySensor.h"
-#include "SharpFrontSensor.h"
+#include "FrontTofSensor.h"
 #include "INA226Sensor.h"
 #include "VL53L0XSensor.h"
 #include "CylinderActuator.h"
@@ -14,7 +14,7 @@
 // AutoRoam — autonomous sensor-based driving + dock/unload sequence
 //
 // Two modes of operation:
-//   1. NORMAL ROAMING: forward drive + heading-hold + IR/Sharp avoidance
+//   1. NORMAL ROAMING: forward drive + heading-hold + IR/Front ToF avoidance
 //   2. UNLOADING: Pi-triggered sequence (begin_dock → adjust → extend →
 //      hold → retract → done → leave → complete)
 //
@@ -28,10 +28,10 @@ AutoRoam::AutoRoam()
     , heading_kp_(2.5f)
     , heading_ki_(0.3f)
     , last_obstacle_ms_(0)
-    , sharp_clear_ms_(0)
+    , front_tof_clear_ms_(0)
     , hard_stop_(false)
     , last_ir_mask_(0)
-    , imu_(nullptr), ir_(nullptr), sharp_(nullptr), power_(nullptr)
+    , imu_(nullptr), ir_(nullptr), front_tof_(nullptr), power_(nullptr)
     , tof_(nullptr), cylinder_(nullptr)
     , unload_state_(UNLOAD_IDLE)
     , unload_start_ms_(0)
@@ -50,14 +50,14 @@ AutoRoam::AutoRoam()
 
 void AutoRoam::attachSensors(BNO055Sensor* imu,
                              IRProximitySensor* ir,
-                             SharpFrontSensor* sharp,
+                             FrontTofSensor* front_tof,
                              INA226Sensor* power,
                              VL53L0XSensor* tof,
                              CylinderActuator* cylinder)
 {
     imu_      = imu;
     ir_       = ir;
-    sharp_    = sharp;
+    front_tof_    = front_tof;
     power_    = power;
     tof_      = tof;
     cylinder_ = cylinder;
@@ -69,8 +69,8 @@ void AutoRoam::reset()
     heading_integral_  = 0.0f;
     hard_stop_         = false;
     last_obstacle_ms_  = 0;
-    sharp_clear_ms_    = 0;
-    drive_start_ms_    = 0;  // re-arm Sharp boot-skip on next AUTO_ROAM entry
+    front_tof_clear_ms_    = 0;
+    drive_start_ms_    = 0;  // re-arm Front ToF boot-skip on next AUTO_ROAM entry
 
     // Reset the embedded avoidance FSM latch (STATE_E_STOPPED is a one-way
     // trap until reset() is called; without this, a single latched condition
@@ -309,9 +309,9 @@ bool AutoRoam::compute(uint32_t now_ms,
                 }
                 // Fine-position adjustment must not override physical sensors.
                 // A dock target is validated by the dedicated VL53L0X; an IR or
-                // Sharp trip means a separate close obstacle is in the way.
+                // Front ToF trip means a separate close obstacle is in the way.
                 if ((ir_ && ir_->detectedMask() != 0) ||
-                    (sharp_ && sharp_->isTooClose())) {
+                    (front_tof_ && front_tof_->isTooClose(millis()))) {
                     cancelUnloading(DOCK_ERROR_LOCAL_OBSTACLE);
                     return false;
                 }
@@ -512,13 +512,10 @@ bool AutoRoam::compute(uint32_t now_ms,
     // NORMAL ROAMING (multi-sensor FSM avoidance + heading-hold)
     // ========================================================================
 
-    // Mark the first time we enter the driving loop so we can skip Sharp for
-    // the first SHARP_BOOT_SKIP_MS (lets the ADC settle and any warm-up noise
-    // dissipate before trusting the reading for a hard-stop).
     if (drive_start_ms_ == 0) drive_start_ms_ = now_ms;
 
-    // Update Sharp so avoidance FSM gets a fresh reading
-    if (sharp_) sharp_->update(now_ms);
+    // Update Front ToF so avoidance FSM gets a fresh reading
+    if (front_tof_) front_tof_->update(now_ms);
 
     // ----- Feed FSM with encoder delta + heading for state decisions -----
     // Always read the FL encoder and feed the delta, even if unchanged
@@ -547,17 +544,13 @@ bool AutoRoam::compute(uint32_t now_ms,
         }
     }
 
-    // ----- Base forward speed (with battery + Sharp slow-down logic) -----
+    // ----- Base forward speed (with battery + front-ToF slow-down logic) -----
     int16_t base_vx = BASE_FWD_SPEED;
-    bool sharp_warmup = (now_ms - drive_start_ms_) < SHARP_BOOT_SKIP_MS;
-    if (sharp_ && !sharp_warmup && sharp_->isSlowing()) {
+    if (front_tof_ && front_tof_->isSlowing(now_ms)) {
         base_vx = SLOW_FWD_SPEED;
     }
     if (power_ && power_->isOperational() && power_->getBatteryPct() <= 20.0f) {
         base_vx /= 2;
-    }
-    if (sharp_warmup) {
-        base_vx = 0;  // wait for Sharp to settle before driving
     }
 
     // ----- Heading-hold PI (produces small omega correction) -----
@@ -581,8 +574,8 @@ bool AutoRoam::compute(uint32_t now_ms,
 
     // Tick FSM — it can override base motion based on sensors
     AvoidanceAction action;
-    if (ir_ && sharp_) {
-        action = avoidance_fsm_.tick(now_ms, *ir_, *sharp_, base_vx, nav_vy, nav_omega);
+    if (ir_ && front_tof_) {
+        action = avoidance_fsm_.tick(now_ms, *ir_, *front_tof_, base_vx, nav_vy, nav_omega);
     } else {
         action.vx = base_vx;
         action.vy = nav_vy;
@@ -601,7 +594,7 @@ bool AutoRoam::compute(uint32_t now_ms,
         // string, which was fragile — any new state name would break the
         // check.  Now we rely solely on the FSM's hard_stop field.
         hard_stop_ = true;
-        sharp_clear_ms_ = now_ms;
+        front_tof_clear_ms_ = now_ms;
         return false;
     }
 

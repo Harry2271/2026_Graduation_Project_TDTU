@@ -340,3 +340,31 @@ def test_real_bridge_accepts_legacy_estop_status_field() -> None:
     bridge._handle_line(b'{"type":131,"estop":true}')
 
     assert e_stop_events == [True]
+
+
+def test_real_bridge_preserves_imu_safety_payload() -> None:
+    bridge = RealEsp32Bridge(writer=MagicMock(), reader=MagicMock())
+    received: list[dict] = []
+    bridge.on_imu = received.append
+    payload = {
+        'heading': 12.5,
+        'q': [1.0, 0.0, 0.0, 0.0],
+        'accel': [0.1, 0.0, 0.0],
+        'gyro': [0.0, 0.0, 0.2],
+        'safety': {
+            'config_rev': 1,
+            'enforcement': False,
+            'sample_valid': True,
+            'tilt_deg': 2.0,
+            'linear_accel_mps2': 0.1,
+            'gyro_dps': 0.2,
+            'event': 'none',
+        },
+    }
+
+    bridge._handle_line(
+        json.dumps({'type': 134, 'data': payload}).encode('utf-8')
+    )
+
+    assert received == [payload]
+    assert received[0]['safety']['enforcement'] is False

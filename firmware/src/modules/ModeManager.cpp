@@ -29,12 +29,12 @@ void ModeManager::begin()
 
 void ModeManager::attachSensors(BNO055Sensor* imu,
                                 IRProximitySensor* ir,
-                                SharpFrontSensor* sharp,
+                                FrontTofSensor* front_tof,
                                 INA226Sensor* power,
                                 VL53L0XSensor* tof,
                                 CylinderActuator* cylinder)
 {
-    auto_roam_.attachSensors(imu, ir, sharp, power, tof, cylinder);
+    auto_roam_.attachSensors(imu, ir, front_tof, power, tof, cylinder);
     Serial.println("[ModeManager] AutoRoam sensors attached");
 }
 
@@ -235,7 +235,7 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
         case CMD_OBSTACLE_CLEAR:
             obstacle_.clearObstacles(now_ms);
             // Explicit Pi clear is also the only non-e-stop route to reset
-            // the latched AUTO_ROAM avoidance FSM.  Local IR/Sharp are still
+            // the latched AUTO_ROAM avoidance FSM.  Local IR/Front ToF are still
             // polled independently and can reassert the hard stop immediately.
             auto_roam_.reset();
             break;
@@ -389,7 +389,7 @@ void ModeManager::applyMotorOutputs(BTS7960Driver* motors, Encoder* encoders,
             if (auto_roam_.getUnloadState() == AutoRoam::UNLOAD_COMPLETE) {
                 finishDock(now_ms);
             }
-            // Sharp-triggered soft-hold: zero PWM but DO NOT latch EN low.
+            // front-ToF-triggered soft-hold: zero PWM but DO NOT latch EN low.
             // emergencyStop() would set enabled_=false and stop wheels permanently
             // until E-STOP is cleared. coast() just zeros PWM and leaves the
             // driver enabled so the next tick can resume immediately.
