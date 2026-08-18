@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Package, Map as MapIcon, Camera, Layers, Activity, Box, Clock } from 'lucide-react';
+import { Package, Map as MapIcon, Camera, Layers, Activity, Box, Clock, Cpu, Gauge, Radar } from 'lucide-react';
 
 const menuItems = [
   { name: 'Kho hàng',          path: '/inventory', icon: Package  },
@@ -12,6 +12,9 @@ const menuItems = [
   { name: 'Bản đồ',            path: '/map',       icon: MapIcon  },
   { name: 'Quỹ đạo 3D',        path: '/trajectory', icon: Box     },
   { name: 'Camera',             path: '/camera',     icon: Camera   },
+  { name: 'Thông số kỹ thuật', path: '/specifications', icon: Cpu },
+  { name: 'Encoder pipeline',  path: '/encoder-pipeline', icon: Gauge },
+  { name: 'PID & LiDAR lab',   path: '/signal-lab', icon: Radar },
 ];
 
 function BrandHeader() {
@@ -135,11 +138,26 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void } = {})
         >
           Điều hướng chính
         </p>
-        {menuItems.map(({ name, path, icon: Icon }) => {
-          const isActive = pathname === path || (pathname === '/' && path === '/inventory');
+        {menuItems.map(({ name, path, icon: Icon }, index) => {
+          const isTechnical = index === 6;
+          const isActive = pathname === path || pathname.startsWith(`${path}/`) || (pathname === '/' && path === '/inventory');
           return (
-            <Link
-              key={path}
+            <div key={path}>
+              {isTechnical && (
+                <p
+                  className="text-[9px] font-semibold px-3 mt-5 mb-2"
+                  style={{
+                    color: 'var(--text-muted)',
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  Phân tích kỹ thuật
+                </p>
+              )}
+              <Link
+              key={`${path}-link`}
               href={path}
               onClick={onNavigate}
               className="group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 overflow-hidden"
@@ -183,7 +201,8 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void } = {})
                   →
                 </span>
               )}
-            </Link>
+              </Link>
+            </div>
           );
         })}
         <StatusPanel />

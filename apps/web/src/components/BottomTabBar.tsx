@@ -10,6 +10,7 @@ const ITEMS = [
   { path: '/map', label: 'Bản đồ', icon: MapIcon },
   { path: '/camera', label: 'Camera', icon: Camera },
   { path: '/telemetry', label: 'ESP32', icon: Cpu },
+  { path: '/specifications', label: 'Kỹ thuật', icon: Cpu },
 ] as const;
 
 export default function BottomTabBar() {

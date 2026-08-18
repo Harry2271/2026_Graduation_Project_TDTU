@@ -53,10 +53,21 @@ export default function RootLayout({
               theme={{
                 algorithm: theme.darkAlgorithm,
                 token: {
-                  colorBgElevated: "var(--bg-surface)",
+                  colorPrimary: "var(--accent)",
+                  colorInfo: "var(--accent)",
+                  colorSuccess: "var(--success)",
+                  colorWarning: "var(--warning)",
+                  colorError: "var(--danger)",
+                  colorBgBase: "var(--bg-void)",
+                  colorBgContainer: "var(--bg-surface)",
+                  colorBgElevated: "var(--bg-raised)",
+                  colorFillAlter: "var(--bg-base)",
+                  colorBorder: "var(--border-mid)",
+                  colorBorderSecondary: "var(--border-dim)",
                   colorText: "var(--text-secondary)",
-                  // ÉP THẰNG NÀY SÁNG LÊN
                   colorTextHeading: "var(--text-primary)",
+                  colorTextSecondary: "var(--text-muted)",
+                  borderRadius: 8,
                   fontFamily: "var(--font-jetbrains)",
                 },
                 components: {

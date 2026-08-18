@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { usePathname } from 'next/navigation';
 
 const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL || 'wss://map.nguyen-robot.io.vn';

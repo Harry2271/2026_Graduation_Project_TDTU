@@ -85,6 +85,145 @@ body {
   color: var(--accent);
 }
 
+/* ─── Technical report surfaces ───────────────────────────────────── */
+.technical-page .ant-card,
+.technical-page .ant-collapse,
+.technical-page .ant-table-wrapper,
+.technical-page .ant-segmented {
+  background: var(--bg-surface);
+  border-color: var(--border-dim);
+  color: var(--text-secondary);
+}
+
+.technical-page .ant-card:hover {
+  border-color: var(--border-mid);
+  background: var(--bg-raised);
+}
+
+.technical-page .ant-table,
+.technical-page .ant-table-container,
+.technical-page .ant-table-content,
+.technical-page .ant-table-thead > tr > th,
+.technical-page .ant-table-tbody > tr > td {
+  background: transparent;
+}
+
+.technical-page .ant-table-thead > tr > th {
+  color: var(--text-muted);
+  border-bottom-color: var(--border-mid);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.technical-page .ant-table-tbody > tr > td {
+  color: var(--text-secondary);
+  border-bottom-color: var(--border-dim);
+  font-size: 12px;
+}
+
+.technical-page .ant-table-tbody > tr:hover > td,
+.technical-page .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: var(--bg-raised) !important;
+}
+
+.technical-page .ant-segmented {
+  padding: 3px;
+}
+
+.technical-page .ant-segmented-item {
+  color: var(--text-secondary);
+}
+
+.technical-page .ant-segmented-item-selected {
+  background: var(--accent-dim);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.technical-page .ant-progress-inner {
+  background: var(--bg-base);
+}
+
+.technical-page .ant-slider .ant-slider-rail {
+  background: var(--bg-base);
+}
+
+.technical-page .ant-slider .ant-slider-track {
+  background: var(--accent);
+}
+
+.technical-page .ant-slider .ant-slider-handle::after {
+  box-shadow: 0 0 0 2px var(--accent);
+  background: var(--bg-surface);
+}
+
+.technical-page .ant-descriptions .ant-descriptions-row > th,
+.technical-page .ant-descriptions .ant-descriptions-row > td {
+  padding-bottom: 10px;
+}
+
+.technical-page .ant-descriptions .ant-descriptions-row:last-child > th,
+.technical-page .ant-descriptions .ant-descriptions-row:last-child > td {
+  padding-bottom: 0;
+}
+
+.technical-page .ant-statistic-title,
+.technical-page .ant-descriptions-item-label {
+  color: var(--text-muted) !important;
+}
+
+.technical-page .ant-statistic-content,
+.technical-page .ant-descriptions-item-content,
+.technical-page .ant-collapse-header-text {
+  color: var(--text-primary) !important;
+}
+
+.technical-page .ant-alert-message {
+  color: var(--text-primary) !important;
+}
+
+.technical-page .ant-alert-description {
+  color: var(--text-secondary) !important;
+}
+
+.technical-page .ant-tag {
+  border-color: var(--border-mid) !important;
+}
+
+.technical-page .ant-tag-gold {
+  color: var(--warning) !important;
+  background: var(--warning-dim) !important;
+  border-color: var(--warning-border) !important;
+}
+
+.technical-page .ant-tag-success {
+  color: var(--success) !important;
+  background: var(--success-dim) !important;
+  border-color: var(--success-border) !important;
+}
+
+.technical-page .ant-tag-error {
+  color: var(--danger) !important;
+  background: var(--danger-dim) !important;
+  border-color: var(--danger-border) !important;
+}
+
+.technical-page .ant-alert-info {
+  background: var(--accent-dim);
+  border-color: var(--accent-border);
+}
+
+.technical-page .ant-alert-warning {
+  background: var(--warning-dim);
+  border-color: var(--warning-border);
+}
+
+.technical-page .ant-collapse-content {
+  background: transparent;
+  border-top-color: var(--border-dim);
+}
+
 /* ─── Custom scrollbar ───────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-base); }
