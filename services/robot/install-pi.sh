@@ -97,13 +97,11 @@ source /opt/ros/jazzy/setup.bash
 # here. We previously tried `sllidar_ros2` from source, but its ament_index
 # was inconsistently populated, breaking PM2 launch.
 
-# ---- Python deps ------------------------------------------------------------
-echo "[EXTRA] Installing Python packages..."
-apt-get install -y ffmpeg libopencv-dev python3-opencv
+# --- AprilTag detector (dt-apriltags) ---
+echo "📦 Installing AprilTag detector (dt-apriltags)..."
+apt-get install -y libopencv-dev
 pip3 install --break-system-packages \
-    websockets \
     numpy \
-    "python-socketio[asyncio_client]" \
     opencv-python-headless \
     dt-apriltags
 python3 - <<'PY'
