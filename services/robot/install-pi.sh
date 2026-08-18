@@ -99,7 +99,20 @@ source /opt/ros/jazzy/setup.bash
 
 # ---- Python deps ------------------------------------------------------------
 echo "[EXTRA] Installing Python packages..."
-pip3 install --break-system-packages websockets numpy "python-socketio[asyncio_client]"
+apt-get install -y ffmpeg libopencv-dev python3-opencv
+pip3 install --break-system-packages \
+    websockets \
+    numpy \
+    "python-socketio[asyncio_client]" \
+    opencv-python-headless \
+    dt-apriltags
+python3 - <<'PY'
+from dt_apriltags import Detector
+import cv2
+import numpy
+print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
+Detector(families="tag36h11", nthreads=2)
+PY
 
 # ---- Create project directories ---------------------------------------------
 echo "[EXTRA] Creating project directories..."
