@@ -83,14 +83,22 @@ echo "🏗️ Building workspace..."
 colcon build --merge-install --executor sequential
 source "$ROS_WS/install/setup.bash"
 
-# --- [BƯỚC 2b] Camera dependencies ---
-echo "📦 Checking camera dependencies..."
-if command -v ffmpeg &>/dev/null; then
-    echo "  ✓ ffmpeg already installed"
-else
-    echo "  📥 Installing ffmpeg via apt..."
-    sudo apt-get install -y ffmpeg
+# --- AprilTag vision dependencies. Keep this repair step in deploy so an existing
+# Pi is fixed even when install-pi.sh was run before vision was added.
+if ! python3 -c 'from dt_apriltags import Detector; import cv2; import numpy' 2>/dev/null; then
+    echo "📦 Installing AprilTag vision dependencies..."
+    sudo apt-get update
+    sudo apt-get install -y ffmpeg libopencv-dev python3-opencv python3-pip
+    python3 -m pip install --break-system-packages \
+        numpy opencv-python-headless dt-apriltags
 fi
+python3 - <<'PY'
+from dt_apriltags import Detector
+import cv2
+import numpy
+print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
+Detector(families="tag36h11", nthreads=2)
+PY
 
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
 echo "🔄 Restarting ROS 2 Nodes via PM2..."
