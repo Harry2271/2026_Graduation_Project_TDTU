@@ -44,7 +44,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag36h11", nthreads=2)
+Detector(families="tag25h9", nthreads=2)
 PY
 
 find_lidar_port() {
@@ -97,7 +97,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag36h11", nthreads=2)
+Detector(families="tag25h9", nthreads=2)
 PY
 
 # --- [BƯỚC 3] Vận hành bằng PM2 ---

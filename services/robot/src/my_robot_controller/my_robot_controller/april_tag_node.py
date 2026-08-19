@@ -94,7 +94,7 @@ except ImportError:
 DEVICE = os.environ.get('CAMERA_DEVICE', '/dev/video0')
 WIDTH = int(os.environ.get('CAMERA_WIDTH', '640'))
 HEIGHT = int(os.environ.get('CAMERA_HEIGHT', '480'))
-FAMILY = os.environ.get('APRILTAG_FAMILY', 'tag36h11')
+FAMILY = os.environ.get('APRILTAG_FAMILY', 'tag25h9')
 SIZE_M = float(os.environ.get('APRILTAG_SIZE_M', '0.166'))
 HZ = float(os.environ.get('APRILTAG_HZ', '10'))
 

@@ -147,7 +147,7 @@ def generate_launch_description():
         additional_env={
             'USE_REAL_BRIDGE': os.environ.get('USE_REAL_BRIDGE', '1'),
             'ESP32_PORT': os.environ.get('ESP32_PORT', '/dev/robot-esp32'),
-            'APRILTAG_FAMILY': os.environ.get('APRILTAG_FAMILY', 'tag36h11'),
+            'APRILTAG_FAMILY': os.environ.get('APRILTAG_FAMILY', 'tag25h9'),
             'APRILTAG_SIZE_M': os.environ.get('APRILTAG_SIZE_M', '0.166'),
         },
     )
@@ -162,7 +162,7 @@ def generate_launch_description():
             'use_sim_time': LaunchConfiguration('use_sim_time'),
         }],
         additional_env={
-            'APRILTAG_FAMILY': os.environ.get('APRILTAG_FAMILY', 'tag36h11'),
+            'APRILTAG_FAMILY': os.environ.get('APRILTAG_FAMILY', 'tag25h9'),
             'APRILTAG_SIZE_M': os.environ.get('APRILTAG_SIZE_M', '0.166'),
             'CAMERA_DEVICE': os.environ.get('CAMERA_DEVICE', '/dev/video0'),
             'CAMERA_WIDTH': os.environ.get('CAMERA_WIDTH', '640'),
