@@ -52,7 +52,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag36h11", nthreads=2)
+Detector(families="tag25h9", nthreads=2)
 PY
 
 # Do not pick the first ttyUSB/ttyACM device: enumeration order can swap the
@@ -144,7 +144,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag36h11", nthreads=2)
+Detector(families="tag25h9", nthreads=2)
 PY
 
 # --- [4] Start PM2 processes ---
