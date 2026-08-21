@@ -60,7 +60,7 @@ export function TechnicalPageShell({ eyebrow, title, description, icon, children
           <p className="mt-3 max-w-3xl text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>{description}</p>
         </div>
       </header>
-      <main className="mx-auto max-w-[1440px] space-y-10 px-4 py-6 md:px-8 md:py-8">{children}</main>
+      <main className="mx-auto min-w-0 max-w-[1440px] space-y-10 px-4 py-6 md:px-8 md:py-8">{children}</main>
     </div>
   );
 }
@@ -74,7 +74,7 @@ export function TechnicalSection({ title, description, children }: TechnicalSect
         </h2>
         {description && <p className="mt-2 max-w-3xl text-xs leading-5" style={{ color: 'var(--text-secondary)' }}>{description}</p>}
       </div>
-      {children}
+      <div className="min-w-0 space-y-6">{children}</div>
     </section>
   );
 }

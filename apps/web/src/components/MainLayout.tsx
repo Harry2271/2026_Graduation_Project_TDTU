@@ -21,7 +21,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         >
           <Sidebar />
           <main
-            className="flex flex-col flex-1 h-full overflow-hidden relative"
+            className="flex flex-col flex-1 min-w-0 h-full overflow-hidden relative"
             style={{ background: 'var(--bg-void)' }}
           >
             <div

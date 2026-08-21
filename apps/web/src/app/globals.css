@@ -85,6 +85,40 @@ body {
   color: var(--accent);
 }
 
+/* ─── Ant Design alert overrides (global, not scoped to .technical-page) ─── */
+.ant-alert-info {
+  background: var(--accent-dim) !important;
+  border: 1px solid var(--accent-border) !important;
+  color: var(--text-primary) !important;
+}
+.ant-alert-info .ant-alert-icon {
+  color: var(--accent) !important;
+}
+.ant-alert-success {
+  background: var(--success-dim) !important;
+  border: 1px solid var(--success-border) !important;
+  color: var(--text-primary) !important;
+}
+.ant-alert-success .ant-alert-icon {
+  color: var(--success) !important;
+}
+.ant-alert-warning {
+  background: var(--warning-dim) !important;
+  border: 1px solid var(--warning-border) !important;
+  color: var(--text-primary) !important;
+}
+.ant-alert-warning .ant-alert-icon {
+  color: var(--warning) !important;
+}
+.ant-alert-error {
+  background: var(--danger-dim) !important;
+  border: 1px solid var(--danger-border) !important;
+  color: var(--text-primary) !important;
+}
+.ant-alert-error .ant-alert-icon {
+  color: var(--danger) !important;
+}
+
 /* ─── Technical report surfaces ───────────────────────────────────── */
 .technical-page .ant-card,
 .technical-page .ant-collapse,
@@ -209,14 +243,38 @@ body {
   border-color: var(--danger-border) !important;
 }
 
-.technical-page .ant-alert-info {
-  background: var(--accent-dim);
-  border-color: var(--accent-border);
+/* ─── Ant Design alert overrides (global, not scoped to .technical-page) ─── */
+.ant-alert-info {
+  background: var(--accent-dim) !important;
+  border: 1px solid var(--accent-border) !important;
+  color: var(--text-primary) !important;
 }
-
-.technical-page .ant-alert-warning {
-  background: var(--warning-dim);
-  border-color: var(--warning-border);
+.ant-alert-info .ant-alert-icon {
+  color: var(--accent) !important;
+}
+.ant-alert-success {
+  background: var(--success-dim) !important;
+  border: 1px solid var(--success-border) !important;
+  color: var(--text-primary) !important;
+}
+.ant-alert-success .ant-alert-icon {
+  color: var(--success) !important;
+}
+.ant-alert-warning {
+  background: var(--warning-dim) !important;
+  border: 1px solid var(--warning-border) !important;
+  color: var(--text-primary) !important;
+}
+.ant-alert-warning .ant-alert-icon {
+  color: var(--warning) !important;
+}
+.ant-alert-error {
+  background: var(--danger-dim) !important;
+  border: 1px solid var(--danger-border) !important;
+  color: var(--text-primary) !important;
+}
+.ant-alert-error .ant-alert-icon {
+  color: var(--danger) !important;
 }
 
 .technical-page .ant-collapse-content {
@@ -558,6 +616,7 @@ body {
   box-shadow: 0 0 20px var(--accent-glow) !important;
 }
 
+/* ─── Ant Design notification overrides (global, not scoped to .technical-page) ─── */
 .ant-notification-notice {
   background: var(--bg-surface) !important;
   border: 1px solid var(--border-mid) !important;
@@ -581,6 +640,18 @@ body {
 }
 .ant-notification-notice-content {
   color: var(--text-primary) !important;
+}
+.ant-notification-notice-icon {
+  color: var(--accent) !important;
+}
+.ant-notification-notice .ant-notification-notice-icon-success {
+  color: var(--success) !important;
+}
+.ant-notification-notice .ant-notification-notice-icon-warning {
+  color: var(--warning) !important;
+}
+.ant-notification-notice .ant-notification-notice-icon-error {
+  color: var(--danger) !important;
 }
 
 .ant-collapse-header {
