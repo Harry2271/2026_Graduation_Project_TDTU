@@ -1,6 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { MapPin, RotateCcw, ZoomIn, ZoomOut, Maximize2, Compass, Target, WifiOff, Crosshair, Activity, Power } from 'lucide-react';
 import { Button, App, Tooltip } from 'antd';
 import { FloatingControlDock } from '@/components/FloatingControlDock';

@@ -1,24 +1,24 @@
 export interface Product {
-  id: string;
+  id: string
   attributes: {
-    name: string;
-    description: string;
+    name: string
+    description: string
     life: {
-      max: number;
-      min: number;
-    };
+      max: number
+      min: number
+    }
     male_weight: {
-      max: number;
-      min: number;
-    };
+      max: number
+      min: number
+    }
     female_weight: {
-      max: number;
-      min: number;
-    };
-    hypoallergenic: boolean;
-  };
+      max: number
+      min: number
+    }
+    hypoallergenic: boolean
+  }
 }
 
 export interface ApiResponse<T> {
-  data: T;
+  data: T
 }
