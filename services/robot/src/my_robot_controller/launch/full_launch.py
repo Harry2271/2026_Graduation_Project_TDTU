@@ -133,6 +133,13 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': LaunchConfiguration('use_sim_time'),
         }],
+        additional_env={
+            'CAMERA_DEVICE': os.environ.get('CAMERA_DEVICE', '/dev/video0'),
+            'CAMERA_WIDTH': os.environ.get('CAMERA_STREAM_WIDTH', '640'),
+            'CAMERA_HEIGHT': os.environ.get('CAMERA_STREAM_HEIGHT', '480'),
+            'CAMERA_FPS': os.environ.get('CAMERA_STREAM_FPS', '30'),
+            'CAMERA_PORT': os.environ.get('CAMERA_PORT', '9092'),
+        },
     )
 
     # ── 6. Brain node (state machine + AprilTag) ───────────────────────────────

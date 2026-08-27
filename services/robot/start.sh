@@ -212,7 +212,7 @@ pm2 start "bash" \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
 
 # Camera (max 10 restarts)
-CAMERA_ENV="CAMERA_DEVICE=${CAMERA_DEVICE:-/dev/video0} CAMERA_WIDTH=1280 CAMERA_HEIGHT=720 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"
+CAMERA_ENV="CAMERA_DEVICE=${CAMERA_DEVICE:-/dev/video0} CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"
 pm2 start "bash" \
     --name "${SERVICE_NAME_PREFIX}-camera" \
     --max-restarts 10 \

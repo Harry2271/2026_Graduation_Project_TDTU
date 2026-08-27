@@ -153,6 +153,8 @@ class AprilTagNode(Node):
         # Run detection loop on a background thread so the ROS executor
         # stays responsive (no blocking cv2 calls inside spin).
         self._stop_event = threading.Event()
+        self._frames_seen = 0
+        self._last_detection_log = 0.0
         self._thread = threading.Thread(target=self._detect_loop,
                                          daemon=True, name='apriltag')
         self._thread.start()
@@ -198,6 +200,26 @@ class AprilTagNode(Node):
                     np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
                 if gray is None:
                     raise ValueError('camera snapshot is not a valid JPEG')
+                self._frames_seen += 1
+                if self._frames_seen == 1:
+                    self.get_logger().info(
+                        f'Camera snapshots flowing: {gray.shape[1]}x{gray.shape[0]}')
+                elif self._frames_seen % 100 == 0:
+                    self.get_logger().info(
+                        f'Camera snapshots flowing: {self._frames_seen} frames')
+                # Keep the detector image geometry consistent with calibration.
+                # Crop the centre rather than stretching a 16:9 snapshot to 4:3.
+                target_ratio = WIDTH / HEIGHT
+                current_ratio = gray.shape[1] / gray.shape[0]
+                if abs(current_ratio - target_ratio) > 0.01:
+                    if current_ratio > target_ratio:
+                        crop_width = int(gray.shape[0] * target_ratio)
+                        left = (gray.shape[1] - crop_width) // 2
+                        gray = gray[:, left:left + crop_width]
+                    else:
+                        crop_height = int(gray.shape[1] / target_ratio)
+                        top = (gray.shape[0] - crop_height) // 2
+                        gray = gray[top:top + crop_height, :]
                 if gray.shape != (HEIGHT, WIDTH):
                     gray = cv2.resize(gray, (WIDTH, HEIGHT),
                                       interpolation=cv2.INTER_AREA)
@@ -225,6 +247,12 @@ class AprilTagNode(Node):
             return
 
         if not detections:
+            now = time.monotonic()
+            if now - self._last_detection_log >= 5.0:
+                self.get_logger().info(
+                    f'No AprilTag detected in camera frames ({self._frames_seen} frames)',
+                )
+                self._last_detection_log = now
             return
 
         tags = []
