@@ -125,17 +125,42 @@ BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBO
 # 2. Logic Nodes (brain_node added in Phase 0 of robot-controller-brain plan)
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
 
-# ESP32 telemetry bridge — opens /dev/ttyACM0 and forwards type-130/131 frames
+# ESP32 telemetry bridge — opens /dev/robot-esp32 and forwards type-130/131 frames
 # to /esp32/encoder and /esp32/status, which web_bridge relays to the browser.
 # Must start before web_bridge so subscriptions are live by the time clients
 # connect. Overridable via ESP32_PORT for non-default hardware.
-ESP32_PORT="${ESP32_PORT:-/dev/ttyACM0}"
-sudo chmod 666 "$ESP32_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $ESP32_PORT"
-start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
-# Required for Nav2: publishes /odom and odom→base_footprint from encoders/IMU.
-start_ros_node "${SERVICE_NAME_PREFIX}-odom" "ros2 run my_robot_controller odom"
-# Required motor command consumer for both MANUAL and AUTO/Nav2 /cmd_vel.
-start_ros_node "${SERVICE_NAME_PREFIX}-teleop" "ros2 run my_robot_controller teleop_node"
+ESP32_PORT="${ESP32_PORT:-/dev/robot-esp32}"
+
+# Fallback for ESP32 if udev symlink doesn't exist
+if [ ! -e "$ESP32_PORT" ]; then
+    echo "⚠️  $ESP32_PORT not found — checking for fallback devices..."
+    for candidate in /dev/ttyACM0 /dev/ttyACM1 /dev/ttyUSB1 /dev/ttyUSB2; do
+        if [ -c "$candidate" ] && [ "$candidate" != "$LIDAR_PORT" ]; then
+            ESP32_PORT="$candidate"
+            echo "   Found fallback: $ESP32_PORT"
+            break
+        fi
+    done
+fi
+
+# ESP32 is optional for SLAM-only operation
+if [ -c "$ESP32_PORT" ]; then
+    sudo chmod 666 "$ESP32_PORT" 2>/dev/null || echo "⚠️ Warning: Could not chmod $ESP32_PORT"
+    start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
+    # Required for Nav2: publishes /odom and odom→base_footprint from encoders/IMU.
+    start_ros_node "${SERVICE_NAME_PREFIX}-odom" "ros2 run my_robot_controller odom"
+    # Required motor command consumer for both MANUAL and AUTO/Nav2 /cmd_vel.
+    start_ros_node "${SERVICE_NAME_PREFIX}-teleop" "ros2 run my_robot_controller teleop_node"
+    echo "✅ ESP32 telemetry started on $ESP32_PORT"
+else
+    echo "⚠️  ESP32 device not found: $ESP32_PORT"
+    echo "   Robot will start in SLAM-only mode (no motor control)."
+    echo "   To enable motor control:"
+    echo "     1. Connect ESP32 via USB"
+    echo "     2. Find repo path: find ~ -name 'robot-for-nguyen' -type d 2>/dev/null"
+    echo "     3. Run: cd <repo-path>/services/robot && sudo ./tools/install_udev_rules.sh"
+    echo "     4. Restart: pm2 restart nexus-robot-esp32-telemetry nexus-robot-odom nexus-robot-teleop"
+fi
 
 # web_bridge now subscribes to /esp32/status, /esp32/encoder AND /esp32/power
 # so it must start after esp32-telemetry to have topic subscribers ready.

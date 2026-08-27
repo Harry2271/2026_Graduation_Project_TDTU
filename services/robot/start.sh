@@ -75,10 +75,35 @@ require_serial_device() {
     fi
 }
 
+# Fallback for ESP32 if udev symlink doesn't exist
+if [ ! -e "$ESP32_PORT" ]; then
+    echo "⚠️  $ESP32_PORT not found — checking for fallback devices..."
+    for candidate in /dev/ttyACM0 /dev/ttyACM1 /dev/ttyUSB1 /dev/ttyUSB2; do
+        if [ -c "$candidate" ] && [ "$candidate" != "$LIDAR_PORT" ]; then
+            ESP32_PORT="$candidate"
+            echo "   Found fallback: $ESP32_PORT"
+            break
+        fi
+    done
+fi
+
 require_serial_device "LiDAR" "$LIDAR_PORT"
-require_serial_device "ESP32" "$ESP32_PORT"
+
+# ESP32 is optional for SLAM-only operation
+if [ ! -e "$ESP32_PORT" ] || [ ! -c "$ESP32_PORT" ]; then
+    echo "⚠️  ESP32 device not found: $ESP32_PORT"
+    echo "   Robot will start in SLAM-only mode (no motor control)."
+    echo "   To enable motor control:"
+    echo "     1. Connect ESP32 via USB"
+    echo "     2. Run: sudo $SCRIPT_DIR/tools/install_udev_rules.sh"
+    echo "     3. Restart: pm2 restart nexus-robot-esp32-telemetry"
+    ESP32_AVAILABLE=false
+else
+    echo "📍 ESP32 Port: $ESP32_PORT"
+    ESP32_AVAILABLE=true
+fi
+
 echo "📍 Lidar Port: $LIDAR_PORT"
-echo "📍 ESP32 Port: $ESP32_PORT"
 
 # --- [2] Stop existing PM2 processes (idempotent) ---
 echo "🔄 Stopping existing robot nodes..."
@@ -163,12 +188,18 @@ start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller sl
 # 2. Logic Nodes
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
 start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
-start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
-# Encoder + IMU odometry must run in production so Nav2 has odom→base_footprint.
-start_ros_node "${SERVICE_NAME_PREFIX}-odom" "ros2 run my_robot_controller odom"
-# Sole ROS velocity-to-ESP32 command consumer.  It forwards both MANUAL and
-# AUTO/Nav2 /cmd_vel; teleop_node enforces its one-second command timeout.
-start_ros_node "${SERVICE_NAME_PREFIX}-teleop" "ros2 run my_robot_controller teleop_node"
+
+# ESP32 telemetry + motor control (optional — skip if hardware not connected)
+if [ "$ESP32_AVAILABLE" = true ]; then
+    start_ros_node "${SERVICE_NAME_PREFIX}-esp32-telemetry" "ESP32_PORT=$ESP32_PORT ros2 run my_robot_controller esp32_telemetry_node"
+    # Encoder + IMU odometry must run in production so Nav2 has odom→base_footprint.
+    start_ros_node "${SERVICE_NAME_PREFIX}-odom" "ros2 run my_robot_controller odom"
+    # Sole ROS velocity-to-ESP32 command consumer.  It forwards both MANUAL and
+    # AUTO/Nav2 /cmd_vel; teleop_node enforces its one-second command timeout.
+    start_ros_node "${SERVICE_NAME_PREFIX}-teleop" "ros2 run my_robot_controller teleop_node"
+else
+    echo "⏭️  Skipping ESP32-dependent nodes (esp32-telemetry, odom, teleop)"
+fi
 
 # Brain (exp backoff + max restarts)
 BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBOT_BRAIN_TOKEN=${ROBOT_BRAIN_TOKEN:-}"
