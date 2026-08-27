@@ -105,6 +105,14 @@ export class PackageService implements IPackageService, OnModuleInit {
     return found;
   }
 
+  async findByTagId(tagId: number): Promise<Package> {
+    const found = await this.packageRepository.findByTagId(tagId);
+    if (!found) {
+      throw new NotFoundException(`Không tìm thấy package với tagId ${String(tagId)}`);
+    }
+    return found;
+  }
+
   async update(id: string, dto: UpdatePackageDto): Promise<Package> {
     const updated = await this.packageRepository.update(id, dto);
     if (!updated) {

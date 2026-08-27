@@ -7,10 +7,14 @@ import NavDrawer from './NavDrawer';
 import { TelemetryPanel } from './TelemetryPanel';
 import { RobotTelemetryProvider } from './RobotTelemetryProvider';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useAprilTagScan } from '@/hooks/useAprilTagScan';
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const { isDesktop } = useBreakpoint();
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Listen for AprilTag scans and show notifications
+  useAprilTagScan();
 
   return (
     <RobotTelemetryProvider>

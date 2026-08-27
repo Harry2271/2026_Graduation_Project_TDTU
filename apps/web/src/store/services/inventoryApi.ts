@@ -101,6 +101,14 @@ export const inventoryApi = baseApi.injectEndpoints({
       },
     }),
 
+    getPackageByTagId: builder.query<Package, number>({
+      query: (tagId) => `/packages/by-tag/${tagId}`,
+      providesTags: (_result, _error, tagId): TagDescription[] => [
+        { type: 'Packages' },
+        { type: 'Packages', id: tagId },
+      ],
+    }),
+
     createPackage: builder.mutation<Package, { packageName: string }>({
       query: (body) => ({ url: '/packages', method: 'POST', body }),
       invalidatesTags: (): TagDescription[] => [{ type: 'Packages' }],
@@ -344,6 +352,7 @@ export const inventoryApi = baseApi.injectEndpoints({
 export const {
   useGetPackagesQuery,
   useGetPackageByIdQuery,
+  useGetPackageByTagIdQuery,
   useCreatePackageMutation,
   useUpdatePackageMutation,
   useDeletePackageMutation,

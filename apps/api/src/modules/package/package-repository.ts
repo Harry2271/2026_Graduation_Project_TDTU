@@ -48,6 +48,10 @@ export class PackageRepository implements IPackageRepository {
     return this.packageModel.findById(id).exec();
   }
 
+  async findByTagId(tagId: number): Promise<Package | null> {
+    return this.packageModel.findOne({ tagId }).exec();
+  }
+
   async update(id: string, dto: UpdatePackageDto): Promise<Package | null> {
     return this.packageModel.findByIdAndUpdate(id, dto, { new: true }).exec();
   }

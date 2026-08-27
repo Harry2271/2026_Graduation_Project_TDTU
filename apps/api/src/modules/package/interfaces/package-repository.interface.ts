@@ -11,6 +11,7 @@ export interface IPackageRepository {
   findAll(): Promise<Package[]>;
   findAllPaginated(pagination: PaginationQueryDto): Promise<{ items: Package[]; total: number }>;
   findById(id: string): Promise<Package | null>;
+  findByTagId(tagId: number): Promise<Package | null>;
   update(id: string, dto: UpdatePackageDto): Promise<Package | null>;
   remove(id: string): Promise<void>;
   findAllocatedTagIds(): Promise<number[]>;

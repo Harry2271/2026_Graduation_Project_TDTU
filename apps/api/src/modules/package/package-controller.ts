@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -53,6 +54,19 @@ export class PackageController {
   @ApiResponse({ status: 200, description: 'Active package stats', type: PackageStatsResponseDto })
   getStats(): Promise<PackageStatsResponseDto> {
     return this.packageService.getStats();
+  }
+
+  @Get('by-tag/:tagId')
+  @ApiOperation({ summary: 'Find a package by its AprilTag ID' })
+  @ApiResponse({ status: 200, description: 'Package found', type: Package })
+  @ApiResponse({ status: 404, description: 'No package found with this tagId' })
+  @ApiResponse({ status: 400, description: 'Invalid tagId (must be 0-586)' })
+  findByTagId(@Param('tagId') tagIdStr: string): Promise<Package> {
+    const tagId = Number.parseInt(tagIdStr, 10);
+    if (Number.isNaN(tagId) || tagId < 0 || tagId > 586) {
+      throw new BadRequestException(`tagId must be a number between 0 and 586`);
+    }
+    return this.packageService.findByTagId(tagId);
   }
 
   @Get(':id')

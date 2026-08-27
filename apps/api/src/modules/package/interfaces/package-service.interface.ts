@@ -9,6 +9,7 @@ export interface IPackageService {
   findAll(): Promise<Package[]>;
   findAllPaginated(pagination: PaginationQueryDto): Promise<PaginatedResponseDto<Package>>;
   findById(id: string): Promise<Package>;
+  findByTagId(tagId: number): Promise<Package>;
   update(id: string, dto: UpdatePackageDto): Promise<Package>;
   remove(id: string): Promise<void>;
   changeStatus(id: string, status: PackageStatus): Promise<Package>;
