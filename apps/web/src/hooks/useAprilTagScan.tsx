@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { App } from 'antd';
-import { getSocket } from '@/lib/socket';
+import { getRobotSocket } from '@/lib/robotSocket';
 import { inventoryApi } from '@/store/services/inventoryApi';
 
 interface DetectedTag {
@@ -28,6 +28,9 @@ interface DetectedTagsPayload {
  * 
  * Usage: Call this in a component that wraps the app (e.g., MainLayout)
  * so it's always active while the user is logged in.
+ * 
+ * IMPORTANT: This hook connects to the robot WebSocket (port 9091), not the API Socket.io.
+ * The 'detected_tags' event is emitted by web_bridge.py on the robot.
  */
 export function useAprilTagScan() {
   const { notification } = App.useApp();
@@ -38,9 +41,10 @@ export function useAprilTagScan() {
   const [trigger, result] = inventoryApi.endpoints.getPackageByTagId.useLazyQuery();
 
   useEffect(() => {
-    const socket = getSocket();
+    const robotSocket = getRobotSocket();
 
-    const handleDetectedTags = (payload: DetectedTagsPayload) => {
+    const handleDetectedTags = (data: unknown) => {
+      const payload = data as DetectedTagsPayload;
       if (!payload?.tags || payload.tags.length === 0) return;
 
       // Take the first detected tag (highest confidence)
@@ -67,10 +71,10 @@ export function useAprilTagScan() {
       trigger(tag.tag_id);
     };
 
-    socket.on('detected_tags', handleDetectedTags);
+    robotSocket.on('detected_tags', handleDetectedTags);
 
     return () => {
-      socket.off('detected_tags', handleDetectedTags);
+      robotSocket.off('detected_tags', handleDetectedTags);
     };
   }, [trigger]);
 
