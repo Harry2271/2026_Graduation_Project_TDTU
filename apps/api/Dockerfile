@@ -13,9 +13,9 @@ WORKDIR /app
 COPY package.json yarn.lock turbo.json ./
 COPY apps/api/package.json apps/api/package.json
 
-# Rewrite root package.json to only reference the API workspace
+# Rewrite root package.json to only reference the API workspace and remove postinstall
 # This prevents yarn from installing mobile/web dependencies (saves ~4 minutes)
-RUN node -e "const pkg=require('./package.json'); pkg.workspaces=['apps/api']; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+RUN node -e "const pkg=require('./package.json'); pkg.workspaces=['apps/api']; delete pkg.scripts.postinstall; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
 
 # Install only API deps (devDeps needed for `nest build`)
 RUN yarn install --frozen-lockfile --ignore-engines
@@ -46,8 +46,8 @@ WORKDIR /app
 COPY package.json yarn.lock ./
 COPY apps/api/package.json apps/api/package.json
 
-# Rewrite root package.json to only reference the API workspace
-RUN node -e "const pkg=require('./package.json'); pkg.workspaces=['apps/api']; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+# Rewrite root package.json to only reference the API workspace and remove postinstall
+RUN node -e "const pkg=require('./package.json'); pkg.workspaces=['apps/api']; delete pkg.scripts.postinstall; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
 
 # Install production deps only (no devDeps), skip postinstall scripts
 RUN yarn install --production --frozen-lockfile --ignore-engines --ignore-scripts
