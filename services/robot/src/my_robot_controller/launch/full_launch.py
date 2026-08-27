@@ -165,6 +165,8 @@ def generate_launch_description():
             'APRILTAG_FAMILY': os.environ.get('APRILTAG_FAMILY', 'tag36h11'),
             'APRILTAG_SIZE_M': os.environ.get('APRILTAG_SIZE_M', '0.166'),
             'CAMERA_DEVICE': os.environ.get('CAMERA_DEVICE', '/dev/video0'),
+            'CAMERA_SNAPSHOT_URL': os.environ.get(
+                'CAMERA_SNAPSHOT_URL', 'http://127.0.0.1:9092/snapshot'),
             'CAMERA_WIDTH': os.environ.get('CAMERA_WIDTH', '640'),
             'CAMERA_HEIGHT': os.environ.get('CAMERA_HEIGHT', '480'),
         },

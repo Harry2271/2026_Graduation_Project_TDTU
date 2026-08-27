@@ -65,6 +65,7 @@ data: '{"ts": 1234567890.123, "tags": [{"tag_id": 42, "x": 0.31, "y": 0.02, "z":
 
 **No output?** Check:
 - Camera is connected: `ls -la /dev/video0`
+- Camera snapshot is available: `curl -f http://127.0.0.1:9092/snapshot -o /tmp/apriltag-test.jpg`
 - AprilTag is in camera view (distance: 0.5–2 meters)
 - Lighting is adequate (avoid glare)
 
@@ -128,8 +129,8 @@ ls -la /dev/video*
 # Get device info
 v4l2-ctl --list-devices
 
-# Test camera capture (creates test.jpg)
-ffmpeg -f v4l2 -input_format mjpeg -video_size 640x480 -i /dev/video0 -frames:v 1 test.jpg
+# Test the same camera snapshot consumed by AprilTag detection
+curl -f http://127.0.0.1:9092/snapshot -o test.jpg
 
 # View the captured image
 feh test.jpg
@@ -210,9 +211,11 @@ Or use the web frontend:
 
 ## 10. Common Issues
 
-### "Failed to start ffmpeg"
+### Camera snapshot unavailable
 ```bash
-sudo apt install ffmpeg
+curl -f http://127.0.0.1:9092/
+pm2 restart nexus-robot-camera
+pm2 logs nexus-robot-camera --lines 30 --nostream
 ```
 
 ### "No such file or directory: /dev/video0"

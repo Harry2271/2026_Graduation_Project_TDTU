@@ -179,8 +179,6 @@ pm2 start "bash" \
     --max-restarts 50 \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
 
-start_ros_node "${SERVICE_NAME_PREFIX}-vision" "APRILTAG_FAMILY=${APRILTAG_FAMILY:-tag36h11} ros2 run my_robot_controller april_tag_node"
-
 # Camera stream (MJPEG over HTTP on port 9092)
 CAMERA_ENV="CAMERA_DEVICE=/dev/video0 CAMERA_WIDTH=1280 CAMERA_HEIGHT=720 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"
 pm2 delete "${SERVICE_NAME_PREFIX}-camera" 2>/dev/null || true
@@ -188,6 +186,9 @@ pm2 start "bash" \
     --name "${SERVICE_NAME_PREFIX}-camera" \
     --max-restarts 10 \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $CAMERA_ENV ros2 run my_robot_controller camera_stream"
+
+# AprilTag reads the camera service snapshot, so it never opens /dev/video0.
+start_ros_node "${SERVICE_NAME_PREFIX}-vision" "APRILTAG_FAMILY=${APRILTAG_FAMILY:-tag36h11} CAMERA_SNAPSHOT_URL=${CAMERA_SNAPSHOT_URL:-http://127.0.0.1:9092/snapshot} ros2 run my_robot_controller april_tag_node"
 
 # 3. Nav2 (Phase 3 — real bringup)
 # Do not register a mapless launch under PM2: nav2_launch.py exits cleanly

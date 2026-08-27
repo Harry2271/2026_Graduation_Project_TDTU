@@ -211,15 +211,15 @@ pm2 start "bash" \
     --max-restarts 50 \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
 
-# Vision
-start_ros_node "${SERVICE_NAME_PREFIX}-vision" "APRILTAG_FAMILY=${APRILTAG_FAMILY:-tag36h11} ros2 run my_robot_controller april_tag_node"
-
 # Camera (max 10 restarts)
 CAMERA_ENV="CAMERA_DEVICE=${CAMERA_DEVICE:-/dev/video0} CAMERA_WIDTH=1280 CAMERA_HEIGHT=720 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"
 pm2 start "bash" \
     --name "${SERVICE_NAME_PREFIX}-camera" \
     --max-restarts 10 \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $CAMERA_ENV ros2 run my_robot_controller camera_stream"
+
+# Vision reads the camera service snapshot, so it never opens /dev/video0.
+start_ros_node "${SERVICE_NAME_PREFIX}-vision" "APRILTAG_FAMILY=${APRILTAG_FAMILY:-tag36h11} CAMERA_SNAPSHOT_URL=${CAMERA_SNAPSHOT_URL:-http://127.0.0.1:9092/snapshot} ros2 run my_robot_controller april_tag_node"
 
 # 3. Nav2 — only start when a saved map is available. The launch file exits
 # cleanly without a map, which would otherwise make PM2 restart it forever.

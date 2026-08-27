@@ -1,18 +1,11 @@
-"""AprilTag detector — reads from /dev/video0 and publishes detected tags.
+"""AprilTag detector — reads camera snapshots and publishes detected tags.
 
 Pipeline:
-  ffmpeg (V4L2 → MJPEG over pipe) → OpenCV JPEG decode → grayscale →
+  camera_stream /snapshot → OpenCV JPEG decode → grayscale →
   pupil-apriltags detector → pose estimation → publish /detected_tags
 
-Why two camera consumers?
-  `camera_stream.py` reads the same /dev/video0 via ffmpeg for the MJPEG
-  HTTP server.  V4L2 allows multiple open() on the same device, but
-  hardware support for that depends on the USB bridge.  For BRIO 100 we
-  have observed that two concurrent ffmpeg readers either work fine or
-  hit USB bandwidth limits.  If your webcam does not support concurrent
-  read, either reduce CAMERA_FPS in camera_stream to a small value (e.g. 5)
-  and run this node at 5 Hz, or repurpose camera_stream to push frames
-  into a shared buffer that this node reads.
+`camera_stream.py` is the sole owner of /dev/video0. This avoids concurrent
+V4L2 readers, which the BRIO 100 rejects intermittently with ffmpeg code 240.
 
 Payload (std_msgs/String, JSON):
   {
@@ -32,7 +25,8 @@ All detections in one frame are published. Consumers should order them by
 camera-frame x (left to right), not by confidence.
 
 Environment variables:
-  CAMERA_DEVICE    — V4L2 device (default: /dev/video0)
+  CAMERA_DEVICE    — display-only camera identity (default: /dev/video0)
+  CAMERA_SNAPSHOT_URL — local JPEG endpoint (default: http://127.0.0.1:9092/snapshot)
   CAMERA_WIDTH     — capture width  (default: 640)
   CAMERA_HEIGHT    — capture height (default: 480)
   APRILTAG_FAMILY  — tag family name (default: tag36h11)
@@ -46,10 +40,10 @@ from __future__ import annotations
 import json
 import math
 import os
-import subprocess
 import threading
 import time
-from typing import Optional
+import urllib.error
+import urllib.request
 
 import cv2
 import numpy as np
@@ -92,6 +86,8 @@ except ImportError:
 
 # ── Defaults ────────────────────────────────────────────────
 DEVICE = os.environ.get('CAMERA_DEVICE', '/dev/video0')
+SNAPSHOT_URL = os.environ.get(
+    'CAMERA_SNAPSHOT_URL', 'http://127.0.0.1:9092/snapshot')
 WIDTH = int(os.environ.get('CAMERA_WIDTH', '640'))
 HEIGHT = int(os.environ.get('CAMERA_HEIGHT', '480'))
 FAMILY = os.environ.get('APRILTAG_FAMILY', 'tag36h11')
@@ -163,7 +159,8 @@ class AprilTagNode(Node):
 
         self.get_logger().info(
             f'april_tag_node ready: device={DEVICE} {WIDTH}x{HEIGHT} '
-            f'family={FAMILY} size={SIZE_M}m @ {HZ}Hz')
+            f'family={FAMILY} size={SIZE_M}m @ {HZ}Hz '
+            f'snapshot={SNAPSHOT_URL}')
 
     def _init_detector(self):
         """Create an AprilTag Detector using whichever library is installed."""
@@ -186,101 +183,36 @@ class AprilTagNode(Node):
         super().destroy_node()
 
     def _detect_loop(self) -> None:
-        """Run ffmpeg → OpenCV → AprilTag → publish.  Runs forever."""
+        """Fetch snapshots, detect tags, and publish. Runs forever."""
         if self._detector is None:
             return
 
         dt = 1.0 / HZ
-        proc: Optional[subprocess.Popen] = None
-        jpeg_buffer = bytearray()
 
         while not self._stop_event.is_set():
+            started_at = time.monotonic()
             try:
-                if proc is None or proc.poll() is not None:
-                    proc = self._start_ffmpeg()
-                    jpeg_buffer.clear()
-                    if proc is None:
-                        time.sleep(2.0)
-                        continue
-
-                raw = proc.stdout.read(8192) if proc.stdout else b''
-                if not raw:
-                    if proc.poll() is not None:
-                        self.get_logger().warn(
-                            f'ffmpeg exited with code {proc.returncode}; restarting')
-                        proc = None
-                        time.sleep(0.5)
-                        continue
-                    time.sleep(0.05)
-                    continue
-
-                # image2pipe is a concatenated JPEG stream; one read() can
-                # contain half a frame or several frames.  Accumulate bytes
-                # and extract complete SOI (FFD8) → EOI (FFD9) frames.
-                jpeg_buffer.extend(raw)
-                while True:
-                    start = jpeg_buffer.find(b'\xff\xd8')
-                    if start < 0:
-                        if len(jpeg_buffer) > 1:
-                            del jpeg_buffer[:-1]
-                        break
-                    end = jpeg_buffer.find(b'\xff\xd9', start + 2)
-                    if end < 0:
-                        if start > 0:
-                            del jpeg_buffer[:start]
-                        break
-                    frame = bytes(jpeg_buffer[start:end + 2])
-                    del jpeg_buffer[:end + 2]
-
-                    img = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8),
-                                       cv2.IMREAD_GRAYSCALE)
-                    if img is not None:
-                        self._process_frame(img)
-                        time.sleep(dt)
-                    break
-
+                with urllib.request.urlopen(SNAPSHOT_URL, timeout=2.0) as response:
+                    frame = response.read()
+                gray = cv2.imdecode(
+                    np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+                if gray is None:
+                    raise ValueError('camera snapshot is not a valid JPEG')
+                if gray.shape != (HEIGHT, WIDTH):
+                    gray = cv2.resize(gray, (WIDTH, HEIGHT),
+                                      interpolation=cv2.INTER_AREA)
+                self._process_frame(gray)
+            except (urllib.error.URLError, TimeoutError, ValueError) as e:
+                self.get_logger().warn(
+                    f'Camera snapshot unavailable at {SNAPSHOT_URL}: {e}',
+                    throttle_duration_sec=5.0)
             except Exception as e:
-                self.get_logger().warn(f'detect loop error: {e}')
-                if proc is not None:
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
-                proc = None
-                time.sleep(1.0)
+                self.get_logger().warn(
+                    f'detect loop error: {e}', throttle_duration_sec=5.0)
 
-        if proc is not None:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-
-    def _start_ffmpeg(self) -> Optional[subprocess.Popen]:
-        """Boot ffmpeg as a stream of JPEG frames on stdout."""
-        cmd = [
-            'ffmpeg',
-            '-hide_banner', '-loglevel', 'warning',
-            '-f', 'v4l2',
-            '-input_format', 'mjpeg',
-            '-video_size', f'{WIDTH}x{HEIGHT}',
-            '-framerate', str(int(HZ)),
-            '-i', DEVICE,
-            '-f', 'image2pipe',
-            '-vcodec', 'mjpeg',
-            '-q:v', '5',
-            '-r', str(int(HZ)),
-            '-',
-        ]
-        try:
-            return subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, bufsize=0)
-        except FileNotFoundError:
-            self.get_logger().error('ffmpeg not found — install with: '
-                                    'sudo apt install ffmpeg')
-            return None
-        except Exception as e:
-            self.get_logger().warn(f'Failed to start ffmpeg: {e}')
-            return None
+            remaining = dt - (time.monotonic() - started_at)
+            if remaining > 0:
+                self._stop_event.wait(remaining)
 
     def _process_frame(self, gray: np.ndarray) -> None:
         """Detect and publish every tag in a grayscale frame."""
