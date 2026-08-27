@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { App } from 'antd';
 import { getSocket } from '@/lib/socket';
-import { useGetPackageByTagIdQuery } from '@/store/services/inventoryApi';
+import { inventoryApi } from '@/store/services/inventoryApi';
 
 interface DetectedTag {
   tag_id: number;
@@ -32,10 +32,10 @@ interface DetectedTagsPayload {
 export function useAprilTagScan() {
   const { notification } = App.useApp();
   const lastNotifiedTagRef = useRef<{ tagId: number; timestamp: number } | null>(null);
-  const pendingQueryRef = useRef<number | null>(null);
+  const [pendingTagId, setPendingTagId] = useState<number | null>(null);
 
-  // We'll use lazy query manually when a tag is detected
-  const [trigger, result] = useGetPackageByTagIdQuery.useLazyQuery();
+  // Use lazy query trigger
+  const [trigger, result] = inventoryApi.endpoints.getPackageByTagId.useLazyQuery();
 
   useEffect(() => {
     const socket = getSocket();
@@ -61,7 +61,7 @@ export function useAprilTagScan() {
 
       // Update last notified
       lastNotifiedTagRef.current = { tagId: tag.tag_id, timestamp: now };
-      pendingQueryRef.current = tag.tag_id;
+      setPendingTagId(tag.tag_id);
 
       // Fetch package by tagId
       trigger(tag.tag_id);
@@ -76,11 +76,11 @@ export function useAprilTagScan() {
 
   // Handle query result
   useEffect(() => {
-    if (!result.data || !result.isSuccess || pendingQueryRef.current === null) return;
+    if (!result.data || !result.isSuccess || pendingTagId === null) return;
 
     const pkg = result.data;
-    const tagId = pendingQueryRef.current;
-    pendingQueryRef.current = null;
+    const tagId = pendingTagId;
+    setPendingTagId(null);
 
     // Show success notification with package info
     notification.success({
@@ -103,14 +103,14 @@ export function useAprilTagScan() {
       placement: 'topRight',
       duration: 5,
     });
-  }, [result.data, result.isSuccess, notification]);
+  }, [result.data, result.isSuccess, notification, pendingTagId]);
 
   // Handle query error (tag not found)
   useEffect(() => {
-    if (!result.error || !result.isError || pendingQueryRef.current === null) return;
+    if (!result.error || !result.isError || pendingTagId === null) return;
 
-    const tagId = pendingQueryRef.current;
-    pendingQueryRef.current = null;
+    const tagId = pendingTagId;
+    setPendingTagId(null);
 
     notification.warning({
       message: `AprilTag #${tagId} không tìm thấy`,
@@ -118,5 +118,5 @@ export function useAprilTagScan() {
       placement: 'topRight',
       duration: 4,
     });
-  }, [result.error, result.isError, notification]);
+  }, [result.error, result.isError, notification, pendingTagId]);
 }
