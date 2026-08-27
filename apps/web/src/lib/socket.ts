@@ -1,10 +1,10 @@
 import { io, Socket } from 'socket.io-client'
 
-// Prefer the dedicated WebSocket URL, then derive one from the API URL, then use the production fallback.
+// Socket.IO belongs to the API; NEXT_PUBLIC_WS_URL is the raw robot WebSocket.
 const SOCKET_URL =
-  process.env.NEXT_PUBLIC_WS_URL ??
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/^http/, 'ws') ??
-  'wss://api.nguyen-robot.io.vn'
+  process.env.NEXT_PUBLIC_API_SOCKET_URL ??
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  'https://api.nguyen-robot.io.vn'
 
 let socket: Socket | null = null
 

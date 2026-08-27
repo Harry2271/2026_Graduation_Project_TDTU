@@ -9,7 +9,7 @@ The ESP32 telemetry node is crash-looping because `/dev/ttyACM0` doesn't exist. 
 ✅ LiDAR connected:     /dev/robot-lidar → /dev/ttyUSB0 (Silicon Labs CP210x)
 ❌ ESP32 NOT connected: no /dev/ttyACM* devices found
 ✅ Camera working:      /dev/video0 (Logitech Brio 100)
-✅ AprilTag node OK:    running, ready to detect tag25h9 tags
+✅ AprilTag node OK:    running, ready to detect tag36h11 tags
 ```
 
 ## Root Cause

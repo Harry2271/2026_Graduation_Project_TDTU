@@ -137,14 +137,14 @@ yarn dev
 
 # Open http://localhost:3000
 # Login to dashboard
-# Point robot camera at a printed tag25h9 AprilTag
+# Point robot camera at a printed tag36h11 AprilTag
 ```
 
 ### 3. End-to-End Test
 
 1. Create a package in the inventory page
 2. Note its assigned `tagId` (shown in database, 0-586)
-3. Print an AprilTag with that ID from: https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag25h9
+3. Print an AprilTag with that ID from: https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag36h11
 4. Hold the printed tag (at least 10cm × 10cm) in front of the robot camera (30-50cm distance)
 5. Notification should appear within 1 second
 
@@ -171,7 +171,7 @@ yarn dev
 ### Robot (Pi 5)
 
 **AprilTag Node:**
-- Family: `tag25h9`
+- Family: `tag36h11`
 - Camera: `/dev/video0` (Logitech BRIO 100)
 - Resolution: 640×480
 - Rate: 10 Hz
@@ -195,7 +195,7 @@ yarn dev
 ## Notes
 
 - **Debouncing:** Same tag won't trigger notification within 3 seconds
-- **Tag Family:** Robot is configured for `tag25h9` (not tag36h11 or tag16h5)
+- **Tag Family:** Robot is configured for `tag36h11` (not tag25h9 or tag16h5)
 - **Print Size:** Tags should be at least 10cm × 10cm for reliable detection
 - **Distance:** Hold tag 30-50cm from camera for best results
 - **Lighting:** Good lighting improves detection accuracy
@@ -238,9 +238,9 @@ yarn dev
 
 ### Wrong tag family
 
-- Robot expects `tag25h9`
-- Download from: https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag25h9
-- Other families (tag36h11, tag16h5) won't be detected
+- Robot expects `tag36h11`
+- Download from: https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag36h11
+- Other families (tag25h9, tag16h5) won't be detected
 
 ### Tag too small
 

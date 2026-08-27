@@ -94,7 +94,7 @@ except ImportError:
 DEVICE = os.environ.get('CAMERA_DEVICE', '/dev/video0')
 WIDTH = int(os.environ.get('CAMERA_WIDTH', '640'))
 HEIGHT = int(os.environ.get('CAMERA_HEIGHT', '480'))
-FAMILY = os.environ.get('APRILTAG_FAMILY', 'tag25h9')
+FAMILY = os.environ.get('APRILTAG_FAMILY', 'tag36h11')
 SIZE_M = float(os.environ.get('APRILTAG_SIZE_M', '0.166'))
 HZ = float(os.environ.get('APRILTAG_HZ', '10'))
 
@@ -110,7 +110,13 @@ CY = float(os.environ.get('CAMERA_CY', str(HEIGHT / 2.0)))
 
 def _rvec_to_euler(rvec: np.ndarray) -> tuple[float, float, float]:
     """Convert a Rodrigues rvec to yaw/pitch/roll (radians)."""
-    rmat, _ = cv2.Rodrigues(rvec)
+    values = np.asarray(rvec, dtype=np.float64).squeeze()
+    if values.size == 9:
+        rmat = values.reshape((3, 3))
+    elif values.size == 3:
+        rmat, _ = cv2.Rodrigues(values.reshape((3, 1)))
+    else:
+        raise ValueError(f'Unexpected rotation shape: {np.asarray(rvec).shape}')
     # ZYX (yaw-pitch-roll) extraction, suitable for ground-level tags
     sy = math.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)
     singular = sy < 1e-6
@@ -199,6 +205,12 @@ class AprilTagNode(Node):
 
                 raw = proc.stdout.read(8192) if proc.stdout else b''
                 if not raw:
+                    if proc.poll() is not None:
+                        self.get_logger().warn(
+                            f'ffmpeg exited with code {proc.returncode}; restarting')
+                        proc = None
+                        time.sleep(0.5)
+                        continue
                     time.sleep(0.05)
                     continue
 
@@ -285,19 +297,29 @@ class AprilTagNode(Node):
 
         tags = []
         for detection in detections:
-            tvec = detection.pose_t.flatten()  # [x, y, z] in camera frame
-            yaw, pitch, roll = _rvec_to_euler(detection.pose_R)
-            tags.append({
-                'tag_id': int(detection.tag_id),
-                'x': float(tvec[0]),
-                'y': float(tvec[1]),
-                'z': float(tvec[2]),
-                'yaw': float(yaw),
-                'pitch': float(pitch),
-                'roll': float(roll),
-                'confidence': float(detection.decision_margin),
-                'size_m': self._tag_size_m,
-            })
+            try:
+                tvec = np.asarray(detection.pose_t, dtype=np.float64).reshape(-1)
+                if tvec.size < 3:
+                    raise ValueError(
+                        f'invalid translation shape {np.asarray(detection.pose_t).shape}')
+                yaw, pitch, roll = _rvec_to_euler(detection.pose_R)
+                tags.append({
+                    'tag_id': int(detection.tag_id),
+                    'x': float(tvec[0]),
+                    'y': float(tvec[1]),
+                    'z': float(tvec[2]),
+                    'yaw': float(yaw),
+                    'pitch': float(pitch),
+                    'roll': float(roll),
+                    'confidence': float(detection.decision_margin),
+                    'size_m': self._tag_size_m,
+                })
+            except (TypeError, ValueError, IndexError) as e:
+                self.get_logger().warn(
+                    f'Skipping tag {getattr(detection, "tag_id", "unknown")}: {e}')
+
+        if not tags:
+            return
 
         msg = String()
         msg.data = json.dumps({'ts': time.time(), 'tags': tags})

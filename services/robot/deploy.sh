@@ -44,7 +44,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag25h9", nthreads=2)
+Detector(families="tag36h11", nthreads=2)
 PY
 
 find_lidar_port() {
@@ -97,7 +97,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag25h9", nthreads=2)
+Detector(families="tag36h11", nthreads=2)
 PY
 
 # --- [BƯỚC 3] Vận hành bằng PM2 ---
@@ -121,6 +121,7 @@ start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller sl
 # These are passed inline to the brain's bash command because PM2 daemon
 # may not inherit shell exports from this script.
 BRAIN_ENV="API_SOCKET_URL=${API_SOCKET_URL:-https://api.nguyen-robot.io.vn} ROBOT_BRAIN_TOKEN=${ROBOT_BRAIN_TOKEN:-}"
+WS_ENV="WS_AUTH_TOKEN=${WS_AUTH_TOKEN:-${ROBOT_BRAIN_TOKEN:-}}"
 
 # 2. Logic Nodes (brain_node added in Phase 0 of robot-controller-brain plan)
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
@@ -164,7 +165,7 @@ fi
 
 # web_bridge now subscribes to /esp32/status, /esp32/encoder AND /esp32/power
 # so it must start after esp32-telemetry to have topic subscribers ready.
-start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
+start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "$WS_ENV ros2 run my_robot_controller web_bridge"
 
 # Ensure maps directory exists for map_saver_cli and MapsController
 mkdir -p "$MAPS_DIR"
@@ -178,7 +179,7 @@ pm2 start "bash" \
     --max-restarts 50 \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
 
-start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
+start_ros_node "${SERVICE_NAME_PREFIX}-vision" "APRILTAG_FAMILY=${APRILTAG_FAMILY:-tag36h11} ros2 run my_robot_controller april_tag_node"
 
 # Camera stream (MJPEG over HTTP on port 9092)
 CAMERA_ENV="CAMERA_DEVICE=/dev/video0 CAMERA_WIDTH=1280 CAMERA_HEIGHT=720 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"

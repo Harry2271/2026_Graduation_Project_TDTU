@@ -27,7 +27,12 @@ type RobotEventListener = (data: unknown) => void
 let ws: WebSocket | null = null
 const listeners = new Map<string, Set<RobotEventListener>>()
 let reconnectTimeout: NodeJS.Timeout | null = null
+let pingInterval: NodeJS.Timeout | null = null
 let isIntentionallyClosed = false
+
+function emit(event: string, data?: unknown): void {
+  listeners.get(event)?.forEach((listener) => listener(data))
+}
 
 export function getRobotSocket(): {
   on: (event: string, listener: RobotEventListener) => void
@@ -67,10 +72,17 @@ function connect() {
 
     ws.onopen = () => {
       console.log('[RobotWS] Connected:', WS_URL)
+      emit('connected')
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout)
         reconnectTimeout = null
       }
+      if (pingInterval) clearInterval(pingInterval)
+      pingInterval = setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }))
+        }
+      }, 5000)
     }
 
     ws.onmessage = (event) => {
@@ -83,10 +95,7 @@ function connect() {
           return
         }
 
-        const eventListeners = listeners.get(msg.type)
-        if (eventListeners) {
-          eventListeners.forEach((listener) => listener(msg.data))
-        }
+        emit(msg.type, msg.data)
       } catch (err) {
         console.warn('[RobotWS] Failed to parse message:', err)
       }
@@ -98,7 +107,12 @@ function connect() {
 
     ws.onclose = () => {
       console.log('[RobotWS] Disconnected')
+      emit('disconnected')
       ws = null
+      if (pingInterval) {
+        clearInterval(pingInterval)
+        pingInterval = null
+      }
 
       // Auto-reconnect unless intentionally closed
       if (!isIntentionallyClosed) {
@@ -120,6 +134,10 @@ export function disconnectRobotSocket(): void {
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout)
     reconnectTimeout = null
+  }
+  if (pingInterval) {
+    clearInterval(pingInterval)
+    pingInterval = null
   }
   if (ws) {
     ws.close()

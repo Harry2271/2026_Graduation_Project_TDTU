@@ -134,8 +134,9 @@ jobs:
           PORT: ${{ vars.WEB_PORT || '3000' }}
           WEB_PORT: ${{ vars.WEB_PORT || '3000' }}
           NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_API_SOCKET_URL: ${{ vars.NEXT_PUBLIC_API_SOCKET_URL || vars.NEXT_PUBLIC_API_BASE_URL }}
           NEXT_PUBLIC_WS_URL: ${{ vars.NEXT_PUBLIC_WS_URL }}
-          NEXT_PUBLIC_WS_AUTH_TOKEN: ${{ secrets.ROBOT_BRAIN_TOKEN }}
+          NEXT_PUBLIC_WS_AUTH_TOKEN: ${{ secrets.WS_AUTH_TOKEN || secrets.ROBOT_BRAIN_TOKEN }}
           NEXT_PUBLIC_CAMERA_STREAM_URL: ${{ vars.NEXT_PUBLIC_CAMERA_STREAM_URL }}
         run: docker compose up -d --build --force-recreate web
 
@@ -167,6 +168,7 @@ jobs:
       - name: Build and deploy
         env:
           ROBOT_BRAIN_TOKEN: ${{ secrets.ROBOT_BRAIN_TOKEN }}
+          WS_AUTH_TOKEN: ${{ secrets.WS_AUTH_TOKEN || secrets.ROBOT_BRAIN_TOKEN }}
           API_SOCKET_URL: ${{ vars.API_SOCKET_URL }}
         run: |
           export PATH=$PATH:/usr/local/bin:$(npm config get prefix)/bin

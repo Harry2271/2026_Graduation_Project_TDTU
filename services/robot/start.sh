@@ -14,6 +14,7 @@
 #   CAMERA_DEVICE=/dev/video0       # USB camera device
 #   API_SOCKET_URL=https://api.nguyen-robot.io.vn
 #   ROBOT_BRAIN_TOKEN=...           # shared secret for brain<->API auth
+#   WS_AUTH_TOKEN=...                # browser<->raw WebSocket credential
 # =============================================================================
 
 set -e
@@ -52,7 +53,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag25h9", nthreads=2)
+Detector(families="tag36h11", nthreads=2)
 PY
 
 # Do not pick the first ttyUSB/ttyACM device: enumeration order can swap the
@@ -169,7 +170,7 @@ from dt_apriltags import Detector
 import cv2
 import numpy
 print(f"AprilTag ready: dt-apriltags, OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
-Detector(families="tag25h9", nthreads=2)
+Detector(families="tag36h11", nthreads=2)
 PY
 
 # --- [4] Start PM2 processes ---
@@ -187,7 +188,8 @@ start_ros_node "${SERVICE_NAME_PREFIX}-slam" "ros2 launch my_robot_controller sl
 
 # 2. Logic Nodes
 start_ros_node "${SERVICE_NAME_PREFIX}-map-manager" "ros2 run my_robot_controller map_manager"
-start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "ros2 run my_robot_controller web_bridge"
+WS_ENV="WS_AUTH_TOKEN=${WS_AUTH_TOKEN:-${ROBOT_BRAIN_TOKEN:-}}"
+start_ros_node "${SERVICE_NAME_PREFIX}-web-bridge" "$WS_ENV ros2 run my_robot_controller web_bridge"
 
 # ESP32 telemetry + motor control (optional — skip if hardware not connected)
 if [ "$ESP32_AVAILABLE" = true ]; then
@@ -210,7 +212,7 @@ pm2 start "bash" \
     -- -c "source /opt/ros/jazzy/setup.bash && source $ROS_WS/install/setup.bash && $BRAIN_ENV ros2 run my_robot_controller brain"
 
 # Vision
-start_ros_node "${SERVICE_NAME_PREFIX}-vision" "ros2 run my_robot_controller april_tag_node"
+start_ros_node "${SERVICE_NAME_PREFIX}-vision" "APRILTAG_FAMILY=${APRILTAG_FAMILY:-tag36h11} ros2 run my_robot_controller april_tag_node"
 
 # Camera (max 10 restarts)
 CAMERA_ENV="CAMERA_DEVICE=${CAMERA_DEVICE:-/dev/video0} CAMERA_WIDTH=1280 CAMERA_HEIGHT=720 CAMERA_FPS=30 CAMERA_QUALITY=2 CAMERA_PORT=9092"

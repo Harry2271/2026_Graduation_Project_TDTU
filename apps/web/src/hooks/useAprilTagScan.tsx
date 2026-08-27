@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { App } from 'antd';
 import { getRobotSocket } from '@/lib/robotSocket';
 import { inventoryApi } from '@/store/services/inventoryApi';
@@ -35,20 +35,19 @@ interface DetectedTagsPayload {
 export function useAprilTagScan() {
   const { notification } = App.useApp();
   const lastNotifiedTagRef = useRef<{ tagId: number; timestamp: number } | null>(null);
-  const [pendingTagId, setPendingTagId] = useState<number | null>(null);
-
-  // Use lazy query trigger
-  const [trigger, result] = inventoryApi.endpoints.getPackageByTagId.useLazyQuery();
+  const [trigger] = inventoryApi.endpoints.getPackageByTagId.useLazyQuery();
 
   useEffect(() => {
     const robotSocket = getRobotSocket();
 
-    const handleDetectedTags = (data: unknown) => {
+    const handleDetectedTags = async (data: unknown) => {
       const payload = data as DetectedTagsPayload;
       if (!payload?.tags || payload.tags.length === 0) return;
 
-      // Take the first detected tag (highest confidence)
-      const tag = payload.tags[0];
+      // The detector does not guarantee ordering; use the strongest result.
+      const tag = payload.tags.reduce((best, current) =>
+        current.confidence > best.confidence ? current : best,
+      );
       if (!tag) return;
 
       const now = Date.now();
@@ -65,10 +64,36 @@ export function useAprilTagScan() {
 
       // Update last notified
       lastNotifiedTagRef.current = { tagId: tag.tag_id, timestamp: now };
-      setPendingTagId(tag.tag_id);
-
-      // Fetch package by tagId
-      trigger(tag.tag_id);
+      try {
+        const pkg = await trigger(tag.tag_id).unwrap();
+        notification.success({
+          message: `Quét thành công AprilTag #${tag.tag_id}`,
+          description: (
+            <div style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+              <p style={{ margin: 0, fontWeight: 700, color: 'var(--accent)' }}>
+                {pkg.packageName}
+              </p>
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
+                Trạng thái: {pkg.status === 'CREATED' ? 'Đã tạo' : pkg.status === 'IN_PROGRESS' ? 'Đang xử lý' : 'Hoàn thành'}
+              </p>
+              {pkg.zoneCode && (
+                <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
+                  Khu: {pkg.zoneCode}
+                </p>
+              )}
+            </div>
+          ),
+          placement: 'topRight',
+          duration: 5,
+        });
+      } catch {
+        notification.warning({
+          message: `AprilTag #${tag.tag_id} không tìm thấy`,
+          description: 'Không có kiện hàng nào được gán với mã tag này.',
+          placement: 'topRight',
+          duration: 4,
+        });
+      }
     };
 
     robotSocket.on('detected_tags', handleDetectedTags);
@@ -76,51 +101,5 @@ export function useAprilTagScan() {
     return () => {
       robotSocket.off('detected_tags', handleDetectedTags);
     };
-  }, [trigger]);
-
-  // Handle query result
-  useEffect(() => {
-    if (!result.data || !result.isSuccess || pendingTagId === null) return;
-
-    const pkg = result.data;
-    const tagId = pendingTagId;
-    setPendingTagId(null);
-
-    // Show success notification with package info
-    notification.success({
-      message: `Quét thành công AprilTag #${tagId}`,
-      description: (
-        <div style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-          <p style={{ margin: 0, fontWeight: 700, color: 'var(--accent)' }}>
-            {pkg.packageName}
-          </p>
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
-            Trạng thái: {pkg.status === 'CREATED' ? 'Đã tạo' : pkg.status === 'IN_PROGRESS' ? 'Đang xử lý' : 'Hoàn thành'}
-          </p>
-          {pkg.zoneCode && (
-            <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
-              Khu: {pkg.zoneCode}
-            </p>
-          )}
-        </div>
-      ),
-      placement: 'topRight',
-      duration: 5,
-    });
-  }, [result.data, result.isSuccess, notification, pendingTagId]);
-
-  // Handle query error (tag not found)
-  useEffect(() => {
-    if (!result.error || !result.isError || pendingTagId === null) return;
-
-    const tagId = pendingTagId;
-    setPendingTagId(null);
-
-    notification.warning({
-      message: `AprilTag #${tagId} không tìm thấy`,
-      description: 'Không có kiện hàng nào được gán với mã tag này.',
-      placement: 'topRight',
-      duration: 4,
-    });
-  }, [result.error, result.isError, notification, pendingTagId]);
+  }, [notification, trigger]);
 }
