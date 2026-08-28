@@ -119,7 +119,7 @@ BNO055Sensor::BNO055Sensor()
 
 bool BNO055Sensor::begin(uint8_t address)
 {
-    addr_ = address;
+    addr_ = address & 0x7F;
     operational_ = false;
 
     // I2C-only mode. config.h marks BNO055 SPI pins (GPIO 4/15/21/36) as
@@ -189,9 +189,13 @@ bool BNO055Sensor::begin(uint8_t address)
     writeReg(addr_, BNO055_SYS_TRIGGER, 0x00);
     delay(10);
 
-    // ���─ 4. Switch to NDOF fusion mode ──
-    writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_NDOF);
-    delay(700);   // Fusion needs longer to stabilize
+    // // Step 4: switch to NDOF fusion mode
+    if (!writeReg(addr_, BNO055_OPR_MODE_ADDR, BNO055_MODE_NDOF)) {
+        Serial.println("[BNO055] Failed to request NDOF mode");
+        return false;
+    }
+    // Bosch requires the mode transition to settle before register access.
+    delay(700);
 
     mode = readReg(addr_, BNO055_OPR_MODE_ADDR);
     if (mode != BNO055_MODE_NDOF) {

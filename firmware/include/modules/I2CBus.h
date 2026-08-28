@@ -83,8 +83,24 @@ public:
                                uint8_t addr, uint8_t start_reg,
                                uint8_t* buf, uint8_t cnt);
 
+    /// Safe burst read using a 16-bit, big-endian register address.
+    static bool safeReadReg16(uint8_t sda_pin, uint8_t scl_pin,
+                              uint32_t freq_hz, uint8_t addr, uint16_t reg,
+                              uint8_t* buf, uint8_t cnt);
+
     /// Safe single-byte write.  Returns true on success.
     static bool safeWriteReg(uint8_t sda_pin, uint8_t scl_pin,
                               uint32_t freq_hz,
                               uint8_t addr, uint8_t reg, uint8_t value);
+
+    /// Safe register write with an atomic payload transaction.
+    static bool safeWriteBurst(uint8_t sda_pin, uint8_t scl_pin,
+                                uint32_t freq_hz,
+                                uint8_t addr, uint8_t reg,
+                                const uint8_t* buf, uint8_t cnt);
+
+    /// Safe write using a 16-bit, big-endian register address.
+    static bool safeWriteReg16(uint8_t sda_pin, uint8_t scl_pin,
+                               uint32_t freq_hz, uint8_t addr, uint16_t reg,
+                               const uint8_t* buf, uint8_t cnt);
 };

@@ -3,9 +3,8 @@
 // ========================================================================
 #pragma once
 
-// The production firmware uses native USB CDC. PiSerial aliases Serial, so
-// debug text and JSON protocol share that endpoint; the Pi parser filters
-// non-JSON lines. GPIO43/44 UART is not configured by this build.
+// Production transport is native USB CDC on the Type-C port. GPIO43/44 are
+// reserved for the two ToF sensor XSHUT lines.
 #ifndef PiSerial
 #define PiSerial Serial
 #endif

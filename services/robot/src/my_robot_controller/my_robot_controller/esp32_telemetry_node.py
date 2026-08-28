@@ -431,11 +431,10 @@ class Esp32TelemetryNode(Node):
         loop = asyncio.get_event_loop()
         for cmd in commands:
             command = cmd.get('cmd', '?')
-            if self._overflow_active and command in COALESCE_COMMANDS:
-                self.get_logger().warn(f'dropping {command} during sustained overload')
-                self._dropped_total += 1
-                continue
             try:
+                # _drain_commands() already coalesces motion to the newest
+                # frame. Never drop that final frame during overload: doing
+                # so can leave the ESP32 executing an obsolete velocity.
                 loop.create_task(self._bridge.send_command(cmd))
                 self._emit_cmd_status('accepted', command)
             except Exception as exc:

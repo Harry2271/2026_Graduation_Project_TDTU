@@ -258,7 +258,8 @@ bool AutoRoam::compute(uint32_t now_ms,
     // do NOT call imu_->read() here.  This avoids I2C contention between
     // the PID loop and the main sensor read, and ensures the cached
     // heading value is fresh when we read it.
-    if (imu_ && imu_->isOperational()) {
+    if (imu_ && imu_->isOperational() &&
+        imu_->getCalSys() >= 2 && imu_->getCalMag() >= 2) {
         const float h = imu_->getHeading();
         if (isfinite(h) && h >= 0.0f && h < 360.0f) {
             if (!has_heading_) {
@@ -549,13 +550,17 @@ bool AutoRoam::compute(uint32_t now_ms,
     if (front_tof_ && front_tof_->isSlowing(now_ms)) {
         base_vx = SLOW_FWD_SPEED;
     }
-    if (power_ && power_->isOperational() && power_->getBatteryPct() <= 20.0f) {
+    // A no-load INA226 reading reports SOC=0 with status UNKNOWN. Do not
+    // treat a disconnected bench monitor as a low battery.
+    if (power_ && power_->isOperational() && !power_->isNoLoad() &&
+        power_->getBatteryStatus() == 1) {
         base_vx /= 2;
     }
 
     // ----- Heading-hold PI (produces small omega correction) -----
     int16_t nav_vy = 0, nav_omega = 0;
-    if (imu_ && imu_->isOperational() && has_heading_) {
+    if (imu_ && imu_->isOperational() && has_heading_ &&
+        imu_->getCalSys() >= 2 && imu_->getCalMag() >= 2) {
         const float heading = imu_->getHeading();
         if (isfinite(heading) && heading >= 0.0f && heading < 360.0f) {
             float err = headingError(hold_heading_, heading);

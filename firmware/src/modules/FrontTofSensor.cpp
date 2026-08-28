@@ -28,6 +28,22 @@ FrontTofSensor::FrontTofSensor()
 {
 }
 
+bool FrontTofSensor::initializeAtDefaultAndAssign(uint8_t runtime_address)
+{
+    if (sensor_ != nullptr) return false;
+    sensor_ = new VL53L1X();
+    sensor_->setBus(&Wire);
+    sensor_->setTimeout(500);
+    if (!sensor_->init()) {
+        delete sensor_;
+        sensor_ = nullptr;
+        return false;
+    }
+    sensor_->setAddress(runtime_address);
+    delay(10);
+    return I2CBus::probe(VL53L1X_SDA_PIN, VL53L1X_SCL_PIN, runtime_address) == 0;
+}
+
 bool FrontTofSensor::begin()
 {
     sensor_present_ = false;
@@ -35,52 +51,18 @@ bool FrontTofSensor::begin()
     distance_mm_ = FRONT_TOF_INVALID_MM;
     last_read_ms_ = 0;
 
-    if (sensor_) {
-        delete sensor_;
-        sensor_ = nullptr;
-    }
-
-    const int probe_err = I2CBus::probeWithRecovery(
-        VL53L1X_SDA_PIN, VL53L1X_SCL_PIN, VL53L1X_I2C_ADDR,
-        VL53L1X_I2C_FREQ_HZ);
-    if (probe_err != 0) {
-        Serial.printf("  [WARN] Front VL53L1X %s at 0x%02X\n",
-                      I2CBus::errorName(probe_err), VL53L1X_I2C_ADDR);
+    // The XSHUT coordinator initializes this persistent object at 0x29 and
+    // changes it to 0x31 before begin() is called.
+    if (sensor_ == nullptr) {
+        Serial.println("  [WARN] Front VL53L1X was not initialized by XSHUT sequence");
         return false;
     }
-
-    sensor_ = new VL53L1X();
     sensor_->setBus(&Wire);
     sensor_->setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
-
-    bool init_ok = false;
-    for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; ++attempt) {
-        if (I2CBus::linesIdle(VL53L1X_SDA_PIN, VL53L1X_SCL_PIN) && sensor_->init()) {
-            init_ok = true;
-            break;
-        }
-        Serial.printf("  [WARN] Front VL53L1X init attempt %d failed\n", attempt + 1);
-        if (attempt + 1 < I2C_DEVICE_RETRY_COUNT) {
-            I2CBus::reinitializeBus(VL53L1X_SDA_PIN, VL53L1X_SCL_PIN,
-                                    VL53L1X_I2C_FREQ_HZ);
-            sensor_->setBus(&Wire);
-            sensor_->setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
-            delay(I2C_DEVICE_RETRY_DELAY_MS);
-        }
-    }
-
-    if (!init_ok) {
-        Serial.println("  [WARN] Front VL53L1X init failed — forward motion blocked");
-        delete sensor_;
-        sensor_ = nullptr;
-        return false;
-    }
 
     if (!sensor_->setDistanceMode(VL53L1X::Long) ||
         !sensor_->setMeasurementTimingBudget(50000)) {
         Serial.println("  [WARN] Front VL53L1X configuration failed — forward motion blocked");
-        delete sensor_;
-        sensor_ = nullptr;
         return false;
     }
 

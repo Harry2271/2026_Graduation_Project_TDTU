@@ -140,42 +140,54 @@ void setupLEDC()
 
 static bool sequenceTofAddresses()
 {
+    // Both devices boot at 0x29. Initialize and re-address one persistent
+    // object at a time; never release the second XSHUT until the first device
+    // has been initialized and verified at its unique runtime address.
     pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
     pinMode(VL53L1X_XSHUT_PIN, OUTPUT);
     digitalWrite(VL53L0X_XSHUT_PIN, LOW);
     digitalWrite(VL53L1X_XSHUT_PIN, LOW);
-    delay(30);
+    delay(100);
 
-    VL53L0X rear_probe;
-    rear_probe.setBus(&Wire);
-    rear_probe.setTimeout(200);
+    // This exact HIGH-drive sequence is validated by test_dual_tof on the
+    // same board and wiring. The carrier used here does not reliably release
+    // XSHUT from Hi-Z, so INPUT would leave the sensor in shutdown.
     digitalWrite(VL53L0X_XSHUT_PIN, HIGH);
-    delay(30);
-    if (I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L0X_DEFAULT_I2C_ADDR) != 0) {
-        Serial.println("  [WARN] Rear VL53L0X missing at default 0x29");
-        digitalWrite(VL53L1X_XSHUT_PIN, HIGH);
+    delay(150);
+    Serial.printf("  [TOF] Rear XSHUT HIGH: level=%d\n",
+                  digitalRead(VL53L0X_XSHUT_PIN));
+    Serial.println("  [TOF] Initializing rear VL53L0X at default 0x29...");
+    const bool rear_ok = g_tof.initializeAtDefaultAndAssign(VL53L0X_I2C_ADDR);
+    Serial.printf("  [TOF] Rear runtime address 0x%02X: %s\n",
+                  VL53L0X_I2C_ADDR, rear_ok ? "OK" : "FAIL");
+    if (!rear_ok) {
+        pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
+        digitalWrite(VL53L0X_XSHUT_PIN, LOW);
         return false;
     }
-    rear_probe.setAddress(VL53L0X_I2C_ADDR);
-    delay(10);
 
-    VL53L1X front_probe;
-    front_probe.setBus(&Wire);
-    front_probe.setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
+    // Keep the same validated release sequence for the front carrier.
     digitalWrite(VL53L1X_XSHUT_PIN, HIGH);
-    delay(30);
-    if (I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L1X_DEFAULT_I2C_ADDR) != 0) {
-        Serial.println("  [WARN] Front VL53L1X missing at default 0x29");
-        return false;
+    delay(150);
+    Serial.printf("  [TOF] Front XSHUT HIGH: level=%d\n",
+                  digitalRead(VL53L1X_XSHUT_PIN));
+    Serial.println("  [TOF] Initializing front VL53L1X at default 0x29...");
+    const bool front_ok = g_front_tof.initializeAtDefaultAndAssign(VL53L1X_I2C_ADDR);
+    Serial.printf("  [TOF] Front runtime address 0x%02X: %s\n",
+                  VL53L1X_I2C_ADDR, front_ok ? "OK" : "FAIL");
+    if (!front_ok) {
+        pinMode(VL53L1X_XSHUT_PIN, OUTPUT);
+        digitalWrite(VL53L1X_XSHUT_PIN, LOW);
     }
-    front_probe.setAddress(VL53L1X_I2C_ADDR);
-    delay(10);
 
-    const bool rear_ok = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L0X_I2C_ADDR) == 0;
-    const bool front_ok = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L1X_I2C_ADDR) == 0;
-    Serial.printf("  [TOF] XSHUT addresses rear=0x%02X (%s), front=0x%02X (%s)\n",
+    Serial.printf("  [TOF] Sequence result rear=0x%02X %s, front=0x%02X %s\n",
                   VL53L0X_I2C_ADDR, rear_ok ? "OK" : "FAIL",
                   VL53L1X_I2C_ADDR, front_ok ? "OK" : "FAIL");
+
+    // Do not call Wire.end()/begin() here. The validated dual-ToF sequence
+    // leaves the shared controller ready, and restarting it at this point can
+    // make BNO055/INA226 lose their first ACK. Each later driver uses the same
+    // Wire instance and its own transaction normally.
     return rear_ok && front_ok;
 }
 
@@ -248,27 +260,14 @@ void setupHardware()
         Serial.println("  [WARN] ToF address sequencing failed — front motion will remain blocked");
     }
 
-    // ---- I2C scan: probe only known device addresses ----
-    // A full 0x01-0x7E scan is unsafe on ESP32 when buses may be shared.
-    int found = 0;
+    // Do not scan the shared bus between ToF bring-up and the remaining
+    // sensors. The VL53 drivers leave continuous-ranging/controller state that
+    // makes an extra probe here produce false NACKs and disturb diagnostics.
+    // Each device is verified by its own begin() transaction below.
     if (i2c_ok) {
-        Serial.println("  [SCAN] I2C device probe...");
-        static const uint8_t known_addrs[] = {0x28, 0x30, 0x31, 0x40};
-        static const char*  known_names[]  = {"BNO055", "VL53L0X(rear)", "VL53L1X(front)", "INA226"};
-        for (size_t k = 0; k < sizeof(known_addrs); k++) {
-            int err = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, known_addrs[k]);
-            if (err == 0) {
-                Serial.printf("         Found 0x%02X (%s)\n", known_addrs[k], known_names[k]);
-                found++;
-            }
-        }
-        if (found == 0) {
-            Serial.println("         No devices found");
-        } else {
-            Serial.printf("         Total: %d device(s)\n", found);
-        }
+        Serial.println("  [SCAN] skipped; per-device initialization will verify the bus");
     } else {
-        Serial.println("  [SCAN] I2C scan SKIPPED (bus init failed)");
+        Serial.println("  [SCAN] skipped (bus init failed)");
     }
 
     setupLEDC();
@@ -1397,6 +1396,16 @@ void setup()
     if (!g_power.isOperational()) {
         g_health.reportState(MOD_BATTERY, ST_FAILED, 2, millis());
     }
+    if (g_front_tof.isPresent()) {
+        g_health.reportOk(MOD_FRONT_TOF, millis());
+    } else {
+        g_health.reportState(MOD_FRONT_TOF, ST_OFFLINE, 0, millis());
+    }
+    if (g_tof.isPresent()) {
+        g_health.reportOk(MOD_TOF, millis());
+    } else {
+        g_health.reportState(MOD_TOF, ST_OFFLINE, 0, millis());
+    }
     g_modeManager.begin();
 
     // The I2C bus is operational once Wire.begin() succeeds in setupHardware.
@@ -1450,11 +1459,14 @@ void pollLocalSensors(uint32_t now)
     }
 
     // ---- Front TOF400C: invalid, stale, or close data all block front motion ----
-    const bool front_updated = g_front_tof.update(now);
-    if (front_updated && g_front_tof.isReadingValid() && !g_front_tof.isStale(now)) {
+    g_front_tof.update(now);
+    // A false return only means the 50 ms poll interval has not elapsed, or
+    // that the current measurement is invalid. Health is based on presence;
+    // stale/invalid readings remain fail-closed through isTooClose/isSlowing.
+    if (g_front_tof.isPresent()) {
         g_health.reportOk(MOD_FRONT_TOF, now);
-    } else if (!g_front_tof.isPresent() || g_front_tof.isStale(now)) {
-        g_health.reportError(MOD_FRONT_TOF, 1, now);
+    } else {
+        g_health.reportState(MOD_FRONT_TOF, ST_OFFLINE, 0, now);
     }
     if (g_front_tof.isTooClose(now) || g_front_tof.isSlowing(now)) {
         g_local_clear_since_ms = 0;

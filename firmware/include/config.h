@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Arduino.h>
+#include <HardwareSerial.h>
 #include <driver/pcnt.h>
 
 // ============================================================
@@ -129,27 +131,19 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define KICK_BOOST_TICKS  15
 
 // ============================================================
-// UART Communication
+// UART Communication — native USB CDC (Type-C cable)
+// GPIO43/44 are XSHUT pins for the two ToF sensors, not UART.
 // ============================================================
 #define SERIAL_BAUD        115200
 #define SERIAL_TIMEOUT_MS  100
 #define CMD_TERMINATOR     '\n'
 
-// Pi 5 ↔ ESP32-S3 connection — now uses USB CDC (Type-C cable),
-// not the GPIO 43/44 hardware UART.  USB CDC skips the PL011 DMA
-// (dma2chan2) path on the Pi 5 which was causing system freezes.
-//
-// Baud rate constant kept for protocol consistency, but USB CDC
-// ignores baud — actual throughput is full-speed USB.
-#define PI_UART_BAUD       115200
-
-// The production build enables CONFIG_ARDUINO_USB_CDC_ON_BOOT, so PiSerial
-// is the native USB CDC stream exposed by Serial. GPIO 43/44 are not used by
-// this firmware transport. If a future build intentionally disables USB CDC,
-// it must configure and validate a separate HardwareSerial instance instead.
 #ifndef PiSerial
 #define PiSerial Serial
 #endif
+
+// ============================================================
+// Motor State
 
 // ============================================================
 // Motor State
@@ -259,9 +253,14 @@ enum MotorState {
 #define AUTO_ROAM_REVERSE_NUDGE  40     // gentle forward push when rear IR triggers while reversing
 
 #define IR_REAR_LEFT_PIN      1
-#define IR_REAR_RIGHT_PIN     8
+#define IR_REAR_RIGHT_PIN     37       // moved from GPIO8; input-only pin
 #define IR_LEFT_PIN           45       // Strapping pin — safe as input after boot
 #define IR_RIGHT_PIN          46       // Strapping pin — safe as input after boot
+// GPIO45 is a strapping pin and reads LOW on this board when no E18 is
+// connected. Keep this channel disabled until an external 3.3V-safe E18
+// output and pull-up are physically installed.
+#define IR_LEFT_ENABLED       0
+#define CARGO_SENSOR_PIN      36       // Cargo microswitch, INPUT_PULLUP
 
 // ============================================================
 // Front TOF400C — VL53L1X laser distance sensor
@@ -274,17 +273,33 @@ enum MotorState {
 #define VL53L1X_I2C_FREQ_HZ            100000
 #define VL53L1X_FRONT_THRESHOLD_CM     15    // Hard-stop / front block
 #define VL53L1X_FRONT_SLOW_CM          60    // Begin slowing
-#define VL53L1X_FRONT_POLL_MS          20    // 50 Hz cache update
+#define VL53L1X_FRONT_POLL_MS          20    // Safety/cache poll cadence
+#define VL53L1X_FRONT_MEASUREMENT_MS   50    // Long-mode timing budget/continuous period
 #define VL53L1X_FRONT_STALE_MS         250   // No fresh sample => blocked
 #define VL53L1X_FRONT_MIN_MM            40
 #define VL53L1X_FRONT_MAX_MM          4000
 #define VL53L1X_FRONT_TIMEOUT_MS       200
 
-// XSHUT pins are available because production Pi transport is USB CDC.
-#define VL53L0X_XSHUT_PIN              43    // Rear VL53L0X
-#define VL53L1X_XSHUT_PIN              44    // Front VL53L1X
+// Rear VL53L0X uses the default address while held in XSHUT, then moves to
+// a unique runtime address before the front sensor is released.
 #define VL53L0X_DEFAULT_I2C_ADDR       0x29
-#define VL53L0X_I2C_ADDR               0x30  // Assigned after XSHUT boot
+#define VL53L0X_I2C_ADDR               0x30  // Fixed runtime address after XSHUT boot
+
+// Runtime addresses are deliberately fixed and unique on the shared bus.
+#if VL53L1X_I2C_ADDR == VL53L0X_I2C_ADDR || \
+    VL53L1X_I2C_ADDR == BNO055_I2C_ADDR || \
+    VL53L1X_I2C_ADDR == INA226_I2C_ADDR
+#error "VL53L1X_I2C_ADDR conflicts with another I2C device"
+#endif
+#if VL53L0X_I2C_ADDR == BNO055_I2C_ADDR || \
+    VL53L0X_I2C_ADDR == INA226_I2C_ADDR
+#error "VL53L0X_I2C_ADDR conflicts with another I2C device"
+#endif
+
+// XSHUT pins are available because production Pi transport is USB CDC.
+// Dedicated XSHUT lines. Avoid GPIO0 (BOOT) and GPIO43/44 (UART0/CH343).
+#define VL53L0X_XSHUT_PIN              8     // Rear VL53L0X
+#define VL53L1X_XSHUT_PIN              9     // Front VL53L1X
 
 // ============================================================
 // Rear VL53L0X — docking/alignment distance sensor
@@ -292,6 +307,8 @@ enum MotorState {
 #define VL53L0X_SDA_PIN               10
 #define VL53L0X_SCL_PIN               11
 #define VL53L0X_I2C_FREQ_HZ           100000
+#define VL53L0X_MIN_VALID_MM          30       // Reject 0/2mm phantom readings
+#define VL53L0X_MAX_VALID_MM        2000
 #define VL53L0X_UNLOAD_DISTANCE_MM    40
 #define VL53L0X_TOLERANCE_MM          10
 #define VL53L0X_POLL_MS               50
@@ -304,11 +321,28 @@ enum MotorState {
 // ============================================================
 #define CYLINDER_IN1_PIN         2        // L298N IN1 → extend (HIGH)
 #define CYLINDER_IN2_PIN         35       // L298N IN2 → retract (HIGH)
-#define CYLINDER_RETRACT_SWITCH_PIN 37    // Limit switch: LOW when xy lanh đã rút hết hành trình (INPUT_PULLUP, GPIO 37 on WeAct N16R8)
+#define CYLINDER_RETRACT_SWITCH_PIN 44    // Limit switch: LOW when cylinder is fully retracted (INPUT_PULLUP)
+#define CYLINDER_LIMIT_DEBOUNCE_MS 100    // Require a stable limit signal before stopping
 #define CYLINDER_MAX_RUN_MS      8000     // Safety auto-stop (8 s full extension/retraction)
 #define CYLINDER_HOLD_AT_TOP_MS  3000     // Hold extended while dumping (3 s)
 #define CYLINDER_ADJUST_PWM      40       // Forward nudge speed during position adjust
 #define CYLINDER_ADJUST_TIMEOUT_MS 5000   // Max time spent on alignment loop
+
+// Keep safety inputs single-owner. A duplicate pin can make a limit switch
+// indistinguishable from an obstacle sensor or motor signal.
+#if CYLINDER_RETRACT_SWITCH_PIN == IR_REAR_LEFT_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == IR_REAR_RIGHT_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == IR_LEFT_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == IR_RIGHT_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == CARGO_SENSOR_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == VL53L0X_XSHUT_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == VL53L1X_XSHUT_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == BNO055_SDA_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == BNO055_SCL_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == CYLINDER_IN1_PIN || \
+    CYLINDER_RETRACT_SWITCH_PIN == CYLINDER_IN2_PIN
+#error "CYLINDER_RETRACT_SWITCH_PIN conflicts with another assigned GPIO"
+#endif
 
 // ============================================================
 // Docking Sequence — BNO055 heading gate + leave-dock parameters

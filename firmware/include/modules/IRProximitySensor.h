@@ -34,6 +34,6 @@ public:
 private:
     static const uint8_t PINS_[4];
     IRReading readings_[4];
-    bool sensor_present_[4];   // Always true: hard-stop safety, no auto-disable
+    bool sensor_present_[4];   // Per-channel wiring/enable status
     bool prev_any_;
 };
