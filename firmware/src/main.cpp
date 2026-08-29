@@ -104,6 +104,16 @@ static constexpr uint8_t ENCODER_STALL_CONFIRM_TICKS = 10; // 200 ms
 bool g_raw_test_mode = false;
 int16_t g_raw_test_speeds[4] = {0};
 
+// Non-blocking `T` test-sequence state. The previous implementation held the
+// main loop in delay() for ~8.5 s, starving serial reads, sensor polling and
+// the task watchdog. The sequence now advances one step per loop tick.
+static bool g_test_sequence_active = false;
+static uint8_t g_test_sequence_step = 0;
+static uint32_t g_test_sequence_next_ms = 0;
+static constexpr int16_t G_TEST_STEPS[] = { 50, 100, 150, 200, 150, 100, 50, 0 };
+static constexpr uint8_t G_TEST_STEP_COUNT =
+    sizeof(G_TEST_STEPS) / sizeof(G_TEST_STEPS[0]);
+
 // Shared JSON output buffer for status messages (UART to Pi 5)
 static char g_json_buf[1200];
 
@@ -579,6 +589,7 @@ void handleBackward(int speed)
 
 void handleStop()
 {
+    g_test_sequence_active = false;
     g_nav_vx    = 0;
     g_nav_vy    = 0;
     g_nav_omega = 0;
@@ -596,6 +607,7 @@ void handleStop()
 
 void handleEStop()
 {
+    g_test_sequence_active = false;
     // Latch the autonomous path before disabling hardware so AUTO_ROAM cannot
     // retain a conflicting command while the global hardware interlock is set.
     g_modeManager.enterEStop(millis());
@@ -625,6 +637,7 @@ void handleEStop()
 
 void handleEStopClear()
 {
+    g_test_sequence_active = false;
     // This is the only command path that may re-arm motion after an E-stop.
     g_modeManager.clearEStop(millis());
     g_cylinder.stop();
@@ -739,21 +752,39 @@ void handleUnloadState()
 
 void handleTestSequence()
 {
-    PiSerial.printf("ACK: test sequence starting...\n");
-    handleStop();
-    delay(500);
-
-    g_individual_mode = false;
-    int16_t steps[] = { 50, 100, 150, 200, 150, 100, 50, 0 };
-    for (size_t i = 0; i < sizeof(steps)/sizeof(steps[0]); i++) {
-        PiSerial.printf("TEST: forward %d\n", steps[i]);
-        g_nav_vx = steps[i];
-        g_nav_vy = 0;
-        g_nav_omega = 0;
-        delay(1000);
+    if (g_test_sequence_active) {
+        emitCommandAck("test", "rejected");
+        return;
     }
+
     handleStop();
-    PiSerial.println("ACK: test sequence complete");
+    g_individual_mode = false;
+    g_test_sequence_active = true;
+    g_test_sequence_step = 0;
+    g_test_sequence_next_ms = millis() + 500;
+    PiSerial.println("ACK: test sequence starting...");
+}
+
+static void updateTestSequence(uint32_t now_ms)
+{
+    if (!g_test_sequence_active ||
+        (int32_t)(now_ms - g_test_sequence_next_ms) < 0) {
+        return;
+    }
+
+    if (g_test_sequence_step >= G_TEST_STEP_COUNT) {
+        handleStop();
+        g_test_sequence_active = false;
+        PiSerial.println("ACK: test sequence complete");
+        return;
+    }
+
+    const int16_t speed = G_TEST_STEPS[g_test_sequence_step++];
+    PiSerial.printf("TEST: forward %d\n", speed);
+    g_nav_vx = speed;
+    g_nav_vy = 0;
+    g_nav_omega = 0;
+    g_test_sequence_next_ms = now_ms + 1000;
 }
 
 void handleHelp()
@@ -1487,11 +1518,11 @@ void pollLocalSensors(uint32_t now)
     g_cargo.update(now);
 
     // ---- Battery safety monitoring ----
-    // TEMPORARILY DISABLED for bench testing without INA226 wiring.
-    // TODO: re-enable when INA226 VIN+/VIN- are properly connected.
-    /*
+    // INA226 status 3 (no-load/unknown) is reported but is not treated as a
+    // critical battery fault on the bench. A measured critical SOC is a hard
+    // stop and cannot be overridden by the normal command path.
     if (g_power.isOperational() && g_power.getLastReadMs() > 0) {
-        uint8_t bstatus = g_power.getBatteryStatus();
+        const uint8_t bstatus = g_power.getBatteryStatus();
         if (bstatus == 2) {
             g_health.reportError(MOD_BATTERY, 3, now);
             if (!g_e_stop_active) {
@@ -1499,16 +1530,13 @@ void pollLocalSensors(uint32_t now)
                 handleEStop();
             }
         } else {
-            if (bstatus == 1) {
-                if (g_max_speed_pct > 50) {
-                    g_max_speed_pct = 50;
-                    Serial.println("[POWER] Battery low — max speed capped to 50%");
-                }
+            if (bstatus == 1 && g_max_speed_pct > 50) {
+                g_max_speed_pct = 50;
+                Serial.println("[POWER] Battery low — max speed capped to 50%");
             }
             g_health.reportOk(MOD_BATTERY, now);
         }
     }
-    */
 
     // ---- Motor driver health ----
     // BTS7960 has no diagnostic feedback pin.  Do not infer a driver fault
@@ -1715,6 +1743,15 @@ void loop()
 
         SystemMode mode = g_modeManager.getMode();
 
+        // Any critical module failure must prevent every motor output path,
+        // including AUTO_ROAM and raw bench commands. Latch the same hardware
+        // E-stop used by the explicit command path; recovery cannot re-arm
+        // motion without an explicit clear.
+        if (g_health.hasCriticalFailed() && !g_e_stop_active) {
+            Serial.println("[SAFETY] Critical module FAILED — engaging E-stop");
+            handleEStop();
+        }
+
         // SAFE is fail-closed even if an old direct/raw command remains in
         // memory after Pi-link loss. E-stop is an additional hardware latch.
         if (g_e_stop_active || mode == MODE_SAFE) {
@@ -1753,6 +1790,7 @@ void loop()
         }
     }
 
+    updateTestSequence(now);
     printStatus(now);
     publishSensors(now);
     updateLED(now);

@@ -312,6 +312,7 @@ enum MotorState {
 #define VL53L0X_UNLOAD_DISTANCE_MM    40
 #define VL53L0X_TOLERANCE_MM          10
 #define VL53L0X_POLL_MS               50
+#define VL53L0X_STALE_MS             250  // No successful dock sample beyond this is usable
 
 // ============================================================
 // Cylinder Actuator — 12VDC electric cylinder + L298N driver

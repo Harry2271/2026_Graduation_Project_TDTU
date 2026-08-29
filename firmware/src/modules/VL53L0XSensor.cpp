@@ -70,9 +70,8 @@ bool VL53L0XSensor::update(uint32_t now_ms)
 {
     if (!sensor_present_ || !sensor_) return false;
     if (now_ms - last_read_ms_ < VL53L0X_POLL_MS) return false;
-    last_read_ms_ = now_ms;
-
     // Guard: skip read if bus is busy (another device mid-transaction).
+
     // Pololu VL53L0X library does NOT use linesIdle() internally — it calls
     // Wire.endTransmission() directly, which can block if bus is busy.
     if (!I2CBus::linesIdle(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN)) return false;
@@ -82,6 +81,10 @@ bool VL53L0XSensor::update(uint32_t now_ms)
     // VL53L0X returns 8190/8191 on timeout or out-of-range
     if (raw >= 8000) {
         raw = 9999;
+    } else {
+        // Only valid range data refreshes freshness. A timeout must not make
+        // an older dock distance appear current.
+        last_read_ms_ = now_ms;
     }
 
     // Push into median ring buffer
@@ -114,9 +117,17 @@ float VL53L0XSensor::getDistanceCm() const
     return distance_mm_ / 10.0f;
 }
 
+bool VL53L0XSensor::hasFreshReading(uint32_t now_ms) const
+{
+    if (!sensor_present_ || last_read_ms_ == 0 || distance_mm_ >= 8000) {
+        return false;
+    }
+    return (uint32_t)(now_ms - last_read_ms_) <= VL53L0X_STALE_MS;
+}
+
 bool VL53L0XSensor::isAtUnloadingDistance() const
 {
-    if (!sensor_present_) return false;
+    if (!sensor_present_ || distance_mm_ >= 8000) return false;
     return distance_mm_ <= VL53L0X_UNLOAD_DISTANCE_MM;
 }
 

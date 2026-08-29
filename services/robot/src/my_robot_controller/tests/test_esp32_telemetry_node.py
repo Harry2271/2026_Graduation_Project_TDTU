@@ -25,6 +25,7 @@ def _gateway() -> Esp32TelemetryNode:
     node._priority_cmd_q = deque()
     node._cmd_q = deque(maxlen=32)
     node._last_pending_move = None
+    node._motion_epoch = 0
     node._dropped_total = 0
     node._accepted_total = 0
     node._rejected_total = 0
@@ -70,3 +71,35 @@ def test_cylinder_stop_discards_queued_estop_clear() -> None:
 
     assert node._drain_commands() == [{'cmd': 'cylinder_stop'}]
     assert node._dropped_total == 1
+
+
+def test_estop_clear_discards_pending_move_and_requires_fresh_move() -> None:
+    node = _gateway()
+
+    node._on_cmd(type('Message', (), {
+        'data': json.dumps({'cmd': 'move', 'vx': 100, 'seq': 1})
+    })())
+    _enqueue(node, 'e_stop')
+    _enqueue(node, 'e_stop_clear')
+
+    assert node._drain_commands() == [
+        {'cmd': 'e_stop'}, {'cmd': 'e_stop_clear'}
+    ]
+
+    node._on_cmd(type('Message', (), {
+        'data': json.dumps({'cmd': 'move', 'vx': 20, 'seq': 2})
+    })())
+    assert node._drain_commands() == [
+        {'cmd': 'move', 'vx': 20, 'seq': 2}
+    ]
+
+
+def test_estop_clear_is_not_followed_by_pending_move_same_tick() -> None:
+    node = _gateway()
+
+    _enqueue(node, 'e_stop_clear')
+    node._on_cmd(type('Message', (), {
+        'data': json.dumps({'cmd': 'move', 'vx': 100, 'seq': 1})
+    })())
+
+    assert node._drain_commands() == [{'cmd': 'e_stop_clear'}]
