@@ -158,7 +158,11 @@ def _run_capture() -> None:
 
 
 def _get_frame() -> Optional[bytes]:
+    # Never serve a cached frame after ffmpeg has stopped. Serving the last
+    # JPEG would let AprilTag keep refreshing a false-positive tag timestamp.
     with _lock:
+        if not _capture_ok:
+            return None
         return _latest_frame
 
 

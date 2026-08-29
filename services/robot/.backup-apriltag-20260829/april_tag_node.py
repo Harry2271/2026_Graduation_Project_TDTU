@@ -93,9 +93,6 @@ HEIGHT = int(os.environ.get('CAMERA_HEIGHT', '480'))
 FAMILY = os.environ.get('APRILTAG_FAMILY', 'tag36h11')
 SIZE_M = float(os.environ.get('APRILTAG_SIZE_M', '0.166'))
 HZ = float(os.environ.get('APRILTAG_HZ', '10'))
-MAX_HAMMING = int(os.environ.get('APRILTAG_MAX_HAMMING', '1'))
-DEBUG = os.environ.get('APRILTAG_DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
-DEBUG_CSV = os.environ.get('APRILTAG_DEBUG_CSV', '').strip()
 
 # Camera intrinsics.  When no calibration is supplied, use a sensible
 # pinhole default that works well enough for detection, but not for precise
@@ -182,13 +179,6 @@ class AprilTagNode(Node):
         self._stop_event = threading.Event()
         self._frames_seen = 0
         self._last_detection_log = 0.0
-        self._debug_csv_lock = threading.Lock()
-        if MAX_HAMMING < 0:
-            raise ValueError('APRILTAG_MAX_HAMMING must be non-negative')
-        if DEBUG_CSV:
-            with open(DEBUG_CSV, 'a', encoding='utf-8') as csv_file:
-                if csv_file.tell() == 0:
-                    csv_file.write('ts,tag_id,decision_margin,hamming,x,y,z,yaw,pitch,roll\\n')
         self._thread = threading.Thread(target=self._detect_loop,
                                          daemon=True, name='apriltag')
         self._thread.start()
@@ -200,8 +190,7 @@ class AprilTagNode(Node):
             f'family={FAMILY} size={SIZE_M}m @ {HZ}Hz '
             f'snapshot={SNAPSHOT_URL} calibration={calibration_source} '
             f'distortion={distortion_source} fx={FX:.1f} fy={FY:.1f} '
-            f'cx={CX:.1f} cy={CY:.1f} max_hamming={MAX_HAMMING} '
-            f'debug={DEBUG}')
+            f'cx={CX:.1f} cy={CY:.1f}')
 
     def _init_detector(self):
         """Create an AprilTag Detector using whichever library is installed."""
@@ -307,15 +296,8 @@ class AprilTagNode(Node):
                 if tvec.size < 3:
                     raise ValueError(
                         f'invalid translation shape {np.asarray(detection.pose_t).shape}')
-                hamming = int(getattr(detection, 'hamming', 0))
-                if hamming > MAX_HAMMING:
-                    if DEBUG:
-                        self.get_logger().debug(
-                            f'Skipping tag {detection.tag_id}: hamming={hamming} '
-                            f'> max={MAX_HAMMING}')
-                    continue
                 yaw, pitch, roll = _rvec_to_euler(detection.pose_R)
-                tag = {
+                tags.append({
                     'tag_id': int(detection.tag_id),
                     'x': float(tvec[0]),
                     'y': float(tvec[1]),
@@ -324,25 +306,8 @@ class AprilTagNode(Node):
                     'pitch': float(pitch),
                     'roll': float(roll),
                     'confidence': float(detection.decision_margin),
-                    'hamming': hamming,
                     'size_m': self._tag_size_m,
-                }
-                tags.append(tag)
-                if DEBUG:
-                    self.get_logger().info(
-                        f'AprilTag id={tag["tag_id"]} margin={tag["confidence"]:.2f} '
-                        f'hamming={hamming} x={tag["x"]:.3f} '
-                        f'y={tag["y"]:.3f} z={tag["z"]:.3f} '
-                        f'yaw={tag["yaw"]:.3f}')
-                if DEBUG_CSV:
-                    with self._debug_csv_lock:
-                        with open(DEBUG_CSV, 'a', encoding='utf-8') as csv_file:
-                            csv_file.write(
-                                f'{time.time():.6f},{tag["tag_id"]},'
-                                f'{tag["confidence"]:.6f},{hamming},'
-                                f'{tag["x"]:.6f},{tag["y"]:.6f},'
-                                f'{tag["z"]:.6f},{tag["yaw"]:.6f},'
-                                f'{tag["pitch"]:.6f},{tag["roll"]:.6f}\\n')
+                })
             except (TypeError, ValueError, IndexError) as e:
                 self.get_logger().warn(
                     f'Skipping tag {getattr(detection, "tag_id", "unknown")}: {e}')

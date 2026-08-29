@@ -102,7 +102,6 @@ CARGO_RELEASE_STABLE_S = 0.8
 # several recent, plausible observations of the expected tag.  Recovery uses
 # in-place rotation only; it must never drive toward a shelf without a tag.
 TAG_MIN_CONFIDENCE = float(os.environ.get('APRILTAG_MIN_CONFIDENCE', '25.0'))
-TAG_MAX_HAMMING = int(os.environ.get('APRILTAG_MAX_HAMMING', '1'))
 TAG_MIN_DISTANCE_M = float(os.environ.get('APRILTAG_MIN_DISTANCE_M', '0.20'))
 TAG_MAX_DISTANCE_M = float(os.environ.get('APRILTAG_MAX_DISTANCE_M', '5.0'))
 TAG_MAX_AGE_S = float(os.environ.get('APRILTAG_MAX_AGE_S', '0.60'))
@@ -792,21 +791,19 @@ class BrainNode(Node):
                 x = float(raw_tag['x'])
                 z = float(raw_tag['z'])
                 confidence = float(raw_tag.get('confidence', 0.0))
-                hamming = int(raw_tag.get('hamming', 0))
             except (KeyError, TypeError, ValueError):
                 continue
-            if (tid < 0 or hamming < 0 or not math.isfinite(x) or
-                    not math.isfinite(z) or not math.isfinite(confidence)):
+            if (tid < 0 or not math.isfinite(x) or not math.isfinite(z) or
+                    not math.isfinite(confidence)):
                 continue
-            tag = {**raw_tag, 'hamming': hamming, '_age': now}
+            tag = {**raw_tag, '_age': now}
             self._tag_cache[tid] = tag
             accepted_frame = True
             if (confidence >= TAG_MIN_CONFIDENCE and
-                    hamming <= TAG_MAX_HAMMING and
                     TAG_MIN_DISTANCE_M <= z <= TAG_MAX_DISTANCE_M):
                 history = self._tag_observations.setdefault(tid, [])
                 history.append({'ts': now, 'x': x, 'z': z,
-                                'confidence': confidence, 'hamming': hamming})
+                                'confidence': confidence})
                 cutoff = now - TAG_OBSERVATION_WINDOW_S
                 self._tag_observations[tid] = [
                     item for item in history if item['ts'] >= cutoff
@@ -837,13 +834,11 @@ class BrainNode(Node):
             x = float(tag['x'])
             z = float(tag['z'])
             confidence = float(tag.get('confidence', 0.0))
-            hamming = int(tag.get('hamming', 0))
         except (KeyError, TypeError, ValueError):
             return None
         if (not math.isfinite(x) or not math.isfinite(z) or
-                not math.isfinite(confidence) or hamming < 0 or
+                not math.isfinite(confidence) or
                 confidence < TAG_MIN_CONFIDENCE or
-                hamming > TAG_MAX_HAMMING or
                 not TAG_MIN_DISTANCE_M <= z <= TAG_MAX_DISTANCE_M):
             return None
         return tag
@@ -873,7 +868,6 @@ class BrainNode(Node):
             'TAG_RECOVERY_FAILED': 'Không tìm thấy AprilTag sau khi quét lại',
             'WRONG_TAG': 'Phát hiện AprilTag khác với tag đích',
             'TAG_LOW_CONFIDENCE': 'AprilTag có độ tin cậy quá thấp',
-            'HAMMING_HIGH': 'AprilTag có quá nhiều bit lỗi',
             'TAG_UNSTABLE': 'AprilTag không ổn định giữa các khung hình',
             'TAG_TOO_CLOSE': 'Robot ở quá gần AprilTag để căn an toàn',
             'TAG_TOO_FAR': 'AprilTag ở ngoài khoảng cách căn an toàn',
@@ -897,12 +891,6 @@ class BrainNode(Node):
             distance = float(tag.get('z', 0.0))
         except (TypeError, ValueError):
             return 'TAG_LOW_CONFIDENCE'
-        try:
-            hamming = int(tag.get('hamming', 0))
-        except (TypeError, ValueError):
-            return 'HAMMING_HIGH'
-        if hamming < 0 or hamming > TAG_MAX_HAMMING:
-            return 'HAMMING_HIGH'
         if confidence < TAG_MIN_CONFIDENCE:
             return 'TAG_LOW_CONFIDENCE'
         if distance < TAG_MIN_DISTANCE_M:
