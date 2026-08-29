@@ -3,6 +3,7 @@
 
 CommandParser::CommandParser()
     : buffer_index_(0)
+    , discard_until_terminator_(false)
 {
     buffer_[0] = '\0';
 }
@@ -12,6 +13,12 @@ CommandType CommandParser::feed(uint8_t byte, Command& out_cmd)
     if (byte == '\r') return CMD_UNKNOWN;
 
     if (byte == CMD_TERMINATOR || byte == '\n') {
+        if (discard_until_terminator_) {
+            buffer_index_ = 0;
+            buffer_[0] = '\0';
+            discard_until_terminator_ = false;
+            return CMD_UNKNOWN;
+        }
         if (buffer_index_ > 0) {
             buffer_[buffer_index_] = '\0';
             buffer_index_ = 0;
@@ -20,9 +27,16 @@ CommandType CommandParser::feed(uint8_t byte, Command& out_cmd)
         return CMD_UNKNOWN;
     }
 
+    if (discard_until_terminator_) return CMD_UNKNOWN;
+
     if (buffer_index_ < CMD_BUFFER_SIZE - 1) {
         buffer_[buffer_index_++] = (char)byte;
         buffer_[buffer_index_] = '\0';
+    } else {
+        // Drop the complete oversized frame; never parse truncated JSON.
+        buffer_index_ = 0;
+        buffer_[0] = '\0';
+        discard_until_terminator_ = true;
     }
     return CMD_UNKNOWN;
 }

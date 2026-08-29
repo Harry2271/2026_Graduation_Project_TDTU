@@ -74,6 +74,17 @@ public:
     }
     [[nodiscard]] float getLastDistanceM() const { return last_distance_m_; }
     [[nodiscard]] float getLastSeverity() const { return last_severity_; }
+    [[nodiscard]] bool isFrontCornerBlocked() const {
+        return obstacle_active_ &&
+            (last_dir_ == ObstacleDirection::FRONT_LEFT ||
+             last_dir_ == ObstacleDirection::FRONT_RIGHT);
+    }
+    [[nodiscard]] bool isFrontLeftBlocked() const {
+        return obstacle_active_ && last_dir_ == ObstacleDirection::FRONT_LEFT;
+    }
+    [[nodiscard]] bool isFrontRightBlocked() const {
+        return obstacle_active_ && last_dir_ == ObstacleDirection::FRONT_RIGHT;
+    }
 
 private:
     void startDodge(ObstacleDirection dir, uint32_t now_ms, float severity);

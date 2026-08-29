@@ -182,16 +182,21 @@ void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
             break;
 
         case ObstacleDirection::FRONT_LEFT:
-            // Obstacle front-left — dodge right and back slightly
+            // FL-corner obstacle: never drive into that wheel. Reverse a
+            // little and strafe right, away from the blocked corner. Cap
+            // any remaining forward command so Nav2 cannot push the FL
+            // wheel into a pallet leg that the front ToF cannot see.
+            if (vx > FRONT_CORNER_FORWARD_CAP) vx = FRONT_CORNER_FORWARD_CAP;
+            if (vx > 0) vx = 0;
             vy = 120;
-            vx = -40;
             omega = 40;
             break;
 
         case ObstacleDirection::FRONT_RIGHT:
-            // Obstacle front-right — dodge left and back slightly
+            // FR-corner obstacle: mirror of FRONT_LEFT.
+            if (vx > FRONT_CORNER_FORWARD_CAP) vx = FRONT_CORNER_FORWARD_CAP;
+            if (vx > 0) vx = 0;
             vy = -120;
-            vx = -40;
             omega = -40;
             break;
 

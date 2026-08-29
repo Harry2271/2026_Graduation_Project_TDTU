@@ -81,6 +81,7 @@ uint8_t AvoidanceFSM::irMaskBit(uint8_t pos) {
 AvoidanceFSM::AvoidanceFSM()
     : state_(STATE_IDLE), state_enter_ms_(0)
     , ir_mask_(0), front_tof_too_close_(false), front_tof_slowing_(false)
+    , front_left_blocked_(false), front_right_blocked_(false)
     , heading_deg_(0.0f), rotate_start_heading_(0.0f)
     , rotate_target_heading_(0.0f), rotate_heading_valid_(false)
     , reverse_start_pulse_(0), reverse_pulse_now_(0)
@@ -96,6 +97,8 @@ void AvoidanceFSM::begin()
     ir_mask_ = 0;
     front_tof_too_close_ = false;
     front_tof_slowing_ = false;
+    front_left_blocked_ = false;
+    front_right_blocked_ = false;
     heading_deg_ = 0.0f;
     rotate_heading_valid_ = false;
     reverse_start_pulse_ = 0;
@@ -112,6 +115,36 @@ void AvoidanceFSM::reset()
     state_enter_ms_ = millis();
     reverse_attempts_ = 0;
     rotate_attempts_ = 0;
+    front_left_blocked_ = false;
+    front_right_blocked_ = false;
+}
+
+void AvoidanceFSM::setFrontCornerBlocked(bool left, bool right)
+{
+    front_left_blocked_  = left;
+    front_right_blocked_ = right;
+}
+
+void AvoidanceFSM::clearFrontCorners()
+{
+    front_left_blocked_  = false;
+    front_right_blocked_ = false;
+}
+
+void AvoidanceFSM::requestRecovery(uint32_t now_ms)
+{
+    // A physical jam with a commanded velocity: stop pushing and re-plan.
+    // Never force a reverse here — evaluate() refuses reverse when the rear
+    // IR sensors are asserted, and the two rear sensors do not prove the
+    // whole rear is clear.  If we are already in a bounded recovery state,
+    // let it run; otherwise drop into EVALUATING for a fresh decision.
+    if (state_ == STATE_E_STOPPED || state_ == STATE_FRONT_STOP) return;
+    if (state_ == STATE_REVERSING || state_ == STATE_ROTATING ||
+        state_ == STATE_STRAFING) {
+        return;
+    }
+    Serial.println("[AVOID] motion-progress recovery requested → EVALUATING");
+    enterState(STATE_EVALUATING, now_ms);
 }
 
 void AvoidanceFSM::feedHeading(float heading_deg)
@@ -158,8 +191,9 @@ AvoidanceAction AvoidanceFSM::doRoaming(int16_t nav_vx, int16_t nav_vy, int16_t 
 {
     AvoidanceAction a = {nav_vx, nav_vy, nav_omega, false, "roam"};
 
-    // If IR sensors detect anything OR Front ToF is slowing us, evaluate
-    if (ir_mask_ != 0 || front_tof_slowing_) {
+    // If IR, Front ToF, or a Pi FL/FR corner event is active, evaluate
+    if (ir_mask_ != 0 || front_tof_slowing_ ||
+        front_left_blocked_ || front_right_blocked_) {
         enterState(STATE_EVALUATING, millis());
     }
     return a;
@@ -182,7 +216,9 @@ AvoidanceAction AvoidanceFSM::doStrafing()
     bool rr   = (ir_mask_ & 0x02) != 0;
     bool left = (ir_mask_ & 0x04) != 0;
     bool right= (ir_mask_ & 0x08) != 0;
-    bool front= front_tof_slowing_;  // Front ToF < 60cm
+    bool front= front_tof_slowing_ || front_left_blocked_ || front_right_blocked_;
+    if (front_left_blocked_)  left  = true;
+    if (front_right_blocked_) right = true;
 
     // Rear sensors (RL, RR) matter when reversing.
     // During forward dodge, rear is ignored — robot is moving forward.
@@ -411,9 +447,13 @@ AvoidanceAction AvoidanceFSM::evaluate(uint32_t now_ms)
     bool rear_right = (ir_mask_ & 0x02) != 0;
     bool left       = (ir_mask_ & 0x04) != 0;
     bool right      = (ir_mask_ & 0x08) != 0;
-    bool front      = front_tof_slowing_;  // Front ToF < 60cm = front obstacle
+    bool front      = front_tof_slowing_ || front_left_blocked_ || front_right_blocked_;
     bool any_ir     = (ir_mask_ != 0);
     bool any_rear   = (rear_left || rear_right);
+    // Treat a LiDAR FL/FR event as occupying that side as well, so the
+    // FSM will not strafe into a pallet leg sitting on the wheel corner.
+    if (front_left_blocked_)  left  = true;
+    if (front_right_blocked_) right = true;
 
     // ── Count free sides ──
     // During forward driving, rear sensors are ignored (behind us).

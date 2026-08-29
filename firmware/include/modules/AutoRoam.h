@@ -50,6 +50,15 @@ public:
     /// Reset state (e.g. when leaving AUTO_ROAM mode)
     void reset();
 
+    /// Forward a motion-progress recovery request into the avoidance FSM.
+    void requestRecovery(uint32_t now_ms) { avoidance_fsm_.requestRecovery(now_ms); }
+
+    /// Forward Pi LiDAR front-corner events into the avoidance FSM.
+    void setFrontCornerBlocked(bool left, bool right) {
+        avoidance_fsm_.setFrontCornerBlocked(left, right);
+    }
+    void clearFrontCorners() { avoidance_fsm_.clearFrontCorners(); }
+
     /// Compute (vx, vy, omega) for this tick. Call every PID cycle.
     /// Returns true if motion is allowed; false means HARD STOP requested.
     /// @param encoders optional — used for leave-dock distance tracking.

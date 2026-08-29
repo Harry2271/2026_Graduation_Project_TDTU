@@ -65,6 +65,19 @@ void ModeManager::update(uint32_t now_ms)
     obstacle_.update(now_ms);
 }
 
+void ModeManager::requestRecovery(uint32_t now_ms)
+{
+    if (watchdog_.getMode() == MODE_AUTO_ROAM) {
+        auto_roam_.requestRecovery(now_ms);
+        return;
+    }
+    // NAV / MANUAL have no local planner. Zero the last command so the
+    // chassis stops pushing into the jam; the motion watchdog in main.cpp
+    // still escalates to E-stop if the operator/Pi keeps sending motion.
+    nav_vx_ = nav_vy_ = nav_omega_ = 0;
+    Serial.println("[ModeManager] motion-progress recovery: command zeroed");
+}
+
 void ModeManager::enterEStop(uint32_t now_ms)
 {
     estop_active_ = true;
@@ -202,6 +215,7 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
                                       cmd.obstacle_has_payload,
                                       cmd.obstacle_distance_m,
                                       cmd.obstacle_severity);
+            auto_roam_.setFrontCornerBlocked(true, false);
             break;
 
         case CMD_OBSTACLE_FRONT_RIGHT:
@@ -209,6 +223,7 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
                                       cmd.obstacle_has_payload,
                                       cmd.obstacle_distance_m,
                                       cmd.obstacle_severity);
+            auto_roam_.setFrontCornerBlocked(false, true);
             break;
 
         case CMD_OBSTACLE_REAR:
@@ -234,6 +249,7 @@ void ModeManager::onPiCommand(const Command& cmd, uint32_t now_ms)
 
         case CMD_OBSTACLE_CLEAR:
             obstacle_.clearObstacles(now_ms);
+            auto_roam_.clearFrontCorners();
             // Explicit Pi clear is also the only non-e-stop route to reset
             // the latched AUTO_ROAM avoidance FSM.  Local IR/Front ToF are still
             // polled independently and can reassert the hard stop immediately.

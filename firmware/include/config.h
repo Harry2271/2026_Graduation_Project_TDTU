@@ -243,8 +243,55 @@ enum MotorState {
 #define IR_DETECTION_RANGE_CM 15       // Potentiometer-adjusted detection (cm)
 
 // ============================================================
-// AutoRoam — when Pi is disconnected, drive with sensors
+// Anti-stuck motion progress watchdog
+//
+// A commanded motion that produces no encoder travel means the robot is
+// physically blocked (wheel against a pallet leg, caster jammed, cargo
+// snagged). The firmware must not keep pushing torque into that obstruction,
+// and it must not blindly reverse either: the rear is only covered by two
+// short-range IR sensors, so an unverified reverse can back into something.
+//
+// Policy implemented in main.cpp:
+//   1. commanded motion + no encoder progress for MOTION_STUCK_WARN_MS
+//      → cut speed cap, emit a firmware warning, ask the FSM to re-plan
+//   2. still no progress at MOTION_STUCK_STOP_MS
+//      → hard stop, latch, emit type-129 MOTION_STUCK, report health error
+// The latch clears only when the operator/Pi clears E-stop or a fresh
+// obstacle_clear arrives, which matches the rest of the safety chain.
 // ============================================================
+#define MOTION_STUCK_MIN_COMMAND      40    // |ramped PWM| considered "commanded"
+#define MOTION_STUCK_MIN_PULSES       12    // encoder counts that prove progress
+#define MOTION_STUCK_WARN_MS        1200    // degrade + replan after this long
+#define MOTION_STUCK_STOP_MS        2500    // hard stop after this long
+#define MOTION_STUCK_DEGRADED_PCT     40    // speed cap applied at warn stage
+
+// ============================================================
+// Front-corner blind spot mitigation (FL / FR wheel corners)
+//
+// The four E18-D80NK sensors cover rear-left, rear-right, left and right.
+// The VL53L1X only sees a narrow forward cone, so the two front corners
+// around the FL and FR wheels are not covered by any onboard sensor: they
+// depend entirely on the Pi's LiDAR front-left / front-right sectors.
+//
+// Firmware therefore treats a Pi front-left/front-right event as a corner
+// interlock with its own freshness window: while the event is fresh, forward
+// motion is capped and lateral motion *into* that corner is blocked. If the
+// Pi link dies while a corner event is latched, the corner stays blocked
+// until an explicit clear — fail closed, same as the front ToF.
+//
+// Removing the blind spot in hardware requires two more E18-D80NK units
+// aimed at the FL/FR corners; see docs/SENSOR_COVERAGE.md for the wiring
+// requirement and the free-GPIO analysis.
+// ============================================================
+#define FRONT_CORNER_EVENT_FRESH_MS  1500   // corner event considered actionable
+#define FRONT_CORNER_FORWARD_CAP       45    // max forward PWM while a corner is hot
+
+// ============================================================
+// Front corner mitigation constants (for LiDAR zone front_left / front_right)
+// ============================================================
+#define FRONT_LEFT_EVENT_THRESHOLD_CM   60   // LiDAR sector considered "corner blocked"
+#define FRONT_RIGHT_EVENT_THRESHOLD_CM  60   // same for front-right
+#define FRONT_CORNER_CLEAR_CM          120   // clear threshold for corner event
 #define AUTO_ROAM_BOOT_DELAY_MS  3000   // wait this long on boot before going AUTO_ROAM
 #define AUTO_ROAM_FORWARD_SPEED  70     // base forward PWM (out of 255)
 #define AUTO_ROAM_SLOW_SPEED     30     // forward speed inside front-ToF slow zone
