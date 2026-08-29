@@ -2,6 +2,26 @@
 #include "config.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+namespace {
+SemaphoreHandle_t g_i2c_mutex = nullptr;
+
+bool lockBus()
+{
+    if (g_i2c_mutex == nullptr) {
+        g_i2c_mutex = xSemaphoreCreateMutex();
+        if (g_i2c_mutex == nullptr) return false;
+    }
+    return xSemaphoreTake(g_i2c_mutex, pdMS_TO_TICKS(I2C_TRANSACTION_TIMEOUT_MS)) == pdTRUE;
+}
+
+void unlockBus()
+{
+    if (g_i2c_mutex != nullptr) xSemaphoreGive(g_i2c_mutex);
+}
+}
 
 // =====================================================================
 // I2CBus — central I2C bus recovery + safe transaction layer.
@@ -104,6 +124,20 @@ bool I2CBus::initialize(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz)
     Serial.printf("[I2C] Initializing Wire on SDA=%u SCL=%u @ %u kHz...\n",
                   sda_pin, scl_pin, (unsigned)(freq_hz / 1000));
 
+    // Wire is not attached yet, so GPIO ownership is safe here. A sensor can
+    // retain SDA LOW after a brownout/reset; clock it out before Wire.begin()
+    // rather than attaching a controller to an already-stuck bus.
+    if (!linesIdle(sda_pin, scl_pin)) {
+        Serial.printf("[I2C] Bus not idle before Wire.begin (SDA=%d SCL=%d); resetting...\n",
+                      digitalRead(sda_pin), digitalRead(scl_pin));
+        busReset(sda_pin, scl_pin);
+        if (!linesIdle(sda_pin, scl_pin)) {
+            Serial.printf("[I2C] Bus remains stuck before Wire.begin (SDA=%d SCL=%d)\n",
+                          digitalRead(sda_pin), digitalRead(scl_pin));
+            return false;
+        }
+    }
+
     bool ok = Wire.begin(sda_pin, scl_pin);
     if (!ok) {
         Serial.println("[I2C] Wire.begin FAILED — check pin mapping / peripheral");
@@ -118,7 +152,7 @@ bool I2CBus::initialize(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz)
     bool idle = linesIdle(sda_pin, scl_pin);
     Serial.printf("[I2C] Wire.begin=ok | settle=%u ms | idle=%s\n",
                   (unsigned)I2C_BOOT_SETTLE_MS, idle ? "yes" : "no");
-    return true;
+    return idle;
 }
 
 // ── Full bus recovery (for runtime) ────────────────────────────────
@@ -130,18 +164,17 @@ bool I2CBus::reinitializeBus(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz)
 {
     Serial.printf("[I2C] Bus recovery on SDA=%u SCL=%u\n", sda_pin, scl_pin);
 
-    // 1. GPIO-level reset + STOP.  This deliberately happens before
-    //    Wire.end(): busReset() takes ownership of the pins and clocks out
-    //    any slave that is stuck mid-transaction.  Do not issue a general-call
-    //    (0x00) transaction here — that address can have side effects on some
-    //    I2C peripherals and an absent-device NACK is not a recovery signal.
+    // Detach the peripheral before taking GPIO ownership.  Calling pinMode()
+    // while Wire still owns the pins can detach the GPIO matrix mid-transfer
+    // and leave the ESP32-S3 I2C controller wedged.
+    Wire.end();
+    delay(2);
+
+    // Clock out a possibly stuck slave and emit a STOP.  Do not issue a
+    // general-call (0x00): that address can have side effects on devices.
     busReset(sda_pin, scl_pin);
 
-    // 2. Detach Wire peripheral
-    Wire.end();
-    delay(10);
-
-    // 3. Verify lines are released before re-attaching
+    // Verify lines are released before re-attaching
     //    If SDA is still stuck LOW after Wire.end(), the bus has a
     //    hardware-level problem (missing pull-up, slave fault) — abort.
     pinMode(sda_pin, INPUT);
@@ -184,7 +217,8 @@ bool I2CBus::reinitialize(uint8_t sda_pin, uint8_t scl_pin, uint32_t freq_hz)
 
 bool I2CBus::isHung(uint8_t sda_pin)
 {
-    pinMode(sda_pin, INPUT);
+    // This helper may be called while Wire owns the GPIO matrix.  Keep it
+    // passive; pinMode() here can detach the I2C peripheral.
     bool low = (digitalRead(sda_pin) == LOW);
     delay(100);
     bool still_low = (digitalRead(sda_pin) == LOW);
@@ -204,8 +238,10 @@ int I2CBus::probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr)
         return 5;  // treat as timeout so caller can attempt recovery
     }
 
-    Wire.beginTransmission(addr);
+    if (!lockBus()) return 5;
+    Wire.beginTransmission(addr & 0x7F);
     int err = Wire.endTransmission();
+    unlockBus();
 
     if (err != 0) {
         Serial.printf("[I2C] probe 0x%02X: %s (err=%d, SDA=%d SCL=%d)\n",
@@ -229,27 +265,29 @@ int I2CBus::probe(uint8_t sda_pin, uint8_t scl_pin, uint8_t addr)
 int I2CBus::probeWithRecovery(uint8_t sda_pin, uint8_t scl_pin,
                                uint8_t addr, uint32_t freq_hz)
 {
-    for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; attempt++) {
-        int err = probe(sda_pin, scl_pin, addr);
+    // I2C_DEVICE_RETRY_COUNT is the total attempt budget, including the
+    // initial probe.  Recovery is performed only between those attempts.
+    for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; ++attempt) {
+        const int err = probe(sda_pin, scl_pin, addr);
+        if (err == 0) return err;
 
-        if (err == 0) {
-            // Device present
-            return err;
-        }
-        // Any non-zero error (NACK, timeout, etc.) — the device may be
-        // in a stale state from a previous partial transaction (e.g. the
-        // boot-time scan probe).  Perform ONE controlled bus reset to
-        // clear the I2C peripheral and slave state, then retry.
-        // Do not keep resetting on repeated failures — that is how you
-        // destroy a shared bus with present devices.
-        if (attempt == 0) {
+        // An address NACK means the optional device is absent. Resetting a
+        // shared bus for that expected result can disturb every other sensor.
+        if (err == 2) return err;
+
+        if (attempt + 1 < I2C_DEVICE_RETRY_COUNT) {
             Serial.printf("[I2C] Probe 0x%02X failed (%s) — recovery attempt %d...\n",
                           addr, errorName(err), attempt + 1);
-            reinitializeBus(sda_pin, scl_pin, freq_hz);
+            if (!reinitializeBus(sda_pin, scl_pin, freq_hz)) {
+                Serial.println("[I2C] Recovery failed; aborting probe retry");
+                return err;
+            }
             delay(I2C_DEVICE_RETRY_DELAY_MS);
+        } else {
+            return err;
         }
     }
-    return probe(sda_pin, scl_pin, addr);  // final attempt
+    return 5;
 }
 
 // ── Safe Wire wrappers ──────────────────────────────────────────────
@@ -265,23 +303,26 @@ bool I2CBus::safeReadReg(uint8_t sda_pin, uint8_t scl_pin,
                           uint32_t freq_hz,
                           uint8_t addr, uint8_t reg, uint8_t* out_value)
 {
+    if (out_value == nullptr) return false;
     *out_value = 0xFF;
 
-    if (!linesIdle(sda_pin, scl_pin)) return false;
+    if (!linesIdle(sda_pin, scl_pin) || !lockBus()) return false;
+    Wire.setClock(freq_hz);
 
     uint32_t start = millis();
-    Wire.beginTransmission(addr);
-    Wire.write((uint8_t)reg);
-    uint8_t tx_err = Wire.endTransmission();
-    if (tx_err != 0) return false;
+    uint8_t addr7 = addr & 0x7F;
 
-    Wire.requestFrom(addr, (uint8_t)1);
+    Wire.beginTransmission(addr7);
+    Wire.write(reg);
+    if (Wire.endTransmission() != 0) { unlockBus(); return false; }
+
+    Wire.requestFrom(addr7, (uint8_t)1);
 
     uint32_t deadline = start + I2C_READ_TIMEOUT_MS;
-    while (Wire.available() == 0 && millis() < deadline) { /* spin */ }
-
-    if (Wire.available() == 0) return false;
+    while (Wire.available() == 0 && millis() < deadline) { }
+    if (Wire.available() == 0) { unlockBus(); return false; }
     *out_value = Wire.read();
+    unlockBus();
     return true;
 }
 
@@ -290,40 +331,100 @@ bool I2CBus::safeReadBurst(uint8_t sda_pin, uint8_t scl_pin,
                             uint8_t addr, uint8_t start_reg,
                             uint8_t* buf, uint8_t cnt)
 {
-    if (!linesIdle(sda_pin, scl_pin)) return false;
-
+    if (buf == nullptr || cnt == 0 || cnt > 32 ||
+        !linesIdle(sda_pin, scl_pin) || !lockBus()) return false;
+    Wire.setClock(freq_hz);
     uint32_t start = millis();
-    Wire.beginTransmission(addr);
-    Wire.write((uint8_t)start_reg);
-    uint8_t tx_err = Wire.endTransmission();
-    if (tx_err != 0) return false;
-
-    Wire.requestFrom(addr, (uint8_t)cnt);
-
+    uint8_t addr7 = addr & 0x7F;
+    Wire.beginTransmission(addr7);
+    Wire.write(start_reg);
+    if (Wire.endTransmission() != 0) { unlockBus(); return false; }
+    Wire.requestFrom(addr7, cnt);
     uint32_t deadline = start + I2C_READ_TIMEOUT_MS;
     uint8_t got = 0;
     while (got < cnt && millis() < deadline) {
-        if (Wire.available()) {
-            buf[got++] = Wire.read();
-        }
+        if (Wire.available()) buf[got++] = Wire.read();
     }
-    return (got == cnt);
+    const bool ok = got == cnt;
+    unlockBus();
+    return ok;
 }
 
 bool I2CBus::safeWriteReg(uint8_t sda_pin, uint8_t scl_pin,
                            uint32_t freq_hz,
                            uint8_t addr, uint8_t reg, uint8_t value)
 {
-    if (!linesIdle(sda_pin, scl_pin)) return false;
+    if (!linesIdle(sda_pin, scl_pin) || !lockBus()) return false;
 
-    Wire.beginTransmission(addr);
-    Wire.write((uint8_t)reg);
+    Wire.setClock(freq_hz);
+    Wire.beginTransmission(addr & 0x7F);
+    Wire.write(reg);
     Wire.write(value);
     uint8_t err = Wire.endTransmission();
+    unlockBus();
 
     if (err != 0) {
         Serial.printf("[I2C] safeWrite 0x%02X reg=0x%02X err=%u\n", addr, reg, err);
         return false;
     }
     return true;
+}
+
+bool I2CBus::safeWriteBurst(uint8_t sda_pin, uint8_t scl_pin,
+                             uint32_t freq_hz,
+                             uint8_t addr, uint8_t reg,
+                             const uint8_t* buf, uint8_t cnt)
+{
+    if (buf == nullptr || cnt == 0 || cnt > 30 ||
+        !linesIdle(sda_pin, scl_pin) || !lockBus()) return false;
+
+    Wire.setClock(freq_hz);
+    Wire.beginTransmission(addr & 0x7F);
+    Wire.write(reg);
+    for (uint8_t i = 0; i < cnt; ++i) Wire.write(buf[i]);
+    const uint8_t err = Wire.endTransmission();
+    unlockBus();
+    if (err != 0) {
+        Serial.printf("[I2C] safeWriteBurst 0x%02X reg=0x%02X len=%u err=%u\n",
+                      addr, reg, cnt, err);
+        return false;
+    }
+    return true;
+}
+
+bool I2CBus::safeReadReg16(uint8_t sda_pin, uint8_t scl_pin,
+                           uint32_t freq_hz, uint8_t addr, uint16_t reg,
+                           uint8_t* buf, uint8_t cnt)
+{
+    if (buf == nullptr || cnt == 0 || cnt > 32 ||
+        !linesIdle(sda_pin, scl_pin) || !lockBus()) return false;
+    Wire.setClock(freq_hz);
+    Wire.beginTransmission(addr & 0x7F);
+    Wire.write((uint8_t)(reg >> 8));
+    Wire.write((uint8_t)reg);
+    if (Wire.endTransmission(false) != 0) { unlockBus(); return false; }
+    Wire.requestFrom((uint8_t)(addr & 0x7F), cnt);
+    const uint32_t deadline = millis() + I2C_READ_TIMEOUT_MS;
+    uint8_t got = 0;
+    while (got < cnt && millis() < deadline) {
+        if (Wire.available()) buf[got++] = Wire.read();
+    }
+    unlockBus();
+    return got == cnt;
+}
+
+bool I2CBus::safeWriteReg16(uint8_t sda_pin, uint8_t scl_pin,
+                            uint32_t freq_hz, uint8_t addr, uint16_t reg,
+                            const uint8_t* buf, uint8_t cnt)
+{
+    if (buf == nullptr || cnt == 0 || cnt > 30 ||
+        !linesIdle(sda_pin, scl_pin) || !lockBus()) return false;
+    Wire.setClock(freq_hz);
+    Wire.beginTransmission(addr & 0x7F);
+    Wire.write((uint8_t)(reg >> 8));
+    Wire.write((uint8_t)reg);
+    for (uint8_t i = 0; i < cnt; ++i) Wire.write(buf[i]);
+    const uint8_t err = Wire.endTransmission();
+    unlockBus();
+    return err == 0;
 }

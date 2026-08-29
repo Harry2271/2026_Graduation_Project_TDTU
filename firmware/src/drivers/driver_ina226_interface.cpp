@@ -18,48 +18,29 @@ uint8_t ina226_interface_iic_deinit(void)
 
 uint8_t ina226_interface_iic_read(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
-    // LibDriver passes 8-bit addresses already left-shifted.
-    // Arduino Wire expects 7-bit, so shift right.
-    uint8_t addr7 = (addr >> 1);
+    // LibDriver stores INA226 addresses in the 8-bit (left-shifted) form.
+    // Preserve the complete 7-bit address after converting it for Wire.
+    uint8_t addr7 = (addr >> 1) & 0x7F;
 
     // Guard: do NOT touch the bus unless SDA/SCL are idle.
     // Do NOT call Wire.end()/begin() from a callback — recovery
     // belongs to INA226Sensor / HealthMonitor after this returns error.
-    if (len == 0 || len > 32 || buf == nullptr ||
-        !I2CBus::linesIdle(INA226_SDA_PIN, INA226_SCL_PIN)) {
-        return 1;
-    }
+    if (len == 0 || len > 32 || buf == nullptr) return 1;
 
-    Wire.beginTransmission(addr7);
-    Wire.write(reg);
-    if (Wire.endTransmission(false) != 0) return 1;  // NACK/timeout
-
-    uint16_t got = Wire.requestFrom(addr7, (uint8_t)len);
-    if (got < len) return 1;
-
-    for (uint16_t i = 0; i < len; i++) {
-        if (!Wire.available()) return 1;
-        buf[i] = Wire.read();
-    }
-    return 0;
+    return I2CBus::safeReadBurst(INA226_SDA_PIN, INA226_SCL_PIN,
+                                 INA226_I2C_FREQ_HZ, addr7, reg,
+                                 buf, (uint8_t)len) ? 0 : 1;
 }
 
 uint8_t ina226_interface_iic_write(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
-    uint8_t addr7 = (addr >> 1);
+    uint8_t addr7 = (addr >> 1) & 0x7F;
 
-    if (len > 30 || (len > 0 && buf == nullptr) ||
-        !I2CBus::linesIdle(INA226_SDA_PIN, INA226_SCL_PIN)) {
-        return 1;
-    }
+    if (len == 0 || len > 30 || buf == nullptr) return 1;
 
-    Wire.beginTransmission(addr7);
-    Wire.write(reg);
-    for (uint16_t i = 0; i < len; i++) {
-        Wire.write(buf[i]);
-    }
-    if (Wire.endTransmission() != 0) return 1;
-    return 0;
+    return I2CBus::safeWriteBurst(INA226_SDA_PIN, INA226_SCL_PIN,
+                                  INA226_I2C_FREQ_HZ, addr7, reg,
+                                  buf, (uint8_t)len) ? 0 : 1;
 }
 
 void ina226_interface_delay_ms(uint32_t ms)

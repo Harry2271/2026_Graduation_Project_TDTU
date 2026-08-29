@@ -5,8 +5,9 @@
 // global bno055 struct by bno055_set_addr_pin(), so we just pass it
 // straight through to Wire.beginTransmission().
 #include "bno055.h"
+#include "I2CBus.h"
+#include "config.h"
 #include <Arduino.h>
-#include <Wire.h>
 
 extern "C" {
 
@@ -17,31 +18,20 @@ s8 BNO055_I2C_bus_read(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
 {
     if (cnt == 0 || reg_data == NULL) return BNO055_ERROR;
 
-    Wire.beginTransmission(dev_addr);
-    Wire.write(reg_addr);
-    if (Wire.endTransmission(false) != 0) return BNO055_ERROR;  // repeated start
-
-    uint8_t got = Wire.requestFrom(dev_addr, (uint8_t)cnt);
-    if (got < cnt) return BNO055_ERROR;
-
-    for (uint8_t i = 0; i < cnt; i++) {
-        if (!Wire.available()) return BNO055_ERROR;
-        reg_data[i] = Wire.read();
-    }
-    return BNO055_SUCCESS;
+    return I2CBus::safeReadBurst(BNO055_SDA_PIN, BNO055_SCL_PIN,
+                                  BNO055_I2C_FREQ_HZ, dev_addr, reg_addr,
+                                  reg_data, cnt)
+        ? BNO055_SUCCESS : BNO055_ERROR;
 }
 
 s8 BNO055_I2C_bus_write(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
 {
     if (cnt == 0 || reg_data == NULL) return BNO055_ERROR;
 
-    Wire.beginTransmission(dev_addr);
-    Wire.write(reg_addr);
-    for (uint8_t i = 0; i < cnt; i++) {
-        Wire.write(reg_data[i]);
-    }
-    if (Wire.endTransmission() != 0) return BNO055_ERROR;
-    return BNO055_SUCCESS;
+    return I2CBus::safeWriteBurst(BNO055_SDA_PIN, BNO055_SCL_PIN,
+                                   BNO055_I2C_FREQ_HZ, dev_addr, reg_addr,
+                                   reg_data, cnt)
+        ? BNO055_SUCCESS : BNO055_ERROR;
 }
 
 void BNO055_delay_msek(u32 msek)

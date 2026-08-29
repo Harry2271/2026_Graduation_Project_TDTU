@@ -1276,6 +1276,9 @@ class VL53L1X
     TwoWire * getBus() { return bus; }
 
     void setAddress(uint8_t new_addr);
+    // Sync the host-side address after XSHUT sequencing has programmed the
+    // sensor. This does not perform an I2C transaction.
+    void setAddressWithoutWrite(uint8_t new_addr) { address = new_addr & 0x7F; }
     uint8_t getAddress() { return address; }
 
     bool init(bool io_2v8 = true);

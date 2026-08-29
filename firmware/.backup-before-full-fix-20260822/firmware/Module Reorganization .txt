@@ -1,0 +1,58 @@
+ All files are in place and the architecture is complete. Here's a summary of what was built:
+
+  ---
+  Module Reorganization — Complete
+
+  New directory structure:
+  Test_V5/
+  ├── include/
+  │   ├── config.h              ← System-wide constants (pins, PID, watchdog)
+  │   ├── WiFiCredentials.h     ← Your WiFi SSID/password
+  │   ├── WiFiCredentials.h.example
+  │   └── modules/              ← All driver & system modules
+  │       ├── modules.h         ← Master include (one line pulls all)
+  │       ├── BTS7960Driver.h/cpp
+  │       ├── Encoder.h/cpp
+  │       ├── PIDController.h/cpp
+  │       ├── MecanumDrive.h/cpp
+  │       ├── CommandParser.h/cpp
+  │       ├── Watchdog.h/cpp     ← NEW: heartbeat + mode management
+  │       ├── ObstacleAvoidance.h/cpp ← NEW: LiDAR dodge logic
+  │       ├── WebServer.h/cpp    ← NEW: WiFi + WebSocket + embedded UI
+  │       └── ModeManager.h/cpp  ← NEW: central state machine
+  ├── src/
+  │   ├── main.cpp              ← Rewritten to use all modules
+  │   └── modules/              ← .cpp files mirror include/modules/
+  ├── platformio.ini            ← Updated with WiFi libs
+  └── MODULES.md               ← Full architecture docs
+
+  How It Works
+
+  ┌────────┬────────────────────────────────────┬──────────────────────────────┐
+  │  Mode  │              Trigger               │           Behavior           │
+  ├────────┼────────────────────────────────────┼──────────────────────────────┤
+  │ NAV    │ Pi sends heartbeat + move commands │ Autonomous navigation        │
+  ├────────┼────────────────────────────────────┼──────────────────────────────┤
+  │ MANUAL │ Pi disconnects but web connected   │ Web/manual control only      │
+  ├────────┼────────────────────────────────────┼──────────────────────────────┤
+  │ SAFE   │ No Pi signal, no web               │ All motors braked            │
+  ├────────┼────────────────────────────────────┼──────────────────────────────┤
+  │ E-STOP │ D key or web button                │ All motors hardware-disabled │
+  └────────┴────────────────────────────────────┴──────────────────────────────┘
+
+  LiDAR Integration (Pi Side)
+
+  The Pi sends one of these JSON commands when it detects an obstacle:
+  {"cmd":"obstacle_left"}     // → strafe right, slow forward
+  {"cmd":"obstacle_right"}    // → strafe left, slow forward
+  {"cmd":"obstacle_front"}   // → stop forward, rotate CW
+  {"cmd":"obstacle_clear"}   // → resume normal navigation
+
+  Web Manual Control
+
+  1. Edit include/WiFiCredentials.h with your WiFi network
+  2. Flash with pio run
+  3. Open http://<ESP32-IP> in a browser
+  4. Use buttons or keyboard (W/A/S/D + Q/E) for manual control
+
+  LED indicator: fast blink = E-stop, medium = safe, slow = manual, very slow = nav

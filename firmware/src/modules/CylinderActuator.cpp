@@ -23,6 +23,8 @@
 CylinderActuator::CylinderActuator()
     : state_(CYL_IDLE)
     , move_start_ms_(0)
+    , retract_limit_since_ms_(0)
+    , retract_limit_pending_(false)
 {
 }
 
@@ -38,6 +40,8 @@ void CylinderActuator::begin()
     // Ensure stopped on boot
     digitalWrite(CYLINDER_IN1_PIN, LOW);
     digitalWrite(CYLINDER_IN2_PIN, LOW);
+    retract_limit_since_ms_ = 0;
+    retract_limit_pending_ = false;
 
     Serial.printf("  [CYL] IN1=GPIO%d IN2=GPIO%d retractor_sw=GPIO%d (max run %lu ms)\n",
         CYLINDER_IN1_PIN, CYLINDER_IN2_PIN, CYLINDER_RETRACT_SWITCH_PIN,
@@ -99,11 +103,25 @@ void CylinderActuator::update(uint32_t now_ms)
         return;
     }
 
-    // Limit switch: nếu đang retract và chạm công tắc đáy → dừng ngay.
-    // Tiết kiệm ~8s (retract timeout) + bảo vệ L298N + chính xác thời điểm kết thúc.
-    if (state_ == CYL_RETRACTING && isRetracted()) {
-        Serial.println("[CYL] Retract limit switch hit — fully retracted");
-        stop();
+    // Debounce the retract limit so vibration or contact bounce cannot stop
+    // the actuator on a transient LOW pulse.
+    if (state_ == CYL_RETRACTING) {
+        if (isRetracted()) {
+            if (!retract_limit_pending_) {
+                retract_limit_pending_ = true;
+                retract_limit_since_ms_ = now_ms;
+            } else if ((uint32_t)(now_ms - retract_limit_since_ms_) >=
+                       CYLINDER_LIMIT_DEBOUNCE_MS) {
+                Serial.println("[CYL] Retract limit switch stable — fully retracted");
+                stop();
+            }
+        } else {
+            retract_limit_pending_ = false;
+            retract_limit_since_ms_ = 0;
+        }
+    } else {
+        retract_limit_pending_ = false;
+        retract_limit_since_ms_ = 0;
     }
 }
 

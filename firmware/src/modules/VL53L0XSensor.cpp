@@ -28,50 +28,34 @@ VL53L0XSensor::VL53L0XSensor()
 {
 }
 
-bool VL53L0XSensor::begin()
+bool VL53L0XSensor::initializeAtDefaultAndAssign(uint8_t runtime_address)
 {
-    // Probe with bus-idle guard + controlled recovery retry on timeout.
-    // NACK (err=2) returns immediately — no bus reset, since that would
-    // disrupt the BNO055 and INA226 sitting on the same bus.
-    int probe_err = I2CBus::probeWithRecovery(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN,
-                                               VL53L0X_I2C_ADDR, VL53L0X_I2C_FREQ_HZ);
-    if (probe_err != 0) {
-        Serial.printf("  [WARN] VL53L0X %s at 0x%02X — sensor absent\n",
-                      I2CBus::errorName(probe_err), VL53L0X_I2C_ADDR);
-        return false;
-    }
-    Serial.printf("  [OK]   VL53L0X ACK at 0x%02X\n", VL53L0X_I2C_ADDR);
-
+    if (sensor_ != nullptr) return false;
     sensor_ = new VL53L0X();
     sensor_->setBus(&Wire);
-    // Bound the Pololu library's internal read timeout.  Use 200 ms instead
-    // of I2C_TRANSACTION_TIMEOUT_MS (100 ms) because the shared I2C bus
-    // routinely blocks for the duration of a BNO055 Euler burst read
-    // (6-byte + ACK sequence), and a tight 100 ms triggers spurious timeout
-    // returns (8190 mm) every time the bus is busy with the IMU.
-    constexpr uint16_t VL53L0X_LIB_TIMEOUT_MS = 200;
-    sensor_->setTimeout(VL53L0X_LIB_TIMEOUT_MS);
-
-    // Pololu init can hang on ESP32 if the bus is flaky — retry up to
-    // I2C_DEVICE_RETRY_COUNT times with a centralized bus recovery
-    // between attempts. Only triggers a real recovery when init() fails
-    // (which means the bus is misbehaving), never on simple missing sensor.
-    bool init_ok = false;
-    for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; attempt++) {
-        if (sensor_->init()) { init_ok = true; break; }
-        Serial.printf("  [WARN] VL53L0X init attempt %d failed\n", attempt + 1);
-        I2CBus::reinitializeBus(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN, VL53L0X_I2C_FREQ_HZ);
-        sensor_->setBus(&Wire);
-        sensor_->setTimeout(VL53L0X_LIB_TIMEOUT_MS);
-        delay(I2C_DEVICE_RETRY_DELAY_MS);
-    }
-    if (!init_ok) {
-        Serial.println("  [WARN] VL53L0X init failed — sensor disabled");
+    sensor_->setTimeout(500);
+    if (!sensor_->init()) {
         delete sensor_;
         sensor_ = nullptr;
-        sensor_present_ = false;
         return false;
     }
+    sensor_->setAddress(runtime_address);
+    delay(10);
+    return I2CBus::probe(VL53L0X_SDA_PIN, VL53L0X_SCL_PIN, runtime_address) == 0;
+}
+
+bool VL53L0XSensor::begin()
+{
+    // The XSHUT coordinator initializes this persistent object at 0x29 and
+    // changes it to 0x30 before begin() is called.
+    if (sensor_ == nullptr) {
+        Serial.println("  [WARN] VL53L0X was not initialized by XSHUT sequence");
+        return false;
+    }
+
+    sensor_->setBus(&Wire);
+    constexpr uint16_t VL53L0X_LIB_TIMEOUT_MS = 200;
+    sensor_->setTimeout(VL53L0X_LIB_TIMEOUT_MS);
 
     // High accuracy + reasonable speed (33 ms budget)
     sensor_->setMeasurementTimingBudget(33000);

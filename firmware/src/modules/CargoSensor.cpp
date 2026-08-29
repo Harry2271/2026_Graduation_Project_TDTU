@@ -1,4 +1,5 @@
 #include "CargoSensor.h"
+#include "config.h"
 #include <Arduino.h>
 
 // PiSerial is defined in modules.h as alias for Serial (UART0 GPIO43/44).
@@ -7,7 +8,6 @@
 #define PiSerial Serial
 #endif
 
-#define CARGO_SENSOR_PIN         36      // Free GPIO (BNO055 uses I2C, SPI MISO unused)
 #define CARGO_SENSOR_DEBOUNCE_MS 100     // 100 ms debounce for vibration rejection
 // Limit switch wired as NO (normally open) + INPUT_PULLUP:
 //   NO connected between GPIO36 and GND.

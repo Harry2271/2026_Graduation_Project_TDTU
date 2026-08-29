@@ -19,6 +19,9 @@ INA226Sensor::INA226Sensor()
 
 bool INA226Sensor::begin(uint8_t address)
 {
+    // A failed reinitialization must never leave the previous healthy state
+    // visible to safety/telemetry code.
+    operational_ = false;
     addr_ = address;
     delay(50);
 

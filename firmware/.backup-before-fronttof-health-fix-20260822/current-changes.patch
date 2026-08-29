@@ -1,0 +1,686 @@
+diff --git a/firmware/src/main.cpp b/firmware/src/main.cpp
+index 62b089c..6b29a54 100644
+--- a/firmware/src/main.cpp
++++ b/firmware/src/main.cpp
+@@ -1,4 +1,4 @@
+-#include <Arduino.h>
++﻿#include <Arduino.h>
+ #include <driver/ledc.h>
+ #include <driver/gpio.h>
+ #include <string.h>
+@@ -51,12 +51,12 @@ VL53L0XSensor   g_tof;
+ CylinderActuator g_cylinder;
+ CargoSensor      g_cargo;
+ 
+-// Module health monitor — detects stuck I2C sensors, triggers recovery,
++// Module health monitor - detects stuck I2C sensors, triggers recovery,
+ // emits type 142 health report every 1s + on state change
+ HealthMonitor   g_health;
+ 
+ // ========================================================================
+-// Motor State — single control path
++// Motor State - single control path
+ // ========================================================================
+ int16_t g_target_speeds[4] = {0};
+ int16_t g_ramped_speeds[4] = {0};
+@@ -64,12 +64,12 @@ bool g_pid_enabled = true;
+ bool g_e_stop_active = false;
+ uint8_t g_max_speed_pct = 100;
+ 
+-// Navigation velocity (vx/vy/omega) — single source of truth for movement
++// Navigation velocity (vx/vy/omega) - single source of truth for movement
+ int16_t g_nav_vx     = 0;
+ int16_t g_nav_vy     = 0;
+ int16_t g_nav_omega  = 0;
+ 
+-// Per-wheel override (CMD_INDIVIDUAL) — bypasses mecanum when active
++// Per-wheel override (CMD_INDIVIDUAL) - bypasses mecanum when active
+ bool g_individual_mode = false;
+ 
+ // Obstacle avoidance state (from IR + front-ToF + Pi LiDAR events)
+@@ -87,7 +87,7 @@ int8_t g_kick_ticks[4] = {0, 0, 0, 0};
+ 
+ // PID timing globals (used by both loop() and applySpeeds())
+ static uint32_t g_last_pid_ms = 0;
+-static uint32_t g_pid_dt_us   = 0;   // real elapsed PID interval (μs) for applySpeeds
++static uint32_t g_pid_dt_us   = 0;   // real elapsed PID interval (╬╝s) for applySpeeds
+ int16_t g_prev_target_for_kick[4] = {0, 0, 0, 0};
+ 
+ // ---- Encoder stall detector (runtime) ----
+@@ -107,7 +107,7 @@ int16_t g_raw_test_speeds[4] = {0};
+ // Shared JSON output buffer for status messages (UART to Pi 5)
+ static char g_json_buf[1200];
+ 
+-// Heartbeat counter — bumped every successful "alive" publish.  Pi
++// Heartbeat counter - bumped every successful "alive" publish.  Pi
+ // monitor uses this to detect that ESP32 firmware is still ticking;
+ // if the counter freezes, the host knows to reconnect even though no
+ // transport-level error occurred.
+@@ -117,6 +117,7 @@ static uint32_t g_alive_counter = 0;
+ // and must be refreshed at 20 Hz; INA226 is deliberately kept at 1 Hz.
+ static uint32_t g_last_sensor_read_ms = 0;
+ static uint32_t g_last_imu_read_ms    = 0;
++static bool g_i2c_initialized = false;
+ #define SLOW_SENSOR_READ_MS  1000
+ #define IMU_READ_MS            50
+ 
+@@ -140,40 +141,73 @@ void setupLEDC()
+ 
+ static bool sequenceTofAddresses()
+ {
+-    pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
+-    pinMode(VL53L1X_XSHUT_PIN, OUTPUT);
+-    digitalWrite(VL53L0X_XSHUT_PIN, LOW);
+-    digitalWrite(VL53L1X_XSHUT_PIN, LOW);
+-    delay(30);
++    // Pattern from Pololu VL53L1X example ContinuousMultipleSensors.ino:
++    // Both VL53L0X and VL53L1X default to 0x29. XSHUT pins must be driven
++    // LOW before Wire.begin() so both sensors stay in hardware-standby and
++    // do not respond on the bus. After Wire is ready we release one XSHUT
++    // at a time (to INPUT — let the carrier board pull up), call init()
++    // while the sensor is alone at 0x29, then reassign the address.
++
++    // Step 1: release XSHUT to INPUT so carrier pull-ups control the level.
++    // In setupHardware(), XSHUT was held LOW via OUTPUT+LOW before Wire.begin().
++    pinMode(VL53L0X_XSHUT_PIN, INPUT);
++    delay(10);
+ 
+-    VL53L0X rear_probe;
+-    rear_probe.setBus(&Wire);
+-    rear_probe.setTimeout(200);
+-    digitalWrite(VL53L0X_XSHUT_PIN, HIGH);
+-    delay(30);
+-    if (I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L0X_DEFAULT_I2C_ADDR) != 0) {
+-        Serial.println("  [WARN] Rear VL53L0X missing at default 0x29");
+-        digitalWrite(VL53L1X_XSHUT_PIN, HIGH);
+-        return false;
++    // Step 2: probe and init rear VL53L0X — only sensor powered at 0x29
++    Serial.println("  [TOF] probing rear VL53L0X at 0x29...");
++    const int rear_probe = I2CBus::probeWithRecovery(
++            BNO055_SDA_PIN, BNO055_SCL_PIN,
++            VL53L0X_DEFAULT_I2C_ADDR, VL53L0X_I2C_FREQ_HZ);
++    if (rear_probe != 0) {
++        Serial.printf("  [WARN] Rear VL53L0X not present (%s); skipping init\n",
++                      I2CBus::errorName(rear_probe));
++    } else {
++        Serial.println("  [TOF] rear ACK; initializing...");
++        VL53L0X rear;
++        rear.setBus(&Wire);
++        rear.setTimeout(200);
++        if (!rear.init()) {
++            Serial.println("  [WARN] Rear VL53L0X init failed at 0x29");
++        } else {
++            rear.setAddress(VL53L0X_I2C_ADDR);
++            delay(10);
++            Serial.printf("  [TOF] Rear VL53L0X assigned to 0x%02X\n", VL53L0X_I2C_ADDR);
++        }
+     }
+-    rear_probe.setAddress(VL53L0X_I2C_ADDR);
++
++    // Step 3: init front VL53L1X — only sensor now powered at 0x29
++    pinMode(VL53L1X_XSHUT_PIN, INPUT);
+     delay(10);
+ 
+-    VL53L1X front_probe;
+-    front_probe.setBus(&Wire);
+-    front_probe.setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
+-    digitalWrite(VL53L1X_XSHUT_PIN, HIGH);
+-    delay(30);
+-    if (I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L1X_DEFAULT_I2C_ADDR) != 0) {
+-        Serial.println("  [WARN] Front VL53L1X missing at default 0x29");
+-        return false;
++    Serial.println("  [TOF] probing front VL53L1X at 0x29...");
++    const int front_probe = I2CBus::probeWithRecovery(
++            BNO055_SDA_PIN, BNO055_SCL_PIN,
++            VL53L1X_DEFAULT_I2C_ADDR, VL53L1X_I2C_FREQ_HZ);
++    if (front_probe != 0) {
++        Serial.printf("  [WARN] Front VL53L1X not present (%s); skipping init\n",
++                      I2CBus::errorName(front_probe));
++    } else {
++        Serial.println("  [TOF] front ACK; initializing...");
++        VL53L1X front;
++        front.setBus(&Wire);
++        front.setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
++        if (!front.init()) {
++            Serial.println("  [WARN] Front VL53L1X init failed at 0x29");
++        } else {
++            front.setAddress(VL53L1X_I2C_ADDR);
++            delay(10);
++            Serial.printf("  [TOF] Front VL53L1X assigned to 0x%02X\n", VL53L1X_I2C_ADDR);
++        }
+     }
+-    front_probe.setAddress(VL53L1X_I2C_ADDR);
+-    delay(10);
+ 
+-    const bool rear_ok = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L0X_I2C_ADDR) == 0;
+-    const bool front_ok = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L1X_I2C_ADDR) == 0;
+-    Serial.printf("  [TOF] XSHUT addresses rear=0x%02X (%s), front=0x%02X (%s)\n",
++    // Step 4: verify both at new addresses
++    const bool rear_ok = I2CBus::probeWithRecovery(
++        BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L0X_I2C_ADDR,
++        VL53L0X_I2C_FREQ_HZ) == 0;
++    const bool front_ok = I2CBus::probeWithRecovery(
++        BNO055_SDA_PIN, BNO055_SCL_PIN, VL53L1X_I2C_ADDR,
++        VL53L1X_I2C_FREQ_HZ) == 0;
++    Serial.printf("  [TOF] Verify rear=0x%02X (%s), front=0x%02X (%s)\n",
+                   VL53L0X_I2C_ADDR, rear_ok ? "OK" : "FAIL",
+                   VL53L1X_I2C_ADDR, front_ok ? "OK" : "FAIL");
+     return rear_ok && front_ok;
+@@ -200,7 +234,7 @@ void setupHardware()
+ 
+     Serial.println();
+     Serial.println("=====================================================");
+-    Serial.println("  ESP32-S3 Mecanum Controller — booting...");
++    Serial.println("  ESP32-S3 Mecanum Controller - booting...");
+     Serial.println("=====================================================");
+ 
+     // Production transport: native USB CDC (CONFIG_ARDUINO_USB_CDC_ON_BOOT=1).
+@@ -209,66 +243,42 @@ void setupHardware()
+     PiSerial.setTimeout(1);
+ 
+     // GPIO2 = CYLINDER_IN1 (L298N extend).  Do NOT pinMode/digitalWrite it
+-    // here — that would conflict with CylinderActuator::begin() which also
++    // here - that would conflict with CylinderActuator::begin() which also
+     // configures GPIO2 as cylinder control.  No free output GPIO remains on
+     // this pin map for a status LED; see PIN_MAP.md.
+ 
+-    // ---- I2C bus (shared: BNO055 + INA226 + VL53L0X) ----
+-    Serial.printf("  [INIT] I2C bus SDA=GPIO%d SCL=GPIO%d @ %u kHz...\n",
+-                  BNO055_SDA_PIN, BNO055_SCL_PIN,
+-                  BNO055_I2C_FREQ_HZ / 1000);
++    // Hold both VL53 sensors in reset before Wire: both default to 0x29.
++    // They are released one at a time after Wire is ready.
++    pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
++    pinMode(VL53L1X_XSHUT_PIN, OUTPUT);
++    digitalWrite(VL53L0X_XSHUT_PIN, LOW);
++    digitalWrite(VL53L1X_XSHUT_PIN, LOW);
++    delay(30);
+ 
+-    // ── Pull-up diagnostic — read SDA/SCL BEFORE Wire.begin() ──
+-    // If external 4.7kΩ pull-ups are soldered correctly, both pins read HIGH
+-    // even with internal pull-up disabled. If pull-up is missing/broken, both
+-    // pins read LOW (no pull-up source). Print BEFORE Wire takes over.
++    // STEP 1: bring up Wire, then sequence the two VL53 sensors.
++    Serial.printf("  [STEP1] Wire.begin SDA=%d SCL=%d @ %lu Hz...\n",
++                  BNO055_SDA_PIN, BNO055_SCL_PIN,
++                  (unsigned long)BNO055_I2C_FREQ_HZ);
+     pinMode(BNO055_SDA_PIN, INPUT);
+     pinMode(BNO055_SCL_PIN, INPUT);
+-    delayMicroseconds(10);
+-    int sda_raw = digitalRead(BNO055_SDA_PIN);
+-    int scl_raw = digitalRead(BNO055_SCL_PIN);
+-    Serial.printf("  [DIAG] SDA=%d SCL=%d (no internal pullup — test your external 4.7kΩ)\n",
+-                  sda_raw, scl_raw);
+-
+-    // Now enable internal pull-up as fallback. External pull-up is required
+-    // for reliable operation with multiple devices or long wires.
+-    pinMode(BNO055_SDA_PIN, INPUT_PULLUP);
+-    pinMode(BNO055_SCL_PIN, INPUT_PULLUP);
+-
+-    // ── First-time Wire bring-up via centralized I2CBus API ──
+-    // Does NOT call Wire.end() first (matches proven test_i2c_sensors behavior).
+-    // After Wire.begin(), the I2C peripheral owns GPIO10/11 — we must NOT
+-    // call pinMode() on those pins again (that would detach the peripheral
+-    // and cause err=5 on every subsequent transaction).
+-    bool i2c_ok = I2CBus::initialize(BNO055_SDA_PIN, BNO055_SCL_PIN,
+-                                     BNO055_I2C_FREQ_HZ);
++    const int sda_before = digitalRead(BNO055_SDA_PIN);
++    const int scl_before = digitalRead(BNO055_SCL_PIN);
++    Serial.printf("  [STEP1] lines before SDA=%d SCL=%d\n", sda_before, scl_before);
++    bool i2c_ok = false;
++    if (sda_before == HIGH && scl_before == HIGH) {
++        i2c_ok = I2CBus::initialize(BNO055_SDA_PIN, BNO055_SCL_PIN,
++                                    BNO055_I2C_FREQ_HZ);
++    } else {
++        Serial.println("  [STEP1] SKIP: SDA/SCL not idle HIGH");
++    }
++    g_i2c_initialized = i2c_ok;
++    Serial.printf("  [STEP1] Wire result=%s\n", i2c_ok ? "OK" : "OFFLINE");
+     if (!i2c_ok) {
+-        Serial.println("  [FATAL] I2C bus init FAILED — scan + sensors skipped");
+-    } else if (!sequenceTofAddresses()) {
+-        Serial.println("  [WARN] ToF address sequencing failed — front motion will remain blocked");
++        Serial.println("  [I2C] Sensors remain disabled until SDA/SCL are idle HIGH");
+     }
+-
+-    // ---- I2C scan: probe only known device addresses ----
+-    // A full 0x01-0x7E scan is unsafe on ESP32 when buses may be shared.
+-    int found = 0;
+     if (i2c_ok) {
+-        Serial.println("  [SCAN] I2C device probe...");
+-        static const uint8_t known_addrs[] = {0x28, 0x30, 0x31, 0x40};
+-        static const char*  known_names[]  = {"BNO055", "VL53L0X(rear)", "VL53L1X(front)", "INA226"};
+-        for (size_t k = 0; k < sizeof(known_addrs); k++) {
+-            int err = I2CBus::probe(BNO055_SDA_PIN, BNO055_SCL_PIN, known_addrs[k]);
+-            if (err == 0) {
+-                Serial.printf("         Found 0x%02X (%s)\n", known_addrs[k], known_names[k]);
+-                found++;
+-            }
+-        }
+-        if (found == 0) {
+-            Serial.println("         No devices found");
+-        } else {
+-            Serial.printf("         Total: %d device(s)\n", found);
+-        }
+-    } else {
+-        Serial.println("  [SCAN] I2C scan SKIPPED (bus init failed)");
++        Serial.println("  [STEP2] Sequencing VL53 addresses...");
++        sequenceTofAddresses();
+     }
+ 
+     setupLEDC();
+@@ -318,9 +328,9 @@ void setupHardware()
+     bool pwr_ok = false;
+     if (i2c_ok) {
+         // Wire bus is already initialised. Init sensors sequentially without
+-        // busReset/reinitialize between them — the test_i2c_sensors project
++        // busReset/reinitialize between them - the test_i2c_sensors project
+         // proved that reset between inits can disturb a shared 3-device bus.
+-        // Init order: BNO055 → VL53L0X → INA226.
++        // Init order: BNO055 -> VL53L0X -> INA226.
+         Serial.println("  [INIT] BNO055 IMU...");
+         imu_ok = g_imu.begin(BNO055_I2C_ADDR);
+         Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
+@@ -337,7 +347,7 @@ void setupHardware()
+         pwr_ok = g_power.begin(INA226_I2C_ADDR);
+         Serial.printf("  [%s] INA226\n", pwr_ok ? "OK  " : "WARN");
+     } else {
+-        Serial.println("  [WARN] I2C sensors SKIPPED — bus initialization failed");
++        Serial.println("  [WARN] I2C sensors SKIPPED - bus initialization failed");
+     }
+ 
+     // Wire sensors into ModeManager for AUTO_ROAM (Pi-less) operation
+@@ -415,7 +425,7 @@ void computeNavTargets()
+         }
+     }
+ 
+-    // Mecanum kinematics → 4 wheel targets
++    // Mecanum kinematics -> 4 wheel targets
+     g_mecanum.compute(adj_vx, adj_vy, adj_omega, g_target_speeds);
+ }
+ 
+@@ -447,7 +457,7 @@ void applySpeeds()
+     // Raw test mode: bypass PID + ramp, send PWM directly
+     if (g_raw_test_mode) {
+         for (int i = 0; i < MOTOR_COUNT; i++) {
+-            // Ensure drivers are enabled — e-stop or brake may have
++            // Ensure drivers are enabled - e-stop or brake may have
+             // cleared the EN pin; raw test must override that.
+             if (!g_motors[i].isEnabled()) {
+                 g_motors[i].enable();
+@@ -472,7 +482,7 @@ void applySpeeds()
+     }
+ 
+     for (int i = 0; i < MOTOR_COUNT; i++) {
+-        // Detect motor start: target transitions from 0 → non-zero.
++        // Detect motor start: target transitions from 0 -> non-zero.
+         // Track *target* (not ramped) so we only kick on genuine starts,
+         // not on every ramp-crossing-zero during direction changes.
+         if (g_prev_target_for_kick[i] == 0 && g_target_speeds[i] != 0 && g_kick_ticks[i] == 0) {
+@@ -507,7 +517,7 @@ void applySpeeds()
+             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
+ 
+             // Kick-start boost: applied AFTER the PID output, on top of the
+-            // saturated final_pwm, with the same ±MOTOR_MAX_DUTY cap.  This
++            // saturated final_pwm, with the same ┬▒MOTOR_MAX_DUTY cap.  This
+             // keeps the boost independent of the PID target so the boost
+             // does not fight the controller during the first 300 ms.
+             if (g_kick_ticks[i] > 0) {
+@@ -602,7 +612,7 @@ void handleEStop()
+     g_modeManager.enterEStop(millis());
+     g_cylinder.stop();
+ 
+-    // CRITICAL safety path — hardware disable of BTS7960 drivers.
++    // CRITICAL safety path - hardware disable of BTS7960 drivers.
+     // Pulls EN pin LOW on every driver so no PWM can produce torque,
+     // even if the firmware later writes PWM by mistake.
+     g_e_stop_active = true;
+@@ -1114,16 +1124,16 @@ void readSerial()
+ // ========================================================================
+ // LED Blink / Physical Alerting
+ // ========================================================================
+-// GPIO2 is CYLINDER_IN1 — NOT a free LED pin.  No output-capable GPIO is
++// GPIO2 is CYLINDER_IN1 - NOT a free LED pin.  No output-capable GPIO is
+ // reserved for status indication (see PIN_MAP.md).  updateLED() is a no-op
+ // until a buzzer/LED module is wired to a confirmed free GPIO.
+ void updateLED(uint32_t) {}
+ 
+ // ========================================================================
+-// JSON Status — FULL every 1 s (line-delimited JSON to UART)
++// JSON Status - FULL every 1 s (line-delimited JSON to UART)
+ // DISABLED: emitFullStatus allocates through ArduinoJson every second,
+ // which fragments the heap on long-running sessions.  publishSensors()
+-// below emits the same fields on the 500 ms tick — one fewer allocation
++// below emits the same fields on the 500 ms tick - one fewer allocation
+ // path is enough.
+ // ========================================================================
+ void printStatus(uint32_t /*now_ms*/)
+@@ -1131,23 +1141,23 @@ void printStatus(uint32_t /*now_ms*/)
+     // Intentionally empty: full status type-131 was causing heap
+     // fragmentation when running >10 minutes (ESP32 silently rebooted,
+     // Pi saw "ESP32 stopped sending data").  Use type-144 (alive) and
+-    // the 500 ms tick from publishSensors() instead — same fields,
++    // the 500 ms tick from publishSensors() instead - same fields,
+     // no extra alloc path.
+ }
+ 
+ // ========================================================================
+-// Periodic Sensor Publishing — JSON, line-delimited (USB CDC to Pi)
++// Periodic Sensor Publishing - JSON, line-delimited (USB CDC to Pi)
+ //
+ // The hot path (every 500 ms) only emits JSON built from cached state.
+ // All I2C sensor reads happen on a separate slow timer (every 1 s).
+ // This means a stuck sensor (BNO055 / INA226) CANNOT silence the
+-// telemetry — the brain still sees alive + uptime + e_stop advance
++// telemetry - the brain still sees alive + uptime + e_stop advance
+ // and can react.
+ // ========================================================================
+ #define TELEMETRY_PUBLISH_MS  500   // Always-fire tick (alive + cached state)
+ 
+ // Cheap read of slow sensors.  Each read is gated so a single stuck
+-// sensor can't lock up the loop.  Failure is non-fatal — the next
++// sensor can't lock up the loop.  Failure is non-fatal - the next
+ // tick will retry.
+ static void readSensorsSlow(uint32_t now_ms)
+ {
+@@ -1213,13 +1223,13 @@ static void publishAlive(uint32_t now_ms)
+     if (n > 0 && n < (int)sizeof(g_json_buf)) {
+         PiSerial.write((uint8_t*)g_json_buf, (size_t)n);
+     }
+-    // Yield to RTOS — important when host doesn't drain fast enough to
++    // Yield to RTOS - important when host doesn't drain fast enough to
+     // keep the USB endpoint clear.  Without this, repeated writes can
+     // hit a queued-full endpoint stall and back-pressure the loop.
+     yield();
+ }
+ 
+-// Full telemetry — same 500 ms cadence but with motor + sensor data.
++// Full telemetry - same 500 ms cadence but with motor + sensor data.
+ // Runs in addition to publishAlive, so the host gets BOTH a stream of
+ // frames (alive) and richer detail (tick).
+ static void publishTelemetry(uint32_t now_ms)
+@@ -1228,12 +1238,12 @@ static void publishTelemetry(uint32_t now_ms)
+     if (now_ms - last_ms < TELEMETRY_PUBLISH_MS) return;
+     last_ms = now_ms;
+ 
+-    // NOTE: g_imu.read() / g_power.read() are NOT called here — they
++    // NOTE: g_imu.read() / g_power.read() are NOT called here - they
+     // run in readSensorsSlow() at1 Hz.  Mixing I2C reads into the
+     // publish path caused occasional USB CDC stalls when the Bosch
+     // BNO055 driver held Wire for >100 ms (even when "not operational",
+     // the driver sometimes pings the bus on stale state).
+-    // Here we only emit cached values — pure memcpy + JSON, no I2C.
++    // Here we only emit cached values - pure memcpy + JSON, no I2C.
+ 
+     size_t n = JsonStatus::emitTickStatus(
+         g_json_buf, sizeof(g_json_buf), now_ms,
+@@ -1295,7 +1305,7 @@ void publishSensors(uint32_t now_ms)
+     static uint32_t last_ir_ms    = 0;
+     static uint32_t last_front_tof_ms = 0;
+ 
+-    // IMU — 20 Hz (50 ms)
++    // IMU - 20 Hz (50 ms)
+     if (now_ms - last_imu_ms >= 50) {
+         last_imu_ms = now_ms;
+         if (g_imu.isOperational()) {
+@@ -1306,7 +1316,7 @@ void publishSensors(uint32_t now_ms)
+         }
+     }
+ 
+-    // Power — 1 Hz (1000 ms)
++    // Power - 1 Hz (1000 ms)
+     if (now_ms - last_pwr_ms >= 1000) {
+         last_pwr_ms = now_ms;
+         if (g_power.isOperational()) {
+@@ -1316,7 +1326,7 @@ void publishSensors(uint32_t now_ms)
+         }
+     }
+ 
+-    // Encoder — 10 Hz (100 ms)
++    // Encoder - 10 Hz (100 ms)
+     if (now_ms - last_enc_ms >= 100) {
+         last_enc_ms = now_ms;
+         size_t n = JsonStatus::emitEncoderSnapshot(
+@@ -1326,7 +1336,7 @@ void publishSensors(uint32_t now_ms)
+         yield();
+     }
+ 
+-    // TOF — 10 Hz (100 ms)
++    // TOF - 10 Hz (100 ms)
+     if (now_ms - last_tof_ms >= 100) {
+         last_tof_ms = now_ms;
+         if (g_tof.isPresent()) {
+@@ -1335,14 +1345,14 @@ void publishSensors(uint32_t now_ms)
+         }
+     }
+ 
+-    // IR proximity — 20 Hz (50 ms)
++    // IR proximity - 20 Hz (50 ms)
+     if (now_ms - last_ir_ms >= 50) {
+         last_ir_ms = now_ms;
+         g_ir.printStatusJson();
+         yield();
+     }
+ 
+-    // Front TOF — 20 Hz (50 ms)
++    // Front TOF - 20 Hz (50 ms)
+     if (now_ms - last_front_tof_ms >= 50) {
+         last_front_tof_ms = now_ms;
+         g_front_tof.printStatusJson();
+@@ -1363,7 +1373,7 @@ void publishSensors(uint32_t now_ms)
+     }
+ 
+     // ---- BNO055 calibration warning (every 10s if heading is unreliable) ----
+-    // System fusion (cal_sys) must be ≥ 2 for the heading to be trustworthy
++    // System fusion (cal_sys) must be >= 2 for the heading to be trustworthy
+     // in dock/heading-hold.  If it hasn't reached that level after 30s of
+     // uptime, print a prominent warning so the user performs figure-8 motion.
+     static uint32_t last_cal_warn_ms = 0;
+@@ -1371,7 +1381,7 @@ void publishSensors(uint32_t now_ms)
+         g_imu.getCalSys() < 2 &&
+         (now_ms - last_cal_warn_ms) >= 10000) {
+         last_cal_warn_ms = now_ms;
+-        Serial.printf("[CAL] WARNING: BNO055 cal_sys=%u (need ≥2) — "
++        Serial.printf("[CAL] WARNING: BNO055 cal_sys=%u (need >=2) - "
+                       "heading unreliable.  Move robot in figure-8 for ~30s\n",
+                       g_imu.getCalSys());
+     }
+@@ -1382,9 +1392,10 @@ void publishSensors(uint32_t now_ms)
+ // ========================================================================
+ void setup()
+ {
+-    // Do NOT arm watchdog yet — sensor init (I2C scan, BNO055, VL53L0X)
+-    // can take 10+ seconds and would trigger a false watchdog reset.
+-    // Arm AFTER hardware init completes.
++    // Arm the watchdog before any hardware setup so a peripheral or GPIO
++    // fault cannot leave the controller permanently silent.
++    esp_task_wdt_init(10, true);
++    esp_task_wdt_add(NULL);
+ 
+     setupHardware();
+     g_health.begin();
+@@ -1399,17 +1410,13 @@ void setup()
+     }
+     g_modeManager.begin();
+ 
+-    // The I2C bus is operational once Wire.begin() succeeds in setupHardware.
+-    // Per-sensor health (IMU, TOF, INA226) is independent: a missing sensor
+-    // does NOT mean the bus is broken.  Mark it ONLINE so the type 142 report
+-    // doesn't flag the bus as FAILED just because one peripheral is unplugged.
+-    g_health.reportOk(MOD_I2C_BUS, millis());
+-
+-    // Arm hardware watchdog AFTER all sensor init is complete.
+-    // 10s timeout is enough for loop() to run; boot was unprotected
+-    // by design to avoid false resets during I2C scan / sensor init.
+-    esp_task_wdt_init(10, true);
+-    esp_task_wdt_add(NULL);
++    // Keep bus health truthful: a failed pre-Wire idle check means the
++    // controller never initialized Wire and must not report I2C ONLINE.
++    if (g_i2c_initialized) {
++        g_health.reportOk(MOD_I2C_BUS, millis());
++    } else {
++        g_health.reportState(MOD_I2C_BUS, ST_FAILED, 5, millis());
++    }
+ 
+     Serial.println();
+     Serial.println("Ready. F/B/L/R/Q/E <0-255> | S stop | D e-stop | K clear | M <fl> <fr> <rl> <rr> | V status | I IMU | W power | N IR | J Front-ToF | T test | A auto-roam | ? help");
+@@ -1418,7 +1425,7 @@ void setup()
+ 
+ 
+ // ========================================================================
+-// Poll IR + front-ToF sensors → feed ObstacleAvoidance
++// Poll IR + front-ToF sensors -> feed ObstacleAvoidance
+ // ========================================================================
+ void pollLocalSensors(uint32_t now)
+ {
+@@ -1442,7 +1449,7 @@ void pollLocalSensors(uint32_t now)
+             if (g_local_obstacle_stop && g_local_clear_since_ms == 0) {
+                 g_local_clear_since_ms = now;
+             }
+-            // Sensor reads clear — leave the obstacle state untouched.
++            // Sensor reads clear - leave the obstacle state untouched.
+             // applyToCommand() clears it after CLEAR_THRESHOLD_MS.  Calling
+             // clearObstacles() here would erase the stop on the very next
+             // poll and let a fresh Pi move command drive into the object.
+@@ -1483,14 +1490,14 @@ void pollLocalSensors(uint32_t now)
+         if (bstatus == 2) {
+             g_health.reportError(MOD_BATTERY, 3, now);
+             if (!g_e_stop_active) {
+-                Serial.println("[POWER] Battery CRITICAL — auto e-stop");
++                Serial.println("[POWER] Battery CRITICAL - auto e-stop");
+                 handleEStop();
+             }
+         } else {
+             if (bstatus == 1) {
+                 if (g_max_speed_pct > 50) {
+                     g_max_speed_pct = 50;
+-                    Serial.println("[POWER] Battery low — max speed capped to 50%");
++                    Serial.println("[POWER] Battery low - max speed capped to 50%");
+                 }
+             }
+             g_health.reportOk(MOD_BATTERY, now);
+@@ -1552,7 +1559,7 @@ void pollLocalSensors(uint32_t now)
+             last_failed_log_ms = now;
+             int idx = failed_motor;
+             Serial.printf("[HEALTH] encoder FAILED: %s target=%d rpm=%.1f "
+-                          "CHA=%u CHB=%u PCNT=%d — check 5V/3.3V/GND, "
++                          "CHA=%u CHB=%u PCNT=%d - check 5V/3.3V/GND, "
+                           "encoder cable, motor cable, BTS7960\n",
+                           MOTOR_NAMES[idx], actual_targets[idx],
+                           (double)g_encoders[idx].getFilteredRPM(),
+@@ -1566,12 +1573,12 @@ void pollLocalSensors(uint32_t now)
+         for (int i = 0; i < MOTOR_COUNT; i++) g_encoder_stall_ticks[i] = 0;
+     }
+ 
+-    // ---- Pi link health — aligned with HEARTBEAT_TIMEOUT_MS ----
++    // ---- Pi link health - aligned with HEARTBEAT_TIMEOUT_MS ----
+     // The firmware watchdog transitions to AUTO_ROAM at 2 s; the health
+     // report should agree.  Report OK when the last serial activity is
+     // younger than the timeout; report stale otherwise.
+     //
+-    // Print a single-line diagnostic on transitions (OK → STALE, STALE → OK)
++    // Print a single-line diagnostic on transitions (OK -> STALE, STALE -> OK)
+     // and every 5 s while STALE so the operator sees why mode flipped to
+     // AUTO_ROAM (expected) vs. why no commands are accepted at all.
+     const uint32_t pi_link_window_ms = HEARTBEAT_TIMEOUT_MS + 500;
+@@ -1586,13 +1593,13 @@ void pollLocalSensors(uint32_t now)
+         if (last_serial_ms == 0) {
+             if (now - last_pi_link_warn_ms >= 5000) {
+                 last_pi_link_warn_ms = now;
+-                Serial.printf("[HEALTH] Pi link STALE — no UART activity since boot "
++                Serial.printf("[HEALTH] Pi link STALE - no UART activity since boot "
+                               "(%lu ms). Check Pi bridge, USB-CDC cable, baud 115200.\n",
+                               (unsigned long)age_ms);
+             }
+         } else if (now - last_pi_link_warn_ms >= 5000) {
+             last_pi_link_warn_ms = now;
+-            Serial.printf("[HEALTH] Pi link STALE — last heartbeat %lu ms ago "
++            Serial.printf("[HEALTH] Pi link STALE - last heartbeat %lu ms ago "
+                           "(window=%lu ms). Check esp32_telemetry_node, /esp32/cmd.\n",
+                           (unsigned long)age_ms,
+                           (unsigned long)pi_link_window_ms);
+@@ -1621,15 +1628,15 @@ void loop()
+     }
+     if (g_health.recoveryDue(MOD_IMU, now)) {
+         // BNO055 is I2C-only (config.h SPI pins conflict with motor/encoder).
+-        // Just re-call begin() — I2CBus::probeWithRecovery handles the bus
++        // Just re-call begin() - I2CBus::probeWithRecovery handles the bus
+         // state without crashing Wire (which Wire.end() can do mid-flight).
+-        Serial.println("[HEALTH] IMU recovery attempt — reinit I2C then begin...");
++        Serial.println("[HEALTH] IMU recovery attempt - reinit I2C then begin...");
+         bool ok = g_imu.begin(BNO055_I2C_ADDR);
+         if (ok) g_health.reportOk(MOD_IMU, now);
+         else    g_health.reportRecoveryFailure(MOD_IMU, 1, now);
+     }
+     if (g_health.recoveryDue(MOD_TOF, now)) {
+-        Serial.println("[HEALTH] TOF recovery attempt — bus reset then reinit...");
++        Serial.println("[HEALTH] TOF recovery attempt - bus reset then reinit...");
+         I2CBus::reinitializeBus(BNO055_SDA_PIN, BNO055_SCL_PIN, BNO055_I2C_FREQ_HZ);
+         bool ok = g_tof.begin();
+         if (ok) g_health.reportOk(MOD_TOF, now);
+@@ -1657,10 +1664,14 @@ void loop()
+     //     }
+     // }
+ 
+-    // Wire.begin() is active; peripheral presence is tracked separately.
+-    // Keep bus health fresh so an unplugged optional sensor cannot make the
+-    // shared bus appear FAILED.
+-    g_health.reportOk(MOD_I2C_BUS, now);
++    // Keep I2C health truthful. The bus is only ONLINE when Wire actually
++    // initialized successfully; an offline boot must not be promoted by the
++    // periodic loop while SDA/SCL remain LOW.
++    if (g_i2c_initialized) {
++        g_health.reportOk(MOD_I2C_BUS, now);
++    } else {
++        g_health.reportState(MOD_I2C_BUS, ST_FAILED, 5, now);
++    }
+ 
+     pollLocalSensors(now);
+ 
+@@ -1747,7 +1758,7 @@ void loop()
+ 
+     delay(1);
+ 
+-    // Reset hardware watchdog — if loop() blocks for >5s (e.g. Wire
++    // Reset hardware watchdog - if loop() blocks for >5s (e.g. Wire
+     // held SDA low), esp_task_wdt triggers esp_restart().
+     esp_task_wdt_reset();
+ }
+diff --git a/firmware/src/modules/FrontTofSensor.cpp b/firmware/src/modules/FrontTofSensor.cpp
+index 92d1486..b72303d 100644
+--- a/firmware/src/modules/FrontTofSensor.cpp
++++ b/firmware/src/modules/FrontTofSensor.cpp
+@@ -52,29 +52,10 @@ bool FrontTofSensor::begin()
+     sensor_ = new VL53L1X();
+     sensor_->setBus(&Wire);
+     sensor_->setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
+-
+-    bool init_ok = false;
+-    for (int attempt = 0; attempt < I2C_DEVICE_RETRY_COUNT; ++attempt) {
+-        if (I2CBus::linesIdle(VL53L1X_SDA_PIN, VL53L1X_SCL_PIN) && sensor_->init()) {
+-            init_ok = true;
+-            break;
+-        }
+-        Serial.printf("  [WARN] Front VL53L1X init attempt %d failed\n", attempt + 1);
+-        if (attempt + 1 < I2C_DEVICE_RETRY_COUNT) {
+-            I2CBus::reinitializeBus(VL53L1X_SDA_PIN, VL53L1X_SCL_PIN,
+-                                    VL53L1X_I2C_FREQ_HZ);
+-            sensor_->setBus(&Wire);
+-            sensor_->setTimeout(VL53L1X_FRONT_TIMEOUT_MS);
+-            delay(I2C_DEVICE_RETRY_DELAY_MS);
+-        }
+-    }
+-
+-    if (!init_ok) {
+-        Serial.println("  [WARN] Front VL53L1X init failed — forward motion blocked");
+-        delete sensor_;
+-        sensor_ = nullptr;
+-        return false;
+-    }
++    // sequenceTofAddresses() already initialized the device at 0x29 and
++    // changed its hardware address to 0x31. The object must use that runtime
++    // address for reads; do not call init() again or reset the shared bus.
++    sensor_->setAddressWithoutWrite(VL53L1X_I2C_ADDR);
+ 
+     if (!sensor_->setDistanceMode(VL53L1X::Long) ||
+         !sensor_->setMeasurementTimingBudget(50000)) {

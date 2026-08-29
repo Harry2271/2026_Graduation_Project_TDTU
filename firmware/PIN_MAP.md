@@ -93,7 +93,7 @@
 | Position | GPIO | Description | Detect Range |
 |----------|------|-------------|-------------|
 | **REAR_LEFT** | GPIO **1** | Behind-left corner | ~8 cm (tunable) |
-| **REAR_RIGHT** | GPIO **8** | Behind-right corner | ~8 cm (tunable) |
+| **REAR_RIGHT** | GPIO **37** | Behind-right corner | ~8 cm (tunable) |
 | **LEFT** | GPIO **45** | Left side | ~5 cm (tunable) |
 | **RIGHT** | GPIO **46** | Right side | ~5 cm (tunable) |
 
@@ -128,7 +128,7 @@ VL53L1X/TOF400C and is the authoritative close-range forward safety sensor.
 | **GND** | Common ground | Must share ground with ESP32 and all I2C devices |
 | **SDA** | GPIO **10** | Shared I2C bus |
 | **SCL** | GPIO **11** | Shared I2C bus |
-| **XSHUT** | GPIO **44** | Active-LOW hardware shutdown/address sequencing |
+| **XSHUT** | GPIO **9** | Active-LOW hardware shutdown/address sequencing; strapping pin, safe after boot |
 
 | Parameter | Value |
 |-----------|-------|
@@ -151,7 +151,7 @@ VL53L1X/TOF400C and is the authoritative close-range forward safety sensor.
 | **GND** | Common ground | Must share ground with ESP32 and all I2C devices |
 | **SDA** | GPIO **10** | Shared I2C bus |
 | **SCL** | GPIO **11** | Shared I2C bus |
-| **XSHUT** | GPIO **43** | Active-LOW hardware shutdown/address sequencing |
+| **XSHUT** | GPIO **8** | Active-LOW hardware shutdown/address sequencing |
 
 | Parameter | Value |
 |-----------|-------|
@@ -171,8 +171,8 @@ VL53L1X/TOF400C and is the authoritative close-range forward safety sensor.
   ┌──────────────┐                 ┌──────────────────────┐
   │ GPIO 10 SDA ─┼─────────────────┼─ BNO055       0x28  │
   │ GPIO 11 SCL ─┼─────────────────┼─ VL53L0X rear 0x30  │
-  │ GPIO 43 ─────┼── XSHUT rear    ├─ VL53L1X front 0x31 │
-  │ GPIO 44 ─────┼── XSHUT front   └─ INA226       0x40  │
+  │ GPIO 8  ─────┼── XSHUT rear    ├─ VL53L1X front 0x31 │
+  │ GPIO 9  ─────┼── XSHUT front   └─ INA226       0x40  │
   └──────────────┘
 ```
 
@@ -416,8 +416,8 @@ idle → adjusting → extending → holding → retracting → done →
 | **5** | Encoder RL CHB | INPUT | PCNT unit 2 |
 | **6** | Encoder FR CHB | INPUT | PCNT unit 1 |
 | **7** | Motor FR EN | OUTPUT | BTS7960 enable |
-| **8** | IR REAR_RIGHT | INPUT | Proximity sensor |
-| **9** | — | FREE | Former Sharp ADC input; no longer connected |
+| **8** | VL53L0X rear XSHUT | OUTPUT | Active-LOW shutdown/address sequencing |
+| **9** | VL53L1X front XSHUT | OUTPUT | Active-LOW shutdown/address sequencing; strapping pin, safe after boot |
 | **10** | I2C SDA | BIDIR | BNO055 + INA226 + VL53L0X + VL53L1X shared bus |
 | **11** | I2C SCL | OUTPUT | BNO055 + INA226 + VL53L0X + VL53L1X shared bus |
 | **12** | Motor FL RPWM | OUTPUT | BTS7960 PWM forward |
@@ -433,20 +433,20 @@ idle → adjusting → extending → holding → retracting → done →
 | **22-25** | — | N/A | **Not available on WROOM-1U module** |
 | **35** | L298N IN2 (cylinder retract) | OUTPUT | Cylinder pull down |
 | **36** | Cargo limit switch | INPUT | Microswitch NO (INPUT_PULLUP) |
-| **37** | — | Free | ⚠ INPUT-ONLY (no output driver) |
+| **37** | IR REAR_RIGHT | INPUT | Proximity sensor; input-only |
 | **38** | Motor RR RPWM | OUTPUT | BTS7960 PWM forward |
 | **39** | Motor RR LPWM | OUTPUT | BTS7960 PWM reverse |
 | **40** | Encoder FL CHA | INPUT | PCNT unit 0 |
 | **41** | Encoder FL CHB | INPUT | PCNT unit 0 |
 | **42** | Encoder FR CHA | INPUT | PCNT unit 1 |
-| **43** | VL53L0X rear XSHUT | OUTPUT | Active-LOW; also reserved from Pi serial |
-| **44** | VL53L1X front XSHUT | OUTPUT | Active-LOW; also reserved from Pi serial |
+| **43** | UART0 TX → CH343/Pi | OUTPUT | Serial telemetry/commands; do not use for XSHUT |
+| **44** | Cylinder retract limit | INPUT | INPUT_PULLUP, active LOW, debounced 100 ms; unavailable for UART RX fallback |
 | **45** | IR LEFT | INPUT | Strapping pin — safe after boot |
 | **46** | IR RIGHT | INPUT | Strapping pin — safe after boot |
 | **47** | Motor RR EN | OUTPUT | BTS7960 enable |
 | **48** | Motor RL EN | OUTPUT | BTS7960 enable |
 
-**Summary:** 31 GPIO used, GPIO 9 is no longer connected (former Sharp ADC), 1 free input-only (37), 4 unavailable (22-25). GPIO 43/44 are dedicated to ToF XSHUT; Raspberry Pi communication uses native USB CDC. All 8 LEDC channels are consumed by 4 motors.
+**Summary:** GPIO8/9 are dedicated to ToF XSHUT; GPIO37 is IR REAR_RIGHT; GPIO44 is the cylinder retract limit input. Production Pi transport remains native USB CDC, so GPIO44 is not available as a UART RX fallback. GPIO22-25 are unavailable on the module. All 8 LEDC channels are consumed by 4 motors.
 
 ---
 

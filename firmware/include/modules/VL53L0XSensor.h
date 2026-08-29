@@ -25,6 +25,9 @@ public:
     /// Initialize the VL53L0X on the shared I2C bus. Returns true if found.
     bool begin();
 
+    /// Called by the XSHUT coordinator while this device alone is at 0x29.
+    bool initializeAtDefaultAndAssign(uint8_t runtime_address);
+
     /// Read distance. Call periodically (non-blocking). Returns true if new reading.
     bool update(uint32_t now_ms);
 

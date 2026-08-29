@@ -39,13 +39,13 @@ void HealthMonitor::begin()
     // ModuleId          stale_ms   critical
     const uint32_t stale[MOD_COUNT] = {
         2000,  // MOD_IMU            — cached read at 1 Hz via readSensorsSlow()
-        200,   // MOD_ENCODERS       — 50 Hz PID, 10 frames
+        500,   // MOD_ENCODERS       — 50 Hz PID, tolerate loop/USB jitter
         1000,  // MOD_MOTOR_DRIVER   — detect stall over 1s
         2000,  // MOD_BATTERY        — 1 Hz read, 2 cycles
         0,     // MOD_E_STOP         — managed by e_stop flag, not stale
-        200,   // MOD_IR             — 50 Hz poll, 10 frames
-        200,   // MOD_FRONT_TOF          — 20 Hz poll, 4 frames
-        200,   // MOD_TOF            — 10 Hz, 2 frames
+        500,   // MOD_IR             — 50 Hz poll, tolerate loop/USB jitter
+        500,   // MOD_FRONT_TOF      — health reporting; safety stale remains 250ms
+        500,   // MOD_TOF            — 10 Hz, tolerate loop/USB jitter
         500,   // MOD_CYLINDER       — low frequency
         4000,  // MOD_Pi_LINK        — 2× HEARTBEAT_TIMEOUT_MS
         1000,  // MOD_I2C_BUS        — check every 1s
@@ -221,6 +221,10 @@ void HealthMonitor::tick(uint32_t now_ms)
 
         // Skip modules that don't have staleness checking
         if (m.stale_ms == 0) continue;
+
+        // Optional devices that were never detected remain OFFLINE. They are
+        // not stale because there is no valid sample to monitor.
+        if (m.state == ST_OFFLINE) continue;
 
         uint32_t age = now_ms - m.last_ok_ms;
 

@@ -16,6 +16,9 @@ public:
     FrontTofSensor();
 
     bool begin();
+
+    /// Called by the XSHUT coordinator while this device alone is at 0x29.
+    bool initializeAtDefaultAndAssign(uint8_t runtime_address);
     bool update(uint32_t now_ms);
 
     [[nodiscard]] uint16_t getDistanceMm() const { return distance_mm_; }

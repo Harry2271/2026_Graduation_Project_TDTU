@@ -15,7 +15,8 @@ IRProximitySensor::IRProximitySensor() : prev_any_(false)
         readings_[i].detected   = false;
         readings_[i].changed_ms = 0;
         readings_[i].level_ms   = 0;
-        sensor_present_[i]      = true;  // optimistic — runtime decides
+        sensor_present_[i]      = (i != static_cast<int>(IRPosition::LEFT)) ||
+                                  (IR_LEFT_ENABLED != 0);
     }
 }
 
@@ -44,6 +45,9 @@ void IRProximitySensor::begin()
         Serial.printf("%s=%d ", names[i], raw);
     }
     Serial.println("(LOW=detected, HIGH=clear)");
+    if (IR_LEFT_ENABLED == 0) {
+        Serial.println("  [IR] LEFT GPIO45 disabled until its E18 output and 3.3V-safe pull-up are installed");
+    }
 }
 
 bool IRProximitySensor::update(uint32_t now_ms)
@@ -54,7 +58,15 @@ bool IRProximitySensor::update(uint32_t now_ms)
 
     for (int i = 0; i < 4; i++) {
         // E18-D80NK: LOW = obstacle detected, HIGH = clear
-        bool raw = (digitalRead(PINS_[i]) == LOW);
+        const bool enabled = sensor_present_[i];
+        bool raw = enabled && (digitalRead(PINS_[i]) == LOW);
+
+        if (!enabled) {
+            readings_[i].detected = false;
+            readings_[i].changed_ms = now_ms;
+            readings_[i].level_ms = now_ms;
+            continue;
+        }
 
         if (raw != readings_[i].detected) {
             if (now_ms - readings_[i].changed_ms >= IR_DEBOUNCE_MS) {

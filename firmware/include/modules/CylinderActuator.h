@@ -65,4 +65,6 @@ public:
 private:
     CylinderState state_;
     uint32_t      move_start_ms_;
+    uint32_t      retract_limit_since_ms_;
+    bool          retract_limit_pending_;
 };
