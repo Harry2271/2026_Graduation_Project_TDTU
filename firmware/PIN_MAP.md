@@ -193,6 +193,7 @@ for front obstacle safety decisions.
 |----------|------|-------|
 | **IN1** (L298N extend) | GPIO **2** | HIGH = cylinder extends (lifts dump body) |
 | **IN2** (L298N retract) | GPIO **35** | HIGH = cylinder retracts (lowers dump body) |
+| **Retract limit switch** | GPIO **44** | Active-LOW; stops retract when fully closed |
 | **ENA** | Tied HIGH on L298N (jumper) | No PWM — full-speed on/off only |
 
 | Parameter | Value |
@@ -200,8 +201,47 @@ for front obstacle safety decisions.
 | Cylinder supply | **12 VDC** (from 21→12V buck) |
 | L298N supply | **12 V** (VM) for motor, 5V for logic |
 | Max run time | **8 000 ms** (safety auto-stop) |
+| Limit debounce | **100 ms** (firmware) |
 | Hold-at-top time | **3 000 ms** (dump window) |
 | Mounting | Cylinder base on chassis, rod attached to dump body |
+
+### Cylinder Retract Limit Switch — Microswitch
+
+The current firmware implements **one cylinder end-stop only**: the fully
+retracted position. It is separate from the cargo-presence switch on GPIO 36.
+
+| Parameter | Value |
+|-----------|-------|
+| Switch type | **NO** (normally open) microswitch |
+| Signal GPIO | **GPIO 44** (`CYLINDER_RETRACT_SWITCH_PIN`) |
+| Wiring | One switch terminal → GPIO 44; the other → ESP32 GND |
+| Input mode | `INPUT_PULLUP` (internal pull-up enabled by firmware) |
+| Active state | **LOW = cylinder fully retracted** |
+| Debounce | 100 ms |
+| Firmware behavior | Stops the motor only while the cylinder is retracting |
+| Safety fallback | 8-second maximum run timeout if the switch is absent/fails |
+
+### Cylinder Retract Limit Switch Wiring
+
+Use the switch contacts **COM** and **NO**. Do not connect the switch to 5V.
+
+```
+ ESP32-S3                                      Microswitch (NO)
+ ┌──────────────┐                              ┌───────────────┐
+ │ GPIO 44      ├──────── signal wire ─────────┤ COM           │
+ │ INPUT_PULLUP │                              │               │
+ │ GND          ├──────── ground wire ────────┤ NO            │
+ └──────────────┘                              └───────────────┘
+
+ Switch open (not pressed): GPIO 44 = HIGH
+ Switch closed (fully retracted): GPIO 44 is shorted to GND = LOW
+```
+
+> **Important:** GPIO 44 is used as a digital input in the current USB CDC
+> production configuration. Never apply 5 V to GPIO 44; ESP32-S3 GPIOs are
+> 3.3 V logic. The internal pull-up makes this a simple two-wire circuit.
+> Connect the switch mechanically so it is pressed before the cylinder reaches
+> its hard mechanical stop. The switch is not a substitute for a fuse or E-stop.
 
 ### Cargo Limit Switch — Microswitch on Cargo Bed
 
@@ -224,25 +264,41 @@ for front obstacle safety decisions.
 ```
           ESP32-S3
             │
-
   GPIO 36 ◄─┤ INPUT_PULLUP (internal)
-
             │
-
           Microswitch (NO)
-
             │
-
-  Signal ◄───┤ Common (one terminal)
-
-            │
-
-          GND ◄───── Other terminal (shorts to GPIO 36 when pressed)
+  GND ◄─────┤ Other terminal (shorts GPIO 36 to GND when pressed)
 ```
 
-> ⚠️ **GPIO 36 is INPUT-ONLY on ESP32-S3** — cannot drive output. Use only
-> as a digital input. The internal pull-up replaces the external one,
-> simplifying the wiring to a 2-wire connection (signal + GND).
+> **GPIO 36** is input-only. Use only as a digital input. Do not apply 5 V.
+
+### L298N + Cylinder Wiring
+
+```
+          ESP32-S3
+            │
+  IN1  ◄────┤ GPIO 2    (cylinder extend → lift)
+  IN2  ◄────┤ GPIO 35   (cylinder retract → lower)
+            │
+          L298N Driver Board
+            │
+  ENA ──────┤ Tied HIGH (jumper in place)
+  +12V ◄────┤ 12V rail (from 21→12V buck)
+  GND ◄─────┤ Common ground  ⚠ MUST share with ESP32
+            │
+  OUT1 ─────► Electric Cylinder M1 (+)
+  OUT2 ─────► Electric Cylinder M2 (−)
+```
+
+**Control Logic:**
+- **Extend (lift):** `IN1 = HIGH, IN2 = LOW` → cylinder rod pushes out, dump body rises
+- **Retract (lower):** `IN1 = LOW, IN2 = HIGH` → cylinder rod pulls in, dump body lowers
+- **Stop:** `IN1 = LOW, IN2 = LOW` → cylinder motor stops
+
+> The current firmware has a retract end-stop only. Extension still relies on
+> the 8-second safety timeout. Add a second end-stop and corresponding GPIO
+> plus firmware support before claiming extension-limit detection.
 
 ### L298N + Cylinder Wiring
 
