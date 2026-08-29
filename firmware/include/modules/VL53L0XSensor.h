@@ -34,6 +34,8 @@ public:
     [[nodiscard]] uint16_t getDistanceMm() const;
     [[nodiscard]] float    getDistanceCm() const;
     [[nodiscard]] bool     isAtUnloadingDistance() const;   // <= threshold
+    /// True only when a successful sample was received within the freshness window.
+    [[nodiscard]] bool     hasFreshReading(uint32_t now_ms) const;
     [[nodiscard]] bool     isPresent() const { return sensor_present_; }
 
     /// Debug print (type 138 JSON)

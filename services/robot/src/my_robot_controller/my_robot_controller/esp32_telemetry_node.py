@@ -69,7 +69,7 @@ PRIORITY_COMMANDS = frozenset({
 # These commands must take effect at the next poll, even when priority traffic
 # is full. Superseding queued motion/actuation is the safe behavior.
 SAFETY_BARRIER_COMMANDS = frozenset({
-    'stop', 'e_stop', 'cancel_dock', 'cylinder_stop',
+    'stop', 'e_stop', 'e_stop_clear', 'cancel_dock', 'cylinder_stop',
 })
 
 # High-rate commands — coalesce to latest frame under sustained overload.
@@ -135,6 +135,11 @@ class Esp32TelemetryNode(Node):
         self._last_overload_warn = 0.0
         self._overload_history: deque[float] = deque(maxlen=64)
         self._last_pending_move: dict | None = None
+        # Motion epoch invalidates every queued move across E-stop barriers.
+        # A fresh move must be published after re-arm; an old command can never
+        # be emitted by a later queue drain.
+        self._motion_epoch = 0
+        self._send_tail: asyncio.Task[None] | None = None
         self._bridge = None  # set later by _run_bridge
 
         # ── CPS watchdog (on-robot) ───────────────────────────────────────
@@ -292,6 +297,7 @@ class Esp32TelemetryNode(Node):
                 self._cmd_q.clear()
                 self._last_pending_move = None
                 self._dropped_total += discarded
+                self._motion_epoch += 1
 
                 if command == 'e_stop':
                     # The latest E-stop is stronger than every queued request,
@@ -305,7 +311,9 @@ class Esp32TelemetryNode(Node):
                     # as e_stop then cancel_dock.
                     retained = deque(
                         queued for queued in self._priority_cmd_q
-                        if queued.get('cmd') in SAFETY_BARRIER_COMMANDS)
+                        if queued.get('cmd') in SAFETY_BARRIER_COMMANDS
+                        and (command == 'e_stop_clear' or
+                             queued.get('cmd') != 'e_stop_clear'))
                     self._dropped_total += len(self._priority_cmd_q) - len(retained)
                     self._priority_cmd_q = retained
 
@@ -336,9 +344,12 @@ class Esp32TelemetryNode(Node):
             self._accepted_total += 1
             return
 
-        # Coalesce `move` — keep only the latest pending move frame
+        # Coalesce `move` — keep only the latest pending move frame.
+        # Tag it with the current epoch so it cannot cross a safety barrier.
         if command in COALESCE_COMMANDS:
-            self._last_pending_move = cmd
+            queued_move = dict(cmd)
+            queued_move['_motion_epoch'] = self._motion_epoch
+            self._last_pending_move = queued_move
             return
 
         # Everything else goes to the back
@@ -357,13 +368,17 @@ class Esp32TelemetryNode(Node):
         Returns the commands to send this tick.
         """
         out: list[dict] = []
+        rearm_barrier_sent = False
 
         # Drain safety commands first, preserving their arrival order, then
         # normal traffic. A bounded drain prevents a command burst starving ROS.
         drained = 0
         while self._priority_cmd_q and drained < _MAX_DRAIN_PER_TICK:
-            out.append(self._priority_cmd_q.popleft())
+            priority = self._priority_cmd_q.popleft()
+            out.append(priority)
             drained += 1
+            if priority.get('cmd') == 'e_stop_clear':
+                rearm_barrier_sent = True
 
         while self._cmd_q and drained < _MAX_DRAIN_PER_TICK:
             cmd = self._cmd_q.popleft()
@@ -377,9 +392,15 @@ class Esp32TelemetryNode(Node):
         # Coalesce: append only the single latest `move` at the end without
         # exceeding the per-tick drain budget. Keep it for the next tick when
         # priority traffic already consumed that budget.
-        if self._last_pending_move is not None and drained < _MAX_DRAIN_PER_TICK:
-            out.append(self._last_pending_move)
+        if (not rearm_barrier_sent and self._last_pending_move is not None
+                and drained < _MAX_DRAIN_PER_TICK):
+            pending = self._last_pending_move
             self._last_pending_move = None
+            if pending.get('_motion_epoch') == self._motion_epoch:
+                pending.pop('_motion_epoch', None)
+                out.append(pending)
+            else:
+                self._dropped_total += 1
 
         # Overflow tracking
         q_depth = len(self._priority_cmd_q) + len(self._cmd_q)
@@ -421,21 +442,32 @@ class Esp32TelemetryNode(Node):
     def _emit_cmd_status(self, status: str, cmd: str, reason: str = '') -> None:
         self._publish_cmd_status(status, cmd, reason=reason, overflow=self._overflow_active)
 
+    async def _send_ordered(self, previous: asyncio.Task[None] | None,
+                            cmd: dict) -> None:
+        """Send one command only after the preceding command has completed."""
+        if previous is not None:
+            try:
+                await previous
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().warning(f'previous ESP32 command failed: {exc}')
+        if self._bridge is not None:
+            await self._bridge.send_command(cmd)
+
     def _poll_commands(self) -> None:
-        """Drain queued commands and forward to bridge via asyncio."""
+        """Drain queued commands and forward them through one ordered writer."""
         if self._bridge is None:
             return
 
         commands = self._drain_commands()
-
         loop = asyncio.get_event_loop()
         for cmd in commands:
             command = cmd.get('cmd', '?')
             try:
-                # _drain_commands() already coalesces motion to the newest
-                # frame. Never drop that final frame during overload: doing
-                # so can leave the ESP32 executing an obsolete velocity.
-                loop.create_task(self._bridge.send_command(cmd))
+                # Chain sends rather than creating independent tasks. The
+                # bridge's byte lock prevents interleaving, while this chain
+                # also preserves command order across queue drain ticks.
+                task = loop.create_task(self._send_ordered(self._send_tail, cmd))
+                self._send_tail = task
                 self._emit_cmd_status('accepted', command)
             except Exception as exc:
                 self.get_logger().error(f'failed to send {command}: {exc}')
@@ -493,8 +525,11 @@ async def _run_bridge(node: Esp32TelemetryNode) -> None:
     bridge.on_health = node.on_health
 
     await bridge.connect()
+    node._send_tail = None
     node._bridge = bridge
-    heartbeat_task = asyncio.create_task(_heartbeat_loop(bridge))
+    # RealEsp32Bridge.connect() owns the single heartbeat task. Do not create
+    # a second sender here; duplicate heartbeats obscure link timing and add
+    # needless traffic to the shared command path.
     node.get_logger().info('ESP32 telemetry bridge connected — gateway active')
 
     try:
@@ -502,11 +537,6 @@ async def _run_bridge(node: Esp32TelemetryNode) -> None:
             await asyncio.sleep(0.05)  # 20 Hz command drain
             node._poll_commands()
     finally:
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
         await bridge.disconnect()
 
 

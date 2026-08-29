@@ -349,7 +349,12 @@ bool AutoRoam::compute(uint32_t now_ms,
                 // Check VL53L0X distance against runtime target.
                 tof_->update(now_ms);
                 uint16_t dist_mm = tof_->getDistanceMm();
-                bool dist_ok = (dist_mm <= dock_target_mm_ + VL53L0X_TOLERANCE_MM);
+                const bool dist_valid = tof_->hasFreshReading(now_ms) &&
+                                        dist_mm >= VL53L0X_MIN_VALID_MM &&
+                                        dist_mm <= VL53L0X_MAX_VALID_MM;
+                bool dist_ok = dist_valid &&
+                               dist_mm >= dock_target_mm_ - VL53L0X_TOLERANCE_MM &&
+                               dist_mm <= dock_target_mm_ + VL53L0X_TOLERANCE_MM;
 
                 // BOTH conditions satisfied → proceed to extend
                 if (dist_ok && heading_ok_) {
@@ -363,8 +368,7 @@ bool AutoRoam::compute(uint32_t now_ms,
                 }
 
                 // Not ready: nudge to adjust position
-                if (!dist_ok && tof_ && tof_->isPresent()) {
-                    uint16_t dist_mm = tof_->getDistanceMm();
+                if (!dist_ok && dist_valid && tof_->isPresent()) {
                     if (dist_mm > dock_target_mm_ + VL53L0X_TOLERANCE_MM) {
                         out_vx = ADJUST_FWD_SPEED;    // too far → forward
                     } else {
