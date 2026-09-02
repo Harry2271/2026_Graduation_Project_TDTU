@@ -313,13 +313,17 @@ enum MotorState {
 // Front TOF400C — VL53L1X laser distance sensor
 // Replaces the Sharp GP2Y0A21YK0F analog front sensor.
 // ============================================================
+// ============================================================
+// Front TOF400C — VL53L1X laser distance sensor
+// Replaces the Sharp GP2Y0A21YK0F analog front sensor.
+// ============================================================
 #define VL53L1X_DEFAULT_I2C_ADDR       0x29
 #define VL53L1X_I2C_ADDR               0x31  // Assigned after XSHUT boot
 #define VL53L1X_SDA_PIN                10
 #define VL53L1X_SCL_PIN                11
 #define VL53L1X_I2C_FREQ_HZ            100000
-#define VL53L1X_FRONT_THRESHOLD_CM     15    // Hard-stop / front block
-#define VL53L1X_FRONT_SLOW_CM          60    // Begin slowing
+#define VL53L1X_FRONT_THRESHOLD_CM     45    // Hard-stop / front block
+#define VL53L1X_FRONT_SLOW_CM          80    // Begin slowing
 #define VL53L1X_FRONT_POLL_MS          20    // Safety/cache poll cadence
 #define VL53L1X_FRONT_MEASUREMENT_MS   50    // Long-mode timing budget/continuous period
 #define VL53L1X_FRONT_STALE_MS         250   // No fresh sample => blocked

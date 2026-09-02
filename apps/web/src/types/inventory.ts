@@ -49,6 +49,10 @@ export interface ShelfSlot {
   slotX?: number // meters in SLAM map frame (Calibrate)
   slotY?: number // meters in SLAM map frame (Calibrate)
   facingTheta?: number // radians, yaw the robot must face (Calibrate)
+  allowNoTagFallback?: boolean // allow fixed pose when AprilTag is unavailable
+  fallbackX?: number | null // fallback map-frame X
+  fallbackY?: number | null // fallback map-frame Y
+  fallbackTheta?: number | null // fallback yaw in radians
   aprilTagId?: number // 0..586, fixed physical tag ID (Calibrate)
 }
 

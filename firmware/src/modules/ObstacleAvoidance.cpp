@@ -47,14 +47,14 @@ void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
             break;
 
         case ObstacleDirection::FRONT_LEFT:
-            if (vx > 0) vx = std::min(vx, (int)FRONT_CORNER_FORWARD_CAP);
+            if (vx > 0) vx = std::min<int16_t>(vx, static_cast<int16_t>(FRONT_CORNER_FORWARD_CAP));
             if (vx > 0) vx = 0;
             vy = 120;
             omega = 40;
             break;
 
         case ObstacleDirection::FRONT_RIGHT:
-            if (vx > 0) vx = std::min(vx, (int)FRONT_CORNER_FORWARD_CAP);
+            if (vx > 0) vx = std::min<int16_t>(vx, static_cast<int16_t>(FRONT_CORNER_FORWARD_CAP));
             if (vx > 0) vx = 0;
             vy = -120;
             omega = -40;

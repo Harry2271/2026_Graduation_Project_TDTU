@@ -17,7 +17,8 @@ export interface IShelfRepository {
   clearSlot(slotCode: string): Promise<ShelfSlot | null>;
   clearSlotByPackageId(packageId: Types.ObjectId): Promise<ShelfSlot | null>;
   updateCoordinates(slotCode: string, slotX: number, slotY: number, facingTheta: number | null): Promise<ShelfSlot | null>;
-  assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null>;
+  updateFallback(slotCode: string, fallbackX: number, fallbackY: number, fallbackTheta: number | null, allowNoTagFallback: boolean): Promise<ShelfSlot | null>;
+  assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null;
   updateSlotStatus(slotCode: string, status: SlotStatus, session?: ClientSession): Promise<void>;
   updateCoordinatesMany(entries: { slotCode: string; slotX: number; slotY: number; facingTheta: number | null }[]): Promise<void>;
   reserveSlotIfAvailable(slotCode: string): Promise<ShelfSlot | null>;

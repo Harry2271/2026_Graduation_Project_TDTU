@@ -3,14 +3,11 @@
 
 #include "FrontTofSensor.h"
 #include "I2CBus.h"
-#include "SharpFrontSensor.h"
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <VL53L1X.h>
 #include <algorithm>
-
-SharpFrontSensor sharp_;  // global fallback
 
 bool FrontTofSensor::update(uint32_t now_ms) {
     if (!sensor_present_ || !sensor_) return false;
@@ -21,17 +18,11 @@ bool FrontTofSensor::update(uint32_t now_ms) {
     prev_distance_mm_ = distance_mm_;
     const uint16_t raw = sensor_->readRangeContinuousMillimeters();
     const bool valid = !sensor_->timeoutOccurred() &&
-                       isAcceptableRangeStatus(sensor_->ranging_data.range_status) &&
                        raw >= VL53L1X_FRONT_MIN_MM && raw <= VL53L1X_FRONT_MAX_MM;
 
     if (!valid) {
         reading_valid_ = false;
-        distance_mm_ = FRONT_TOF_INVALID_MM;
-        // Fallback Sharp
-        if (sharp_.update(now_ms)) {
-            distance_mm_ = sharp_.getDistanceMm();
-            reading_valid_ = true;
-        }
+        distance_mm_ = 0;
         return true;
     }
 
