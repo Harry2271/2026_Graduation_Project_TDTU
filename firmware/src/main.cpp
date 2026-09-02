@@ -100,6 +100,19 @@ static bool    g_encoder_stall_warned[4] = {false, false, false, false};
 static uint8_t g_encoder_stall_ticks[4] = {0, 0, 0, 0};
 static constexpr uint8_t ENCODER_STALL_CONFIRM_TICKS = 10; // 200 ms
 
+// ---- Anti-stuck motion-progress watchdog (runtime) ----
+// Distinct from the per-motor encoder stall detector above: that one asks
+// "is a single encoder electrically dead?".  This one asks "is the CHASSIS
+// commanded to move but making no forward/lateral travel?" — i.e. the robot
+// is physically jammed against something none of the sensors caught.  It sums
+// travel across all four wheels so a commanded rotation (wheels turning) is
+// still counted as progress and never trips the watchdog.
+static int32_t g_motion_ref_count[4]   = {0, 0, 0, 0}; // encoder snapshot at window start
+static uint32_t g_motion_window_ms     = 0;            // when the current no-progress window began
+static bool     g_motion_stuck_warned  = false;        // degraded-speed stage entered
+static bool     g_motion_recovery_pending = false;     // command was cut at WARN
+static bool     g_motion_stuck_latched = false;        // hard-stop stage entered (needs clear)
+
 // Direct motor test mode (bypasses PID + ramp, for hardware debugging)
 bool g_raw_test_mode = false;
 int16_t g_raw_test_speeds[4] = {0};
@@ -397,6 +410,21 @@ void computeNavTargets()
     int16_t adj_vy    = g_nav_vy;
     int16_t adj_omega = g_nav_omega;
     g_obstacle.applyToCommand(adj_vx, adj_vy, adj_omega, millis());
+
+    // Front-corner interlock (FL / FR wheel). The VL53L1X cone and the four
+    // existing IR sensors do not cover these two corners, so a fresh Pi
+    // front-left / front-right LiDAR event is treated as a local obstacle
+    // for those wheels. Forward into the corner is blocked; a reverse or
+    // a strafe *away* from the blocked corner remains legal.
+    if (g_obstacle.isFrontLeftBlocked()) {
+        if (adj_vx > 0) adj_vx = 0;
+        if (adj_vy < 0) adj_vy = 0;   // do not strafe left into FL
+    }
+    if (g_obstacle.isFrontRightBlocked()) {
+        if (adj_vx > 0) adj_vx = 0;
+        if (adj_vy > 0) adj_vy = 0;   // do not strafe right into FR
+    }
+
     if (g_local_obstacle_stop) {
         // Keep the physical interlock fail-safe, but permit only an escape
         // vector that moves away from the currently asserted local sensors.
@@ -645,6 +673,13 @@ void handleEStopClear()
     g_pid_enabled   = true;
     g_individual_mode = false;
     g_raw_test_mode = false;
+    g_motion_window_ms = 0;
+    g_motion_stuck_warned = false;
+    g_motion_recovery_pending = false;
+    g_motion_stuck_latched = false;
+    for (int i = 0; i < MOTOR_COUNT; i++) {
+        g_motion_ref_count[i] = g_encoders[i].getCumulativeCount();
+    }
     g_nav_vx    = 0;
     g_nav_vy    = 0;
     g_nav_omega = 0;
@@ -670,6 +705,7 @@ void handleSetPID(float kp, float ki, float kd)
 void handleSetMaxSpeed(int pct)
 {
     g_max_speed_pct = constrain(pct, 0, 100);
+    g_modeManager.setMaxSpeedPct(g_max_speed_pct);
     emitCommandAck("set_max_speed");
 }
 
@@ -1051,6 +1087,21 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
         case CMD_CANCEL_DOCK:
             g_modeManager.onPiCommand(cmd, now_ms);
             emitCommandAck("cancel_dock");
+            break;
+
+        // LiDAR obstacle events are safety hints from the Pi. Forward them to
+        // the firmware owner so front-left/front-right corner interlocks and
+        // the existing directional dodge logic actually run.
+        case CMD_OBSTACLE_LEFT:
+        case CMD_OBSTACLE_RIGHT:
+        case CMD_OBSTACLE_FRONT:
+        case CMD_OBSTACLE_FRONT_LEFT:
+        case CMD_OBSTACLE_FRONT_RIGHT:
+        case CMD_OBSTACLE_REAR:
+        case CMD_OBSTACLE_REAR_LEFT:
+        case CMD_OBSTACLE_REAR_RIGHT:
+        case CMD_OBSTACLE_CLEAR:
+            g_modeManager.onPiCommand(cmd, now_ms);
             break;
 
         case CMD_GET_UNLOAD_STATE:
@@ -1457,9 +1508,100 @@ void setup()
 }
 
 
-// ========================================================================
-// Poll IR + front-ToF sensors → feed ObstacleAvoidance
-// ========================================================================
+// Check commanded chassis motion against cumulative encoder travel. This is
+// intentionally fail-closed: no blind reverse is attempted because the rear
+// IR sensors have limited range and do not prove the whole rear is clear.
+void checkMotionProgress(uint32_t now)
+{
+    if (g_e_stop_active || g_raw_test_mode || g_modeManager.getMode() == MODE_SAFE) {
+        g_motion_window_ms = 0;
+        g_motion_stuck_warned = false;
+        g_motion_recovery_pending = false;
+        return;
+    }
+
+    // NAV and AUTO_ROAM have separate ramp buffers. Reading the ModeManager
+    // buffer unconditionally leaves the NAV watchdog watching zeros while
+    // main.cpp is driving g_ramped_speeds[].
+    const int16_t* commanded =
+        (g_modeManager.getMode() == MODE_AUTO_ROAM)
+            ? g_modeManager.getRampedSpeeds()
+            : g_ramped_speeds;
+    bool moving = false;
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        if (abs(commanded[i]) >= MOTION_STUCK_MIN_COMMAND) {
+            moving = true;
+            break;
+        }
+    }
+    if (!moving && !g_motion_recovery_pending) {
+        g_motion_window_ms = 0;
+        g_motion_stuck_warned = false;
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            g_motion_ref_count[i] = g_encoders[i].getCumulativeCount();
+        }
+        return;
+    }
+
+    int32_t travel = 0;
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        const int32_t current = g_encoders[i].getCumulativeCount();
+        travel += abs(current - g_motion_ref_count[i]);
+    }
+    if (travel >= MOTION_STUCK_MIN_PULSES) {
+        g_motion_window_ms = now;
+        g_motion_stuck_warned = false;
+        g_motion_recovery_pending = false;
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            g_motion_ref_count[i] = g_encoders[i].getCumulativeCount();
+        }
+        return;
+    }
+
+    if (g_motion_window_ms == 0) {
+        g_motion_window_ms = now;
+        g_motion_stuck_warned = false;
+        return;
+    }
+
+    const uint32_t stalled_ms = now - g_motion_window_ms;
+    if (stalled_ms >= MOTION_STUCK_WARN_MS && !g_motion_stuck_warned) {
+        g_motion_stuck_warned = true;
+        g_motion_recovery_pending = true;
+        Serial.printf("[MOTION] No encoder progress for %lu ms; limiting output and requesting recovery\n",
+                      (unsigned long)stalled_ms);
+        g_max_speed_pct = min<uint8_t>(g_max_speed_pct, MOTION_STUCK_DEGRADED_PCT);
+        g_modeManager.setMaxSpeedPct(g_max_speed_pct);
+        g_modeManager.requestRecovery(now);
+
+        // NAV has no local planner. Clear the actual NAV command and ramp;
+        // clearing only ModeManager's copy would leave main.cpp driving the
+        // old command after a recovery warning.
+        if (g_modeManager.getMode() != MODE_AUTO_ROAM) {
+            g_nav_vx = g_nav_vy = g_nav_omega = 0;
+            for (int i = 0; i < MOTOR_COUNT; ++i) {
+                g_target_speeds[i] = 0;
+                g_ramped_speeds[i] = 0;
+                g_kick_ticks[i] = 0;
+            }
+        }
+        emitFirmwareError("MOTION_STUCK_WARNING",
+                          "Commanded motion has no encoder progress",
+                          "warning");
+    }
+
+    if (stalled_ms >= MOTION_STUCK_STOP_MS && !g_motion_stuck_latched) {
+        g_motion_stuck_latched = true;
+        Serial.printf("[MOTION] No progress for %lu ms — HARD E-STOP\n",
+                      (unsigned long)stalled_ms);
+        g_health.reportError(MOD_ENCODERS, 2, now);
+        emitFirmwareError("MOTION_STUCK",
+                          "Motion command produced no encoder progress",
+                          "critical");
+        handleEStop();
+    }
+}
+
 void pollLocalSensors(uint32_t now)
 {
     // ---- IR proximity sensors: debounce + always report current state ----
@@ -1740,6 +1882,8 @@ void loop()
         for (int i = 0; i < MOTOR_COUNT; i++) {
             g_encoders[i].calculateRPM(dt);
         }
+
+        checkMotionProgress(now);
 
         SystemMode mode = g_modeManager.getMode();
 

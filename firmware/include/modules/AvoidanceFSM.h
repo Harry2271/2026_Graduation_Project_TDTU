@@ -63,6 +63,18 @@ public:
     /// fl_delta: FL encoder pulse count since last call (positive = forward)
     void feedEncoderDelta(int32_t fl_delta);
 
+    /// Pi LiDAR front-left / front-right events covering the FL/FR wheel
+    /// corners that onboard IR + front ToF cannot see. Fail-closed: once
+    /// set, the corner stays blocked until an explicit clear.
+    void setFrontCornerBlocked(bool left, bool right);
+    void clearFrontCorners();
+
+    /// Bounded recovery request from the motion-progress watchdog. Forces
+    /// a re-evaluate instead of continuing to push into a jam. Never
+    /// invents a reverse vector — evaluate() still refuses reverse when
+    /// rear IR is asserted.
+    void requestRecovery(uint32_t now_ms);
+
     // Getters
     AvoidanceState getState() const { return state_; }
     const char* getStateName() const;
@@ -81,6 +93,8 @@ private:
     uint8_t ir_mask_;
     bool    front_tof_too_close_;
     bool    front_tof_slowing_;
+    bool    front_left_blocked_;
+    bool    front_right_blocked_;
 
     // Heading feedback
     float heading_deg_;

@@ -49,6 +49,22 @@ export class ShelfSlot {
   @Prop({ required: false, default: null })
   facingTheta?: number;
 
+  @ApiPropertyOptional({ description: 'Cho phép sử dụng tọa độ cố định (fallback) khi không quét được AprilTag', example: true })
+  @Prop({ required: false, default: false })
+  allowNoTagFallback?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tọa độ X fallback (meters) trong map frame', example: 1.18, nullable: true })
+  @Prop({ required: false, default: null })
+  fallbackX?: number | null;
+
+  @ApiPropertyOptional({ description: 'Tọa độ Y fallback (meters) trong map frame', example: 2.38, nullable: true })
+  @Prop({ required: false, default: null })
+  fallbackY?: number | null;
+
+  @ApiPropertyOptional({ description: 'Hướng quay (radians) fallback', example: 1.57, nullable: true })
+  @Prop({ required: false, default: null })
+  fallbackTheta?: number | null;
+
   @ApiPropertyOptional({ description: 'Fixed AprilTag ID for this slot (0..586), set during Calibrate', example: 42, nullable: true })
   @Prop({ required: false, default: null })
   aprilTagId?: number;

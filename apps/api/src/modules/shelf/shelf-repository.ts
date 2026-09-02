@@ -105,6 +105,22 @@ export class ShelfRepository implements IShelfRepository {
       .exec();
   }
 
+  async updateFallback(
+    slotCode: string,
+    fallbackX: number,
+    fallbackY: number,
+    fallbackTheta: number | null,
+    allowNoTagFallback: boolean,
+  ): Promise<ShelfSlot | null> {
+    return this.shelfSlotModel
+      .findOneAndUpdate(
+        { code: slotCode },
+        { $set: { fallbackX, fallbackY, fallbackTheta, allowNoTagFallback } },
+        { new: true },
+      )
+      .exec();
+  }
+
   async assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot | null> {
     return this.shelfSlotModel
       .findOneAndUpdate(

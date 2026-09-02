@@ -13,6 +13,7 @@ export interface IShelfService {
   removePackage(slotCode: string): Promise<void>;
   clearSlotByPackageId(packageId: string): Promise<ShelfSlot | null>;
   assignCoordinates(slotCode: string, slotX: number, slotY: number, facingTheta: number | null): Promise<ShelfSlot>;
+  assignFallback(slotCode: string, fallbackX: number, fallbackY: number, fallbackTheta: number | null, allowNoTagFallback: boolean): Promise<ShelfSlot>;
   assignAprilTag(slotCode: string, aprilTagId: number): Promise<ShelfSlot>;
   findByAprilTagId(aprilTagId: number): Promise<ShelfSlot | null>;
   assignCoordinatesBatch(entries: { slotCode: string; slotX: number; slotY: number; facingTheta: number | null }[]): Promise<ShelfSlot[]>;

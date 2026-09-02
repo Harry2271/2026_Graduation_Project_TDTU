@@ -32,6 +32,14 @@ public:
     void enterEStop(uint32_t now_ms);
     void clearEStop(uint32_t now_ms);
 
+    /// Motion-progress watchdog: ask AUTO_ROAM to replan instead of
+    /// continuing to push into a jam. NAV mode has no local planner, so
+    /// the watchdog in main.cpp still hard-stops after MOTION_STUCK_STOP_MS.
+    void requestRecovery(uint32_t now_ms);
+
+    /// Keep the autonomous output path aligned with the global NAV speed cap.
+    void setMaxSpeedPct(uint8_t pct) { max_speed_pct_ = pct; }
+
     /// Forward proof-of-life from any byte received on the Pi UART, even if
     /// the command frame was corrupt (e.g. cable yank mid-packet).
     void onSerialActivity(uint32_t now_ms) { watchdog_.onSerialActivity(now_ms); }

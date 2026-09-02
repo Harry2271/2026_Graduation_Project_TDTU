@@ -116,6 +116,22 @@ TAG_RECOVERY_ROTATE_SPEED = int(os.environ.get('APRILTAG_RECOVERY_ROTATE_SPEED',
 TAG_RECOVERY_ROTATE_S = float(os.environ.get('APRILTAG_RECOVERY_ROTATE_S', '0.55'))
 TAG_ALIGN_MISSING_GRACE_S = float(os.environ.get('APRILTAG_ALIGN_MISSING_GRACE_S', '0.40'))
 
+# Auto demonstration fence. Coordinates are relative to the captured Home
+# pose, so the same 1.0 m x 0.5 m mat works regardless of map origin.
+# Length is along robot +X at Home; width is along robot +Y.
+AUTO_FENCE_LENGTH_M = float(os.environ.get('AUTO_FENCE_LENGTH_M', '1.0'))
+AUTO_FENCE_WIDTH_M = float(os.environ.get('AUTO_FENCE_WIDTH_M', '0.5'))
+# Half-chassis keep-out so Nav2 goals stay on the mat (~30 cm footprint).
+AUTO_FENCE_MARGIN_M = float(os.environ.get('AUTO_FENCE_MARGIN_M', '0.18'))
+# Four drop-off points inside the inner rectangle, relative to Home (m, rad).
+# A/B near the left edge, C/D near the right — same order as FULL.
+AUTO_DEMO_ZONES: dict[str, tuple[float, float, float]] = {
+    'A': (-0.18, -0.04, 0.0),
+    'B': (-0.18,  0.04, 0.0),
+    'C': ( 0.18,  0.04, math.pi),
+    'D': ( 0.18, -0.04, math.pi),
+}
+
 # ── Demo delivery zones (4 zones A/B/C/D for capstone demo) ─────────────────
 # Hard-coded coordinates suitable for the demo mat.  Each zone is 0.9×1.1 m
 # with a 15×15 cm AprilTag at the centre of its approach face.  The robot
@@ -189,6 +205,11 @@ class BrainNode(Node):
         self._route_plan: RoutePlan | None = None
         self._route_config_error: str | None = None
         self._load_demo_route()
+
+        # Bounded Auto demo (1.0 m × 0.5 m around Home). Manual is untouched.
+        self._standalone_demo_task: asyncio.Task[None] | None = None
+        self._standalone_demo_active = False
+        self._geofence_breach = False
 
         # ── Operator navigation: web_bridge → /brain/navigate_cmd ──────────
         # Payload JSON: {"action":"navigate","x":1.5,"y":2.0,"theta":0.0}
@@ -376,13 +397,97 @@ class BrainNode(Node):
         was_auto = self._app_auto_mode
         self._app_auto_mode = (mode == 'AUTO')
         if self._app_auto_mode and not was_auto:
-            self.get_logger().info('App switched to AUTO — autonomous tasks enabled')
+            self.get_logger().info('App switched to AUTO — starting bounded demo')
+            self._start_standalone_demo()
         elif not self._app_auto_mode and was_auto:
             self.get_logger().info('App switched to MANUAL — cancelling autonomous tasks')
+            self._cancel_standalone_demo()
             if self._autonomous_task is not None and not self._autonomous_task.done():
                 self._autonomous_task.cancel()
                 asyncio.create_task(self._stop())
                 self.transition_to(BrainState.IDLE, 'switched to MANUAL')
+
+    def _start_standalone_demo(self) -> None:
+        """Schedule the bounded Auto demo on the shared asyncio loop."""
+        if self._demo_task is not None and not self._demo_task.done():
+            return
+        if self._standalone_demo_task is not None and not self._standalone_demo_task.done():
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self.get_logger().warn('AUTO requested before asyncio loop is ready')
+            return
+        loop.call_soon_threadsafe(self._create_standalone_demo_task)
+
+    def _create_standalone_demo_task(self) -> None:
+        if self._demo_task is not None and not self._demo_task.done():
+            return
+        self._demo_cancel = False
+        self._demo_task = asyncio.create_task(self.run_demo_mode())
+        self._standalone_demo_task = self._demo_task
+
+    def _cancel_standalone_demo(self) -> None:
+        self._standalone_demo_active = False
+        self._demo_cancel = True
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._cancel_demo_tasks_on_loop)
+        self._schedule_async(self._stop())
+
+    def _cancel_demo_tasks_on_loop(self) -> None:
+        for task in (self._standalone_demo_task, self._demo_task):
+            if task is not None and not task.done():
+                task.cancel()
+        self._standalone_demo_task = None
+
+    def _auto_fence_pose(self, x: float, y: float) -> tuple[float, float] | None:
+        """Project a map-frame point into Home-relative fence coordinates."""
+        if self._home_pose is None:
+            return None
+        hx, hy, htheta = self._home_pose
+        dx = x - hx
+        dy = y - hy
+        local_x = dx * math.cos(htheta) + dy * math.sin(htheta)
+        local_y = -dx * math.sin(htheta) + dy * math.cos(htheta)
+        return (local_x, local_y)
+
+    def _inside_auto_fence(self, x: float, y: float, margin: float | None = None) -> bool:
+        """True if (x, y) is inside the Auto rectangle around Home."""
+        local = self._auto_fence_pose(x, y)
+        if local is None:
+            return False
+        pad = AUTO_FENCE_MARGIN_M if margin is None else margin
+        half_l = max(0.05, AUTO_FENCE_LENGTH_M / 2.0 - pad)
+        half_w = max(0.05, AUTO_FENCE_WIDTH_M / 2.0 - pad)
+        return abs(local[0]) <= half_l and abs(local[1]) <= half_w
+
+    def _auto_fence_blocks_goal(self, x: float, y: float) -> bool:
+        """Reject Auto Nav2 goals that sit outside the demonstration mat."""
+        if not self._app_auto_mode:
+            return False
+        if self._inside_auto_fence(x, y):
+            return False
+        self.get_logger().error(
+            f'AUTO geofence: goal ({x:.2f}, {y:.2f}) is outside '
+            f'{AUTO_FENCE_LENGTH_M:.2f}×{AUTO_FENCE_WIDTH_M:.2f} m around Home')
+        return True
+
+    def _auto_fence_blocks_pose(self) -> bool:
+        """Hard-stop Auto motion if the live pose leaves the mat."""
+        if not self._app_auto_mode:
+            return False
+        pose = self._get_robot_pose()
+        if pose is None:
+            return False
+        if self._inside_auto_fence(pose[0], pose[1], margin=0.0):
+            self._geofence_breach = False
+            return False
+        if not self._geofence_breach:
+            self._geofence_breach = True
+            self.get_logger().error(
+                f'AUTO geofence breach at ({pose[0]:.2f}, {pose[1]:.2f}) — stopping')
+            self._schedule_async(self._stop())
+        return True
 
     # ── Error reporting ─────────────────────────────────────────────────
 
@@ -546,6 +651,10 @@ class BrainNode(Node):
                 if self._nav_cancel_requested or self._is_motion_locked():
                     navigator.cancelTask()
                     return False
+                if self._auto_fence_blocks_pose():
+                    navigator.cancelTask()
+                    self.get_logger().error('Nav2 goal cancelled by AUTO geofence')
+                    return False
                 now = time.monotonic()
                 if now - start > 300.0 or now - last_progress > 10.0:
                     self.get_logger().error('Nav2 goal timed out or made no progress')
@@ -586,6 +695,8 @@ class BrainNode(Node):
             self.get_logger().warn(
                 f'drive({vx:.0f},{vy:.0f},{omega:.0f}) BLOCKED — '
                 f'motion locked (e_stop={self._e_stop_latched}, stale={self._bridge_stale_latched})')
+            return
+        if self._auto_fence_blocks_pose():
             return
         await self._bridge.move(vx, vy, omega)
 
@@ -1254,6 +1365,7 @@ class BrainNode(Node):
         command = msg.data.strip().upper()
         if command == 'STOP':
             self._demo_cancel = True
+            self._cancel_standalone_demo()
             self._cancel_warehouse_mission()
             if self._demo_task is not None and not self._demo_task.done():
                 self._demo_task.cancel()
@@ -1270,14 +1382,19 @@ class BrainNode(Node):
                 self.get_logger().warn('Demo already running — ignoring FULL')
                 return
             self._demo_cancel = False
-            self._demo_task = asyncio.create_task(self.run_demo())
+            if self._app_auto_mode:
+                self._demo_task = asyncio.create_task(self.run_demo_mode())
+                self._standalone_demo_task = self._demo_task
+            else:
+                self._demo_task = asyncio.create_task(self.run_demo())
             return
         if command in DEMO_ZONES:
             if self._demo_task is not None and not self._demo_task.done():
                 self.get_logger().warn('Demo already running — ignoring zone command')
                 return
             self._demo_cancel = False
-            self._demo_task = asyncio.create_task(self.deliver_to_zone(command))
+            self._demo_task = asyncio.create_task(
+                self.deliver_to_zone(command, bounded_auto=self._app_auto_mode))
             return
         self.get_logger().warn(f'Unknown demo command: {msg.data!r}')
 
@@ -1376,7 +1493,8 @@ class BrainNode(Node):
         await self._operator_navigate(hx, hy, ht)
 
     async def deliver_to_zone(self, zone_id: str,
-                              return_home: bool = True) -> bool:
+                              return_home: bool = True,
+                              bounded_auto: bool = False) -> bool:
         """Navigate to one configured zone, dock with its tag, and unload.
 
         Nav2 handles the coarse map-frame trip.  AprilTag + VL53L0X provide
@@ -1386,7 +1504,24 @@ class BrainNode(Node):
         """
         zone_id = zone_id.upper()
         zone = DEMO_ZONES.get(zone_id)
-        if self._route_plan is not None:
+        if bounded_auto:
+            if self._home_pose is None:
+                self._publish_demo_status('FAILED', zone_id,
+                                          'Chưa có Home pose để khóa khung Auto')
+                return False
+            relative = AUTO_DEMO_ZONES.get(zone_id)
+            if relative is None:
+                return False
+            hx, hy, htheta = self._home_pose
+            rx, ry, rtheta = relative
+            zone = {
+                'x': hx + rx * math.cos(htheta) - ry * math.sin(htheta),
+                'y': hy + rx * math.sin(htheta) + ry * math.cos(htheta),
+                'theta': htheta + rtheta,
+                'tag_id': DEMO_ZONES[zone_id]['tag_id'],
+                'label': f'Khu {zone_id} (khung Auto)',
+            }
+        if not bounded_auto and self._route_plan is not None:
             configured = next((item for item in self._route_plan.zones
                                if item.zone_id == zone_id), None)
             if configured is not None:
@@ -1415,6 +1550,19 @@ class BrainNode(Node):
                 zone['x'], zone['y'], zone['theta'])
             if not reached:
                 raise RuntimeError('Nav2 không đến được tọa độ khu đổ hàng')
+
+            if bounded_auto:
+                # Presentation mat is too small for AprilTag + cylinder dock.
+                # Auto only proves the 4 in-fence drop-off poses, then pauses.
+                self.transition_to(BrainState.IDLE, f'demo zone {zone_id} complete')
+                self._publish_demo_status('COMPLETED', zone_id,
+                                          f'Đã đến {zone["label"]}')
+                if return_home:
+                    self._publish_demo_status('RETURNING', zone_id, 'Đang về điểm S')
+                    if not await self._return_home():
+                        raise RuntimeError('Không thể quay về điểm xuất phát')
+                await self._stop()
+                return True
 
             self._publish_demo_status('SEARCHING_TAG', zone_id,
                                       f'Đang xác thực AprilTag ID {zone["tag_id"]}')
@@ -1465,8 +1613,66 @@ class BrainNode(Node):
             self._publish_demo_status('FAILED', zone_id, str(exc))
             return False
 
+    async def run_demo_mode(self) -> bool:
+        """AUTO presentation: Home → A → B → C → D → Home inside 1.0×0.5 m."""
+        if self._standalone_demo_active:
+            self.get_logger().warn('Bounded Auto demo already running')
+            return False
+
+        self._standalone_demo_active = True
+        self._geofence_breach = False
+        self.get_logger().info(
+            f'AUTO demo: {AUTO_FENCE_LENGTH_M:.2f}×{AUTO_FENCE_WIDTH_M:.2f} m around Home')
+        self._publish_demo_status(
+            'RUNNING',
+            message=f'Auto trong khung {AUTO_FENCE_LENGTH_M:.1f}×{AUTO_FENCE_WIDTH_M:.1f} m')
+
+        try:
+            deadline = time.time() + 15.0
+            while self._home_pose is None and time.time() < deadline:
+                if self._demo_cancel or not self._standalone_demo_active:
+                    return False
+                await asyncio.sleep(0.2)
+            if self._home_pose is None:
+                message = 'Chưa có Home pose — không khóa được khung Auto'
+                self._publish_demo_status('FAILED', message=message)
+                self.get_logger().error(message)
+                return False
+
+            zones = list(AUTO_DEMO_ZONES.keys())
+            for i, zone_id in enumerate(zones):
+                if self._demo_cancel or not self._standalone_demo_active:
+                    return False
+                self._publish_demo_status(
+                    'ZONE_START', zone_id, f'Chặng {i + 1}/{len(zones)}')
+                if not await self.deliver_to_zone(
+                        zone_id, return_home=False, bounded_auto=True):
+                    return False
+                await asyncio.sleep(1.0)
+
+            self._publish_demo_status('RETURNING', message='Đang về điểm xuất phát Home')
+            returned = await self._return_home()
+            await self._stop()
+            if returned:
+                self.transition_to(BrainState.IDLE, 'bounded auto demo complete')
+                self._publish_demo_status(
+                    'COMPLETED', message='Hoàn tất Auto ' + '→'.join(zones))
+            return returned
+        except asyncio.CancelledError:
+            await self._stop()
+            self.transition_to(BrainState.IDLE, 'bounded auto demo cancelled')
+            raise
+        except Exception as exc:
+            self.get_logger().error(f'Bounded Auto demo failed: {exc}')
+            await self._stop()
+            self.transition_to(BrainState.ERROR, 'bounded auto demo failed')
+            self._publish_demo_status('FAILED', message=str(exc))
+            return False
+        finally:
+            self._standalone_demo_active = False
+
     async def run_demo(self) -> bool:
-        """Run Home → A → B → C → D → Home in the configured order."""
+        """Run Home → A → B → C → D → Home in the configured warehouse order."""
         if self._route_plan is None:
             self._publish_demo_status('FAILED', message=self._route_config_error or
                                       'Không có cấu hình route')
@@ -1988,7 +2194,7 @@ class BrainNode(Node):
         except Exception:
             pass
 
-    def _on_esp32_health(self, msg: String) -> None:
+    async def _on_esp32_health(self, msg: String) -> None:
         """React to bridge health snapshot.
 
         HEALTHY → clear stale latch (recovery path).
@@ -2145,6 +2351,8 @@ class BrainNode(Node):
         """Send a drive command only if path is clear.  Returns False
         if obstacle detected (caller should stop or replan).
         """
+        if self._auto_fence_blocks_pose():
+            return False
         if self._obstacle_blocking():
             self.get_logger().warn(
                 f'obstacle blocking — refusing drive vx={vx} vy={vy} omega={omega}')
@@ -2193,6 +2401,7 @@ class BrainNode(Node):
         while rclpy.ok():
             try:
                 if (self._app_auto_mode
+                        and self._standalone_demo_active is False
                         and self._state == BrainState.IDLE
                         and self._autonomous_task is None):
                     await self._poll_cargo_sensor()
@@ -2694,6 +2903,11 @@ class BrainNode(Node):
           - If blocked, send a short escape maneuver (~500ms)
           - Then let Nav2 take over
         """
+        if self._auto_fence_blocks_goal(x, y):
+            await self._stop()
+            self._publish_demo_status('FAILED', message='Mục tiêu nằm ngoài khung Auto')
+            return False
+
         # Pre-flight: check LiDAR + ESP32 sensors before Nav2
         replan = await self._replan_escape_if_blocked()
         if replan:
@@ -2744,6 +2958,11 @@ async def _run_async(node: BrainNode) -> None:
     # (_on_esp32_e_stop, _on_esp32_health) can schedule async work
     # via BrainNode._schedule_async() without calling get_event_loop().
     BrainNode._loop = asyncio.get_running_loop()
+
+    # AUTO may have been selected while ROS was starting; replay it now that
+    # the shared asyncio loop can safely own the demo task.
+    if node._app_auto_mode:
+        node._start_standalone_demo()
 
     node.get_logger().info('Attempting initial API connection...')
     await node._api_client.connect()

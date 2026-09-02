@@ -116,4 +116,7 @@ private:
     static constexpr size_t CMD_BUFFER_SIZE = 256;
     char buffer_[CMD_BUFFER_SIZE];
     size_t buffer_index_;
+    // Discard an oversized frame through its newline so a truncated command
+    // can never be parsed or joined with the following frame.
+    bool discard_until_terminator_;
 };
