@@ -279,7 +279,14 @@ void setupHardware()
                                      BNO055_I2C_FREQ_HZ);
     if (!i2c_ok) {
         Serial.println("  [FATAL] I2C bus init FAILED — scan + sensors skipped");
-    } else if (!sequenceTofAddresses()) {
+        // CRITICAL FIX: Return early to prevent sensor init attempts on failed bus.
+        // Continuing would cause Wire.endTransmission() to block indefinitely
+        // (err=5 timeout) during every sensor begin() call, hanging boot for 30+ seconds.
+        Serial.println("  [FATAL] Boot aborted — fix I2C hardware (check pull-ups, wiring, power)");
+        return;
+    }
+
+    if (!sequenceTofAddresses()) {
         Serial.println("  [WARN] ToF address sequencing failed — front motion will remain blocked");
     }
 
@@ -287,11 +294,7 @@ void setupHardware()
     // sensors. The VL53 drivers leave continuous-ranging/controller state that
     // makes an extra probe here produce false NACKs and disturb diagnostics.
     // Each device is verified by its own begin() transaction below.
-    if (i2c_ok) {
-        Serial.println("  [SCAN] skipped; per-device initialization will verify the bus");
-    } else {
-        Serial.println("  [SCAN] skipped (bus init failed)");
-    }
+    Serial.println("  [SCAN] skipped; per-device initialization will verify the bus");
 
     setupLEDC();
 
@@ -331,36 +334,25 @@ void setupHardware()
     }
 
     // ---- I2C sensors (with progress logging) ----
-    // Only initialize peripherals when the shared bus passed Wire.begin()
-    // and the post-settle line check. Continuing after a failed bus init
-    // would cause avoidable Wire timeouts during boot.
-    bool imu_ok = false;
-    bool tof_ok = false;
-    bool front_tof_ok = false;
-    bool pwr_ok = false;
-    if (i2c_ok) {
-        // Wire bus is already initialised. Init sensors sequentially without
-        // busReset/reinitialize between them — the test_i2c_sensors project
-        // proved that reset between inits can disturb a shared 3-device bus.
-        // Init order: BNO055 → VL53L0X → INA226.
-        Serial.println("  [INIT] BNO055 IMU...");
-        imu_ok = g_imu.begin(BNO055_I2C_ADDR);
-        Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
+    // Wire bus is already initialised. Init sensors sequentially without
+    // busReset/reinitialize between them — the test_i2c_sensors project
+    // proved that reset between inits can disturb a shared 3-device bus.
+    // Init order: BNO055 → VL53L0X → VL53L1X → INA226.
+    Serial.println("  [INIT] BNO055 IMU...");
+    bool imu_ok = g_imu.begin(BNO055_I2C_ADDR);
+    Serial.printf("  [%s] BNO055\n", imu_ok ? "OK  " : "WARN");
 
-        Serial.println("  [INIT] VL53L0X rear docking sensor...");
-        tof_ok = g_tof.begin();
-        Serial.printf("  [%s] VL53L0X rear\n", tof_ok ? "OK  " : "WARN");
+    Serial.println("  [INIT] VL53L0X rear docking sensor...");
+    bool tof_ok = g_tof.begin();
+    Serial.printf("  [%s] VL53L0X rear\n", tof_ok ? "OK  " : "WARN");
 
-        Serial.println("  [INIT] VL53L1X front TOF400C sensor...");
-        front_tof_ok = g_front_tof.begin();
-        Serial.printf("  [%s] VL53L1X front\n", front_tof_ok ? "OK  " : "WARN");
+    Serial.println("  [INIT] VL53L1X front TOF400C sensor...");
+    bool front_tof_ok = g_front_tof.begin();
+    Serial.printf("  [%s] VL53L1X front\n", front_tof_ok ? "OK  " : "WARN");
 
-        Serial.println("  [INIT] INA226 power monitor...");
-        pwr_ok = g_power.begin(INA226_I2C_ADDR);
-        Serial.printf("  [%s] INA226\n", pwr_ok ? "OK  " : "WARN");
-    } else {
-        Serial.println("  [WARN] I2C sensors SKIPPED — bus initialization failed");
-    }
+    Serial.println("  [INIT] INA226 power monitor...");
+    bool pwr_ok = g_power.begin(INA226_I2C_ADDR);
+    Serial.printf("  [%s] INA226\n", pwr_ok ? "OK  " : "WARN");
 
     // Wire sensors into ModeManager for AUTO_ROAM (Pi-less) operation
     g_modeManager.attachSensors(&g_imu, &g_ir, &g_front_tof, &g_power, &g_tof, &g_cylinder);

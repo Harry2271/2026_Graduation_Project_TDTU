@@ -186,10 +186,8 @@ void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
             // little and strafe right, away from the blocked corner. Cap
             // any remaining forward command so Nav2 cannot push the FL
             // wheel into a pallet leg that the front ToF cannot see.
-            // FIX: Only cap if vx is positive, then zero it
             if (vx > 0) {
                 vx = (vx > FRONT_CORNER_FORWARD_CAP) ? FRONT_CORNER_FORWARD_CAP : vx;
-                vx = 0;  // Then hard-stop forward motion
             }
             vy = 120;
             omega = 40;
@@ -197,10 +195,8 @@ void ObstacleAvoidance::applyToCommand(int16_t& vx, int16_t& vy, int16_t& omega,
 
         case ObstacleDirection::FRONT_RIGHT:
             // FR-corner obstacle: mirror of FRONT_LEFT.
-            // FIX: Only cap if vx is positive, then zero it
             if (vx > 0) {
                 vx = (vx > FRONT_CORNER_FORWARD_CAP) ? FRONT_CORNER_FORWARD_CAP : vx;
-                vx = 0;  // Then hard-stop forward motion
             }
             vy = -120;
             omega = -40;

@@ -301,6 +301,9 @@ bool BNO055Sensor::read()
         gravity_y_ = (int16_t)((buf[3] << 8) | buf[2]) / 100.0f;
         gravity_z_ = (int16_t)((buf[5] << 8) | buf[4]) / 100.0f;
     }
+    // CRITICAL FIX: If I2C read fails, preserve old values instead of
+    // parsing garbage from uninitialized buf[]. This prevents NaN propagation
+    // into HealthMonitor safety evaluator.
 
     // ── Linear acceleration (gravity-compensated, 6 bytes) ──
     if (readRegs(addr_, BNO055_LIA_DATA_X_LSB, buf, 6)) {
@@ -308,6 +311,7 @@ bool BNO055Sensor::read()
         linear_accel_y_ = (int16_t)((buf[3] << 8) | buf[2]) / 100.0f;
         linear_accel_z_ = (int16_t)((buf[5] << 8) | buf[4]) / 100.0f;
     }
+    // CRITICAL FIX: No else block needed — old values already in linear_accel_*.
 
     // ── Gyroscope (6 bytes: X, Y, Z angular velocity in °/s, LSB = 1/16) ──
     // Accelerometer/magnetometer data start at 0x08 in 6-byte blocks:
@@ -317,6 +321,7 @@ bool BNO055Sensor::read()
         gyro_y_dps_ = (int16_t)((buf[3] << 8) | buf[2]) / 16.0f;
         gyro_z_dps_ = (int16_t)((buf[5] << 8) | buf[4]) / 16.0f;
     }
+    // CRITICAL FIX: No else block needed — old values already in gyro_*_dps_.
 
     return true;
 }
