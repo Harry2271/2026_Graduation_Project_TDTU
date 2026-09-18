@@ -986,6 +986,7 @@ class MirrorBridge:
         self.on_firmware_error: Callable[[dict], None] = lambda _d: None
         self.on_ir:             Callable[[dict], None] = lambda _d: None
         self.on_sharp:          Callable[[dict], None] = lambda _d: None
+        self.on_front_tof:      Callable[[dict], None] = lambda _d: None
         self.on_tof:            Callable[[dict], None] = lambda _d: None
         self.on_cylinder:       Callable[[dict], None] = lambda _d: None
         self.on_health:         Callable[[dict], None] = lambda _d: None
