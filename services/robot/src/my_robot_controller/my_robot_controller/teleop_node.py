@@ -120,7 +120,11 @@ class TeleopNode(Node):
         """Convert MANUAL or Nav2 /cmd_vel to ESP32 move commands."""
         # /cmd_vel is operator input in MANUAL and Nav2 output in AUTO.
         # The mode switch changes publisher authority, not this safety bridge.
-        if self._bridge is None or not self._connected:
+        if self._bridge is None:
+            self.get_logger().warn('cmd_vel received but bridge is None')
+            return
+        if not self._connected:
+            self.get_logger().warn('cmd_vel received but bridge not connected')
             return
 
         # Scale: m/s → PWM units
@@ -135,6 +139,10 @@ class TeleopNode(Node):
 
         self._last_cmd_vel_time = self.get_clock().now().nanoseconds / 1e9
         self._stopping = False
+
+        self.get_logger().debug(
+            f'cmd_vel: mode={self._mode} vx={vx} vy={vy} omega={omega} '
+            f'(from linear.x={msg.linear.x:.3f} linear.y={msg.linear.y:.3f} angular.z={msg.angular.z:.3f})')
 
         loop = asyncio.get_event_loop()
         loop.create_task(self._send_move(vx, vy, omega))
@@ -210,6 +218,7 @@ class TeleopNode(Node):
         if self._bridge and self._connected:
             try:
                 await self._bridge.move(vx, vy, omega)
+                self.get_logger().debug(f'Sent move via MirrorBridge: vx={vx} vy={vy} omega={omega}')
             except Exception as e:
                 self.get_logger().error(f'move failed: {e}')
 

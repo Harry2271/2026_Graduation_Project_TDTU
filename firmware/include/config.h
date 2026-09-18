@@ -304,9 +304,9 @@ enum MotorState {
 #define IR_LEFT_PIN           45       // Strapping pin — safe as input after boot
 #define IR_RIGHT_PIN          46       // Strapping pin — safe as input after boot
 // GPIO45 is a strapping pin and reads LOW on this board when no E18 is
-// connected. Keep this channel disabled until an external 3.3V-safe E18
-// output and pull-up are physically installed.
-#define IR_LEFT_ENABLED       0
+// connected. Requires external 3.3V-safe E18 output and pull-up resistor.
+// ⚠️ ENABLED: Ensure hardware is installed before flashing firmware.
+#define IR_LEFT_ENABLED       1
 #define CARGO_SENSOR_PIN      36       // Cargo microswitch, INPUT_PULLUP
 
 // ============================================================

@@ -90,12 +90,12 @@
 
 ## IR Proximity Sensors — 4× E18-D80NK
 
-| Position | GPIO | Description | Detect Range |
-|----------|------|-------------|-------------|
-| **REAR_LEFT** | GPIO **1** | Behind-left corner | ~8 cm (tunable) |
-| **REAR_RIGHT** | GPIO **37** | Behind-right corner | ~8 cm (tunable) |
-| **LEFT** | GPIO **45** | Left side | ~5 cm (tunable) |
-| **RIGHT** | GPIO **46** | Right side | ~5 cm (tunable) |
+| Position | GPIO | Description | Detect Range | Status |
+|----------|------|-------------|-------------|--------|
+| **REAR_LEFT** | GPIO **1** | Behind-left corner | ~8 cm (tunable) | ✅ Active |
+| **REAR_RIGHT** | GPIO **37** | Behind-right corner | ~8 cm (tunable) | ✅ Active |
+| **LEFT** | GPIO **45** | Left side | ~5 cm (tunable) | ✅ **ENABLED** |
+| **RIGHT** | GPIO **46** | Right side | ~5 cm (tunable) | ✅ Active |
 
 ### E18-D80NK Wiring
 
@@ -112,8 +112,9 @@
 - Active-LOW: `LOW` = obstacle detected, `HIGH` = clear
 - Polled at 50 Hz (`IR_SENSOR_POLL_MS = 20`)
 - Debounce: 50 ms (`IR_DEBOUNCE_MS`)
+- **All 4 sensors enabled** — `IR_LEFT_ENABLED = 1` (firmware re-enabled Sept 2026)
 
-> ⚠️ GPIO 45 & 46 are **strapping pins** — safe as input after boot completes.
+> ⚠️ GPIO 45 & 46 are **strapping pins** — safe as input after boot completes. GPIO 45 requires external 3.3V-safe E18-D80NK output with proper pull-up resistor (2.2kΩ–4.7kΩ to 3.3V recommended).
 
 ---
 
@@ -496,8 +497,8 @@ idle → adjusting → extending → holding → retracting → done →
 | **41** | Encoder FL CHB | INPUT | PCNT unit 0 |
 | **42** | Encoder FR CHA | INPUT | PCNT unit 1 |
 | **43** | UART0 TX → CH343/Pi | OUTPUT | Serial telemetry/commands; do not use for XSHUT |
-| **44** | Cylinder retract limit | INPUT | INPUT_PULLUP, active LOW, debounced 100 ms; unavailable for UART RX fallback |
-| **45** | IR LEFT | INPUT | Strapping pin — safe after boot |
+| **44** | Cylinder retract limit | INPUT | INPUT_PULLUP, active LOW, debounced 100 ms; safe for use with USB CDC transport |
+| **45** | IR LEFT | INPUT | Strapping pin — safe after boot; **ENABLED** (requires 3.3V-safe E18 + pull-up) |
 | **46** | IR RIGHT | INPUT | Strapping pin — safe after boot |
 | **47** | Motor RR EN | OUTPUT | BTS7960 enable |
 | **48** | Motor RL EN | OUTPUT | BTS7960 enable |

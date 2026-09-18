@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIoT Robot AGV — Mô hình 3D</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --surface-0: #05070C;
+      --surface-1: #0A0D12;
+      --surface-2: #0F131C;
+      --surface-3: #161D2B;
+      --surface-4: #1E2636;
+      --accent: #38BDF8;
+      --accent-dim: #1E4A66;
+      --text: #E8EBF0;
+      --text-dim: #9BA3B2;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, var(--surface-0) 0%, var(--surface-1) 100%);
+      color: var(--text);
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    #info-panel {
+      position: absolute;
+      top: clamp(1rem, 2vw, 2rem);
+      left: clamp(1rem, 2vw, 2rem);
+      background: rgba(15, 19, 28, 0.92);
+      backdrop-filter: blur(12px);
+      padding: clamp(1.25rem, 3vw, 2rem);
+      border-radius: 16px;
+      border: 1px solid rgba(56, 189, 248, 0.15);
+      max-width: min(360px, calc(100vw - 4rem));
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    h1 {
+      font-size: clamp(1.25rem, 3.5vw, 1.75rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.75rem;
+      color: var(--accent);
+    }
+
+    .spec-grid {
+      display: grid;
+      gap: 0.625rem;
+      margin-top: 1rem;
+    }
+
+    .spec-item {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.75rem;
+      padding: 0.625rem;
+      background: rgba(30, 38, 54, 0.5);
+      border-radius: 8px;
+      font-size: clamp(0.8125rem, 2vw, 0.875rem);
+      line-height: 1.5;
+    }
+
+    .spec-label {
+      color: var(--text-dim);
+      font-weight: 500;
+    }
+
+    .spec-value {
+      color: var(--text);
+      text-align: right;
+      font-weight: 600;
+    }
+
+    .controls {
+      margin-top: 1.25rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid rgba(56, 189, 248, 0.15);
+      font-size: clamp(0.75rem, 1.8vw, 0.8125rem);
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div id="info-panel">
+    <h1>Robot AGV Logistics</h1>
+    <div class="badge">Mô hình 3D Tương tác</div>
+
+    <div class="spec-grid">
+      <div class="spec-item">
+        <span class="spec-label">Khung xe</span>
+        <span class="spec-value">50×40×30 cm</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">Bánh xe</span>
+        <span class="spec-value">4× Mecanum 97mm</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">LiDAR</span>
+        <span class="spec-value">RPLIDAR A1M8</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">Vi xử lý</span>
+        <span class="spec-value">Pi 5 + ESP32-S3</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">Cánh tay</span>
+        <span class="spec-value">5 bậc tự do</span>
+      </div>
+      <div class="spec-item">
+        <span class="spec-label">Camera</span>
+        <span class="spec-value">Logitech BRIO 100</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <strong>Điều khiển:</strong><br>
+      • Kéo chuột để xoay mô hình<br>
+      • Cuộn chuột để phóng to/thu nhỏ<br>
+      • Chuột phải để di chuyển
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05070C);
+    scene.fog = new THREE.Fog(0x05070C, 10, 50);
+
+    const camera = new THREE.PerspectiveCamera(
+      45,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.set(1.2, 0.8, 1.5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 0.15, 0);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x9BA3B2, 0.6);
+    scene.add(ambientLight);
+
+    const keyLight = new THREE.DirectionalLight(0x38BDF8, 1.2);
+    keyLight.position.set(3, 4, 2);
+    keyLight.castShadow = true;
+    keyLight.shadow.camera.left = -2;
+    keyLight.shadow.camera.right = 2;
+    keyLight.shadow.camera.top = 2;
+    keyLight.shadow.camera.bottom = -2;
+    keyLight.shadow.mapSize.width = 2048;
+    keyLight.shadow.mapSize.height = 2048;
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0x6EE7B7, 0.4);
+    fillLight.position.set(-2, 2, -3);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight(0xE9A568, 0.3);
+    rimLight.position.set(0, 1, -4);
+    scene.add(rimLight);
+
+    // Ground plane
+    const groundGeometry = new THREE.PlaneGeometry(20, 20);
+    const groundMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0A0D12,
+      roughness: 0.8,
+      metalness: 0.2
+    });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Grid helper
+    const gridHelper = new THREE.GridHelper(4, 20, 0x38BDF8, 0x161D2B);
+    gridHelper.material.opacity = 0.3;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+
+    // Materials
+    const chassisMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1E2636,
+      roughness: 0.3,
+      metalness: 0.7
+    });
+
+    const cargoMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0F131C,
+      roughness: 0.4,
+      metalness: 0.6
+    });
+
+    const accentMaterial = new THREE.MeshStandardMaterial({
+      color: 0x38BDF8,
+      roughness: 0.2,
+      metalness: 0.8,
+      emissive: 0x38BDF8,
+      emissiveIntensity: 0.2
+    });
+
+    const wheelMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0A0D12,
+      roughness: 0.9,
+      metalness: 0.1
+    });
+
+    // Main chassis (50cm L × 40cm W × 30cm H = 0.5×0.4×0.3m)
+    const chassisGeometry = new THREE.BoxGeometry(0.5, 0.05, 0.4);
+    const chassis = new THREE.Mesh(chassisGeometry, chassisMaterial);
+    chassis.position.y = 0.15;
+    chassis.castShadow = true;
+    chassis.receiveShadow = true;
+    scene.add(chassis);
+
+    // Cargo bed at the back (0.25m L × 0.35m W × 0.15m H)
+    const cargoGeometry = new THREE.BoxGeometry(0.25, 0.15, 0.35);
+    const cargoBed = new THREE.Mesh(cargoGeometry, cargoMaterial);
+    cargoBed.position.set(-0.125, 0.25, 0);
+    cargoBed.castShadow = true;
+    scene.add(cargoBed);
+
+    // Cargo bed walls (thin boxes)
+    const wallMaterial = new THREE.MeshStandardMaterial({
+      color: 0x161D2B,
+      roughness: 0.5,
+      metalness: 0.5,
+      side: THREE.DoubleSide
+    });
+
+    // Back wall
+    const backWall = new THREE.Mesh(
+      new THREE.BoxGeometry(0.25, 0.15, 0.01),
+      wallMaterial
+    );
+    backWall.position.set(-0.125, 0.25, -0.175);
+    backWall.castShadow = true;
+    scene.add(backWall);
+
+    // Left wall
+    const leftWall = new THREE.Mesh(
+      new THREE.BoxGeometry(0.01, 0.15, 0.35),
+      wallMaterial
+    );
+    leftWall.position.set(-0.125, 0.25, -0.175);
+    leftWall.castShadow = true;
+    scene.add(leftWall);
+
+    // Right wall
+    const rightWall = leftWall.clone();
+    rightWall.position.set(-0.125, 0.25, 0.175);
+    scene.add(rightWall);
+
+    // Mecanum wheels (4× 97mm diameter = 0.097m)
+    const wheelRadius = 0.0485;
+    const wheelWidth = 0.04;
+    const wheelGeometry = new THREE.CylinderGeometry(
+      wheelRadius,
+      wheelRadius,
+      wheelWidth,
+      24
+    );
+
+    const wheelPositions = [
+      { x: 0.2, z: 0.22, name: 'FL' },   // Front-left
+      { x: 0.2, z: -0.22, name: 'FR' },  // Front-right
+      { x: -0.2, z: 0.22, name: 'RL' },  // Rear-left
+      { x: -0.2, z: -0.22, name: 'RR' }  // Rear-right
+    ];
+
+    wheelPositions.forEach(pos => {
+      const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(pos.x, 0.0485, pos.z);
+      wheel.castShadow = true;
+      scene.add(wheel);
+
+      // Roller detail (mecanum characteristic)
+      const rollerGroup = new THREE.Group();
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const roller = new THREE.Mesh(
+          new THREE.BoxGeometry(0.01, 0.008, 0.05),
+          new THREE.MeshStandardMaterial({ color: 0x6EE7B7, roughness: 0.6 })
+        );
+        const radius = wheelRadius + 0.003;
+        roller.position.set(
+          Math.cos(angle) * radius,
+          0,
+          Math.sin(angle) * radius
+        );
+        roller.rotation.y = angle + Math.PI / 4;
+        rollerGroup.add(roller);
+      }
+      rollerGroup.rotation.z = Math.PI / 2;
+      rollerGroup.position.copy(wheel.position);
+      scene.add(rollerGroup);
+    });
+
+    // LiDAR on top (RPLIDAR A1M8)
+    const lidarBody = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 0.035, 32),
+      accentMaterial
+    );
+    lidarBody.position.set(0.15, 0.22, 0);
+    lidarBody.castShadow = true;
+    scene.add(lidarBody);
+
+    // LiDAR spinning head
+    const lidarHead = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.025, 0.025, 0.01, 32),
+      new THREE.MeshStandardMaterial({
+        color: 0x0A0D12,
+        roughness: 0.1,
+        metalness: 0.9
+      })
+    );
+    lidarHead.position.set(0.15, 0.24, 0);
+    scene.add(lidarHead);
+
+    // Camera (Logitech BRIO 100)
+    const cameraBody = new THREE.Mesh(
+      new THREE.BoxGeometry(0.06, 0.025, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0x0A0D12, roughness: 0.3 })
+    );
+    cameraBody.position.set(0.22, 0.2, 0);
+    cameraBody.castShadow = true;
+    scene.add(cameraBody);
+
+    // Camera lens
+    const lens = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.008, 0.008, 0.01, 16),
+      new THREE.MeshStandardMaterial({
+        color: 0x1E4A66,
+        roughness: 0.1,
+        metalness: 0.9
+      })
+    );
+    lens.rotation.z = Math.PI / 2;
+    lens.position.set(0.235, 0.2, 0);
+    scene.add(lens);
+
+    // Robotic arm base (5 DOF)
+    const armBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.03, 0.035, 0.04, 16),
+      chassisMaterial
+    );
+    armBase.position.set(0.1, 0.2, 0);
+    armBase.castShadow = true;
+    scene.add(armBase);
+
+    // Arm segments
+    const segment1 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.015, 0.08, 0.015),
+      accentMaterial
+    );
+    segment1.position.set(0.1, 0.26, 0);
+    segment1.castShadow = true;
+    scene.add(segment1);
+
+    const segment2 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012, 0.06, 0.012),
+      accentMaterial
+    );
+    segment2.position.set(0.12, 0.3, 0);
+    segment2.rotation.z = Math.PI / 6;
+    segment2.castShadow = true;
+    scene.add(segment2);
+
+    // End effector
+    const gripper = new THREE.Mesh(
+      new THREE.BoxGeometry(0.02, 0.015, 0.03),
+      new THREE.MeshStandardMaterial({ color: 0xE9A568, roughness: 0.4 })
+    );
+    gripper.position.set(0.15, 0.33, 0);
+    gripper.castShadow = true;
+    scene.add(gripper);
+
+    // Electronics box (Pi 5 + ESP32)
+    const electronicsBox = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.04, 0.1),
+      new THREE.MeshStandardMaterial({ color: 0x161D2B, roughness: 0.5 })
+    );
+    electronicsBox.position.set(0, 0.2, -0.05);
+    electronicsBox.castShadow = true;
+    scene.add(electronicsBox);
+
+    // Status LED indicators
+    const ledMaterial = new THREE.MeshStandardMaterial({
+      color: 0x6EE7B7,
+      emissive: 0x6EE7B7,
+      emissiveIntensity: 0.8
+    });
+    const led = new THREE.Mesh(
+      new THREE.SphereGeometry(0.005, 16, 16),
+      ledMaterial
+    );
+    led.position.set(0.05, 0.22, -0.05);
+    scene.add(led);
+
+    // IR sensors (4× on corners)
+    const irPositions = [
+      { x: 0.24, z: 0.19 },
+      { x: 0.24, z: -0.19 },
+      { x: -0.24, z: 0.19 },
+      { x: -0.24, z: -0.19 }
+    ];
+
+    irPositions.forEach(pos => {
+      const ir = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.008, 0.008, 0.025, 12),
+        new THREE.MeshStandardMaterial({ color: 0x0A0D12, roughness: 0.6 })
+      );
+      ir.position.set(pos.x, 0.17, pos.z);
+      ir.castShadow = true;
+      scene.add(ir);
+    });
+
+    // Animation loop
+    let time = 0;
+    function animate() {
+      requestAnimationFrame(animate);
+      time += 0.01;
+
+      // Rotate LiDAR head
+      lidarHead.rotation.y = time * 2;
+
+      // Pulse LED
+      led.material.emissiveIntensity = 0.5 + Math.sin(time * 3) * 0.3;
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+  </script>
+</body>
+</html>

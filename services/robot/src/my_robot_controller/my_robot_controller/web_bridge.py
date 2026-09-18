@@ -388,6 +388,7 @@ class WebBridge(Node):
             t.linear.y = float(vy) / 200.0
             t.angular.z = float(omega) * math.pi / 200.0
             self.teleop_pub.publish(t)
+            self.get_logger().debug(f'Published /cmd_vel: linear.x={t.linear.x:.3f} linear.y={t.linear.y:.3f} angular.z={t.angular.z:.3f}')
 
     def _poll_cylinder(self) -> None:
         """Drain cylinder queue (latest-wins) and publish String on /cylinder_cmd."""
@@ -508,6 +509,7 @@ class WSServer:
                         # Keyboard teleop from /map page.
                         # Only accepted in MANUAL mode.
                         if self._control_mode != 'MANUAL':
+                            print(f'[WS] teleop REJECTED: mode={self._control_mode} (need MANUAL)')
                             continue
                         # Expect: { type: "teleop", vx, vy, omega }  (all numbers, may be floats)
                         # We coerce to ints in [-255, 255] and queue them.
@@ -530,8 +532,9 @@ class WSServer:
                                 break
                         try:
                             self.teleop_q.put_nowait((vx, vy, omega))
+                            print(f'[WS] teleop QUEUED: vx={vx} vy={vy} omega={omega}')
                         except queue.Full:
-                            pass
+                            print(f'[WS] teleop queue FULL, dropped')
                         # No ack — keyboard teleop is fire-and-forget
 
                     elif msg_type == 'cylinder':
