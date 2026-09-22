@@ -51,17 +51,17 @@ void HealthMonitor::begin()
         1000,  // MOD_I2C_BUS        — check every 1s
     };
     const bool critical[MOD_COUNT] = {
-        true,   // IMU
+        false,  // IMU — allow motor-only operation without heading
         true,   // Encoders
         true,   // Motor driver
-        true,   // Battery (critical only)
+        false,  // Battery — allow PSU-only operation (no battery monitor)
         true,   // E-stop
         false,  // IR
         false,  // Front ToF
         false,  // TOF
         false,  // Cylinder
         false,  // Pi link (degrades, doesn't e-stop)
-        true,   // I2C bus (affects critical modules)
+        false,  // I2C bus — sensor absence is graceful, not fatal
     };
 
     uint32_t now = millis();
