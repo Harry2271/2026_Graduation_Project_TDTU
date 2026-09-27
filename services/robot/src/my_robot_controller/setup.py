@@ -43,6 +43,9 @@ setup(
             'esp32_telemetry_node = my_robot_controller.esp32_telemetry_node:main',
             'odom = my_robot_controller.odom_node:main',
             'teleop_node = my_robot_controller.teleop_node:main',
+            'vision_node = my_robot_controller.vision_node:main',
+            'motor_health_node = my_robot_controller.motor_health_node:main',
+            'voice_control_node = my_robot_controller.voice_control_node:main',
         ],
     },
 )

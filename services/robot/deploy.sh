@@ -190,6 +190,27 @@ pm2 start "bash" \
 # AprilTag reads the camera service snapshot, so it never opens /dev/video0.
 start_ros_node "${SERVICE_NAME_PREFIX}-vision" "APRILTAG_FAMILY=${APRILTAG_FAMILY:-tag36h11} CAMERA_SNAPSHOT_URL=${CAMERA_SNAPSHOT_URL:-http://127.0.0.1:9092/snapshot} ros2 run my_robot_controller april_tag_node"
 
+# --- Optional AI nodes (all degrade to an idle process if their heavy deps
+#     are not installed, so they never crash-loop under PM2). Toggle each with
+#     ENABLE_* env vars. See services/robot/install-*.sh for the deps. ---
+
+# YOLOv8n object/obstacle detection — reads the same camera snapshot as AprilTag.
+if [ "${ENABLE_YOLO:-1}" = "1" ]; then
+    start_ros_node "${SERVICE_NAME_PREFIX}-yolo" "ros2 run my_robot_controller vision_node --ros-args -p camera_snapshot_url:=${CAMERA_SNAPSHOT_URL:-http://127.0.0.1:9092/snapshot} -p inference_hz:=${YOLO_HZ:-5.0} -p confidence_threshold:=${YOLO_CONF:-0.5} -p model_path:=${YOLO_MODEL:-yolov8n.pt}"
+fi
+
+# Motor-health anomaly detection (rule-based always; TFLite autoencoder if a
+# model is provided). Set MOTOR_HEALTH_MODEL to a .tflite path to enable ML.
+if [ "${ENABLE_MOTOR_HEALTH:-1}" = "1" ]; then
+    start_ros_node "${SERVICE_NAME_PREFIX}-motor-health" "ros2 run my_robot_controller motor_health_node --ros-args -p model_path:=${MOTOR_HEALTH_MODEL:-} -p collection_mode:=${MOTOR_HEALTH_COLLECT:-false}"
+fi
+
+# Offline Vietnamese voice control (whisper.cpp). Disabled by default because
+# it needs a microphone + whisper model; enable with ENABLE_VOICE=1.
+if [ "${ENABLE_VOICE:-0}" = "1" ]; then
+    start_ros_node "${SERVICE_NAME_PREFIX}-voice" "ros2 run my_robot_controller voice_control_node --ros-args -p model_path:=${WHISPER_MODEL:-$HOME/whisper.cpp/models/ggml-small.bin} -p language:=vi"
+fi
+
 # 3. Nav2 (Phase 3 — real bringup)
 # Do not register a mapless launch under PM2: nav2_launch.py exits cleanly
 # when latest.yaml is absent, which would otherwise cause a restart loop.
