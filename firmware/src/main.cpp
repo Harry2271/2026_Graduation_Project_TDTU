@@ -439,9 +439,6 @@ void computeNavTargets()
             adj_vy = 0;
             adj_omega = 0;
         }
-        if (adj_vx == 0 && adj_vy == 0 && adj_omega == 0) {
-            adj_vx = adj_vy = adj_omega = 0;
-        }
     }
 
     // Mecanum kinematics → 4 wheel targets
@@ -619,6 +616,8 @@ void handleStop()
         g_ramped_speeds[i] = 0;
         g_raw_test_speeds[i] = 0;
         g_kick_ticks[i] = 0;
+        // Clear PID integral to prevent wind-up transients on restart
+        g_pid[i].reset();
         // Soft stop: PWM to 0, drivers stay enabled (no hard e-stop).
         g_motors[i].coast();
     }
@@ -648,6 +647,8 @@ void handleEStop()
         g_ramped_speeds[i] = 0;
         g_raw_test_speeds[i] = 0;
         g_kick_ticks[i] = 0;
+        // Clear PID integral to prevent wind-up transients on restart
+        g_pid[i].reset();
         // emergencyStop() pulls EN LOW and zeros PWM. Disarms until
         // an explicit handleEStopClear() re-arms the drivers.
         g_motors[i].emergencyStop();
@@ -676,6 +677,8 @@ void handleEStopClear()
     g_nav_vy    = 0;
     g_nav_omega = 0;
     for (int i = 0; i < MOTOR_COUNT; i++) {
+        // Clear PID integral to prevent wind-up transients on restart
+        g_pid[i].reset();
         g_motors[i].enable();
         g_motors[i].coast();
         g_ramped_speeds[i]  = 0;
@@ -1933,7 +1936,7 @@ void loop()
 
     delay(1);
 
-    // Reset hardware watchdog — if loop() blocks for >5s (e.g. Wire
+    // Reset hardware watchdog — if loop() blocks for >10s (e.g. Wire
     // held SDA low), esp_task_wdt triggers esp_restart().
     esp_task_wdt_reset();
 }

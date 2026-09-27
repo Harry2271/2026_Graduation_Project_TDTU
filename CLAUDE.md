@@ -94,14 +94,16 @@ The four layers map onto the monorepo:
 
 #### 4.1. Mecanum Kinematics
 
-Wheel velocities ($v_n$) from chassis velocities ($V_x, V_y, \omega$) where $L$ and $W$ are the half-axle distances:
+Wheel velocities ($v_n$) from chassis velocities ($V_x, V_y, \omega$). The firmware (`firmware/src/modules/MecanumDrive.cpp`) is authoritative and works in PWM units: $\omega$ is pre-scaled by the caller, so there is no explicit $(L+W)$ term and the sign convention is:
 
 ```
-v_fl = Vx − Vy − ω(L + W)
-v_fr = Vx + Vy + ω(L + W)
-v_rl = Vx + Vy − ω(L + W)
-v_rr = Vx − Vy + ω(L + W)
+v_fl = Vx − Vy + ω
+v_fr = Vx + Vy − ω
+v_rl = Vx + Vy + ω
+v_rr = Vx − Vy − ω
 ```
+
+Results are proportionally normalized to `MECANUM_MAX_SPEED` (255) so no wheel saturates. The classic physical form (with an explicit $\omega(L+W)$ term, where $L$ and $W$ are the half-axle distances) is equivalent once $\omega$ is scaled; match the code signs above when editing either side.
 
 #### 4.2. Communication Protocol (Pi ↔ ESP32)
 
@@ -139,11 +141,15 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `130` | `{"type":130,"data":{"encoders":[{id,name,count,rpm},...]}}` — encoder snapshot |
 | `131` | `{"type":131,"data":{uptime_ms,mode,e_stop,pid,max_pct,motors:[...],ir:[...],st:{...}}}` — full status |
 | `132` | `{"type":132,"data":{"seq":N,"status":"accepted"}}` — move ack (with sequence ID) |
-| `133` | `{"type":133,"data":{"bus_v":...,"current_a":...,"power_w":...,"soc_pct":...}}` — battery/power (INA226) |
+| `133` | `{"type":133,"data":{"voltage_v":...,"current_a":...,"power_w":...,"battery_pct":...,"battery_status":"..."}}` — battery/power (INA226) |
 | `134` | `{"type":134,"data":{"yaw":...,"pitch":...,"roll":...,"temp":...,"cal":{...}}}` — IMU heading (BNO055, 20 Hz) |
 | `135` | `{"type":135,"data":{"ir":[bool,bool,bool,bool]}}` — IR proximity sensor state |
-| `136` | `{"type":136,"data":{"distance_mm":...,"obstacle":bool}}` — front Sharp distance sensor |
-| `140` | `{"type":140,"data":{"state":N,"error":bool}}` — cylinder unload state (0-6, see firmware/AutoRoam) |
+| `136` | `{"type":136,"data":{"distance_mm":...,"obstacle":bool}}` — front VL53L1X distance sensor |
+| `138` | `{"type":138,"data":{"distance_mm":...,"at_unload":bool}}` — rear VL53L0X ToF (dock sensor) |
+| `139` | `{"type":139,"data":{"state":"...","extended":bool,"moving":bool}}` — cylinder actuator status |
+| `140` | `{"type":140,"data":{"state":N,"error":bool}}` — cylinder unload state (0-7, see firmware/AutoRoam) |
+| `142` | `{"type":142,"data":{"uptime_ms":...,"battery":{...},"robot":{...},"modules":[...]}}` — health monitor |
+| `143` | `{"type":143,"data":{"mode":"...","nav":[vx,vy,omega],"motors":[...]}}` — compact tick telemetry (500ms) |
 | `144` | `{"type":144,"data":{"uptime_ms":N,"alive":N,"e_stop":bool,"mode":"..."}}` — alive heartbeat every 500 ms; Pi uses this to detect firmware liveness (was type 141 before Aug 2026) |
 | `145` | `{"type":145,"data":{"present":bool,"debounce_ms":N}}` — cargo bed presence (on-demand via `get_cargo` cmd) |
 

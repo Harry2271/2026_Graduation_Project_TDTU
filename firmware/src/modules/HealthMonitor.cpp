@@ -300,29 +300,29 @@ size_t HealthMonitor::emitHealthJson(char* buf, size_t bufsize,
                                      bool e_stop_active,
                                      const char* mode_name) const
 {
-    StaticJsonDocument<1024> doc;
+    JsonDocument doc;
     doc["type"] = 142;
 
-    JsonObject data = doc.createNestedObject("data");
+    JsonObject data = doc["data"].to<JsonObject>();
     data["uptime_ms"] = uptime_ms;
 
     // Battery info
-    JsonObject bat = data.createNestedObject("battery");
+    JsonObject bat = data["battery"].to<JsonObject>();
     bat["voltage_v"] = 0.0f;
     bat["current_a"] = 0.0f;
     bat["pct"] = 0.0f;
     bat["status"] = "unknown";
 
     // Robot state
-    JsonObject robot = data.createNestedObject("robot");
+    JsonObject robot = data["robot"].to<JsonObject>();
     robot["mode"] = mode_name ? mode_name : "UNKNOWN";
     robot["e_stop"] = e_stop_active;
 
     // Module states
-    JsonArray mods = data.createNestedArray("modules");
+    JsonArray mods = data["modules"].to<JsonArray>();
     for (uint8_t i = 0; i < MOD_COUNT; i++) {
         const ModuleStatus& m = modules_[i];
-        JsonObject mod = mods.createNestedObject();
+        JsonObject mod = mods.add<JsonObject>();
         mod["id"] = m.name;
         mod["state"] = STATE_NAMES[m.state];
         mod["err"] = m.err_code;

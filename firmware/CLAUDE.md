@@ -194,13 +194,14 @@ UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 | `{"type":128,"data":{"motor_id":0,"speed":150}}` | ACK | Command acknowledged |
 | `{"type":129,"data":{"error":"..."}}` | ERROR | Error message |
 | `{"type":130,"data":{"encoders":[{...}]}}` | ENCODER | Encoder data for all 4 motors |
-| `{"type":131,"data":{...}}` | STATUS | Status telemetry |
+| `{"type":131,"data":{...}}` | STATUS | Full status telemetry |
 | `{"type":132,"data":{"seq":N,"status":"accepted"}}` | MOVE ACK | Ack for move commands with sequence ID |
-| `{"type":133,"data":{"bus_v":...,"current_a":...,"power_w":...,"soc_pct":...}}` | POWER | Battery/power telemetry (INA226 + SOC) — 0.2 Hz |
+| `{"type":133,"data":{"voltage_v":...,"current_a":...,"power_w":...,"battery_pct":...,"battery_status":"..."}}` | POWER | Battery/power telemetry (INA226 + SOC) — 0.2 Hz |
 | `{"type":134,"data":{"yaw":...,"pitch":...,"roll":...,"temp":...,"cal":{...}}}` | IMU | IMU heading (BNO055) — published at 20 Hz |
 | `{"type":135,"data":{"ir":[false,false,false,false]}}` | IR PROX | IR proximity sensor state (4× digital) |
-| `{"type":136,"data":{"distance_mm":...,"obstacle":true}}` | SHARP | Front distance sensor (Sharp GP2Y0A21YK0F) |
+| `{"type":136,"data":{"distance_mm":...,"obstacle":true}}` | FRONT TOF | Front distance sensor (VL53L1X) |
 | `{"type":140,"data":{"state":N,"state_name":"...","error":false,"error_code":0,"error_name":"none"}}` | UNLOAD | Cylinder/unload state: 0=idle, 1=adjusting, 2=extending, 3=holding, 4=retracting, 5=done, 6=leave, 7=complete. On a refused/cancelled/failed dock, state returns to 0 with `error=true`; Pi must abort the route. |
+| `{"type":143,"data":{"mode":"...","nav":[...],"motors":[...]}}` | TICK | Compact tick telemetry (500ms) — split from type 131 |
 | `{"type":144,"data":{"uptime_ms":N,"alive":N,"e_stop":bool,"mode":"..."}}` | ALIVE | Alive heartbeat every 500 ms; Pi uses this to detect firmware liveness (was type 141 before Aug 2026) |
 | `{"type":145,"data":{"present":true,"debounce_ms":N}}` | CARGO | Cargo bed presence query (on-demand via `get_cargo` cmd) |
 
@@ -357,12 +358,12 @@ Wheel layout (viewed from top):
         BACK
 ```
 
-**Inverse Kinematics** (command → wheel speeds):
+**Inverse Kinematics** (command → wheel speeds), matching `MecanumDrive.cpp` (forward=vx, strafe=vy, rotate=ω):
 ```
-FL =  forward + strafe + rotate
-FR =  forward - strafe - rotate
-RL =  forward - strafe + rotate
-RR =  forward + strafe - rotate
+FL =  forward - strafe + rotate
+FR =  forward + strafe - rotate
+RL =  forward + strafe + rotate
+RR =  forward - strafe - rotate
 ```
 
 **Normalization:** If any wheel speed exceeds [-1.0, 1.0], all values are proportionally scaled down.
@@ -530,106 +531,60 @@ The ESP32-S3's `Wire.begin()` claims GPIO10/11 via the GPIO matrix.  After that:
 
 ---
 
-## What the ESP32 Needs to Do Next (Brain Integration)
+## ESP32 Implementation Status
 
-The Pi is getting a new `brain_node.py` that will own the high-level
-state machine (autonomous mapping, job dispatch, path planning via
-Nav2, AprilTag vision). The brain drives the ESP32 through a clean
-abstract interface, but **the ESP32 must implement several new
-capabilities** that don't exist in the current firmware. This section
-is the contract — what each side has to deliver.
+The ESP32-S3 firmware is **feature-complete** for the AGV warehouse robot contract with the Raspberry Pi 5 brain.
 
-### Current state vs. required state
+### Implemented capabilities
 
-| Capability | Today | Required |
+| Capability | Status | Module |
 |---|---|---|
-| Accept `(vx, vy, omega)` over UART JSON | ✅ Yes | ✅ Keep |
-| Stop / e-stop / heartbeat | ✅ Yes | ✅ Keep |
-| `obstacle_*` reactive dodge | ✅ Yes | ✅ Keep |
-| Publish encoder counts to Pi | ❌ No | ✅ Add — for Nav2 odometry fusion |
-| Publish IMU heading to Pi | ❌ No | ✅ Add — BNO055 init + stream over UART |
-| Acknowledge a `move` with status | ❌ No | ✅ Add — type-132 ack with sequence id |
-| Receive "go to point (x,y)" | ❌ No | ⏸ Deferred — brain drives with `move` only, no on-board waypoint follower |
-| Receive "follow path" | ❌ No | ⏸ Deferred — brain sends `move` continuously at 50 Hz |
-| Receive "rotate to heading" | ❌ No | ⏸ Deferred — encoded as `move` with non-zero `omega` |
-| Battery voltage publish | ❌ No | ✅ Add — type-133 telemetry |
-| Robotic arm control | ❌ No | ⏸ Deferred to firmware phase 8 |
-| AprilTag reading | ❌ No (Pi's job) | ✅ Keep on Pi |
+| Accept `(vx, vy, omega)` over UART JSON | ✅ Complete | `CommandParser.cpp`, `main.cpp` |
+| Stop / e-stop / heartbeat watchdog | ✅ Complete | `Watchdog.cpp`, `ModeManager.cpp` |
+| Reactive obstacle avoidance | ✅ Complete | `ObstacleAvoidance.cpp`, `AvoidanceFSM.cpp` |
+| Publish encoder counts to Pi (type 130) | ✅ Complete | `Encoder.cpp`, `JsonStatus::emitEncoderSnapshot()` |
+| Publish IMU heading to Pi (type 134) | ✅ Complete | `BNO055Sensor.cpp`, 20 Hz stream |
+| Acknowledge move commands (type 132) | ✅ Complete | `JsonStatus::emitMoveAck()` with sequence ID |
+| Battery/power telemetry (type 133) | ✅ Complete | `INA226Sensor.cpp` over I2C @ 0x40 |
+| IR proximity sensors (type 135) | ✅ Complete | `IRProximitySensor.cpp`, 4× E18-D80NK |
+| Front ToF distance (type 136) | ✅ Complete | `FrontTofSensor.cpp`, VL53L1X @ 0x31 |
+| Rear ToF for docking (type 138) | ✅ Complete | `VL53L0XSensor.cpp`, VL53L0X @ 0x30 |
+| Cylinder actuator control (type 139) | ✅ Complete | `CylinderActuator.cpp`, L298N driver |
+| Autonomous dock/unload FSM (type 140) | ✅ Complete | `AutoRoam.cpp`, 8-state sequence |
+| Health monitoring (type 142) | ✅ Complete | `HealthMonitor.cpp`, per-module staleness tracking |
+| Compact tick telemetry (type 143) | ✅ Complete | `JsonStatus::emitTickStatus()`, 500ms |
+| Alive heartbeat (type 144) | ✅ Complete | 500ms keepalive for Pi link detection |
+| Cargo presence sensor (type 145) | ✅ Complete | `CargoSensor.cpp`, limit switch debounce |
 
-### New UART message types (ESP32 → Pi)
+### Key implementation notes
 
-The current firmware emits type 128 (ACK), 129 (error), 130 (encoders),
-131 (status). Add these:
+- **I2C shared bus (GPIO10 SDA / GPIO11 SCL @ 100kHz):** BNO055 IMU @ 0x28, VL53L0X rear ToF @ 0x30 (reassigned via XSHUT), VL53L1X front ToF @ 0x31 (reassigned via XSHUT), INA226 power @ 0x40. Bus recovery + mutex implemented in `I2CBus.cpp`.
+- **Battery monitoring:** INA226 reads pack voltage/current over I2C with 10mΩ shunt. Piecewise linear SOC lookup table (20.5V full → 14.0V empty). Type-133 keys: `voltage_v`, `current_a`, `power_w`, `battery_pct`, `battery_status`, `noload`.
+- **Mecanum kinematics:** `MecanumDrive.cpp` implements inverse kinematics (vx, vy, ω → 4 wheel speeds) with proportional normalization to MECANUM_MAX_SPEED=255.
+- **PID control:** 50Hz closed-loop on all 4 motors (Kp=2.5, Ki=0.2, Kd=0.05), derivative-on-measurement, conditional integration anti-windup. Encoder: PCNT hardware quadrature @ 11 PPR × 30:1 gear × 2 edges = 660 counts/rev output shaft.
+- **Safety interlocks:** IR sensors + front ToF are fail-closed (stale → assumes obstacle). Hardware E-stop pulls BTS7960 EN pins LOW. Watchdog timeout 2000ms → MODE_SAFE (coast motors). IMU safety evaluator detects tilt/shock events.
+- **Docking sequence:** AutoRoam FSM: IDLE → ADJUSTING (heading + distance gate) → EXTENDING (cylinder out) → HOLDING (wait for cargo load) → RETRACTING (cylinder in) → DONE → LEAVING (reverse from dock) → COMPLETE. Uses VL53L0X rear ToF + BNO055 heading for closed-loop positioning.
 
-```json
-// 132 — move command acknowledgment
-{"type":132,"data":{"seq":N,"status":"accepted"|"rejected","reason":"..."}}
+### Pin allocation (ESP32-S3 WeAct N16R8)
 
-// 133 — battery + system telemetry
-{"type":133,"data":{"voltage_mv":12345,"current_ma":250,"uptime_ms":N,"e_stop":false,"watchdog_ok":true}}
-```
-
-The `seq` field lets the Pi correlate ACKs with commands and detect
-packet loss. The brain increments `seq` on every `move` it sends; the
-ESP32 echoes it back in the 132 response.
-
-### Updated UART command (Pi → ESP32)
-
-The existing `{"cmd":"move","vx":N,"vy":N,"omega":N}` is kept, with
-one new optional field:
-
-```json
-{"cmd":"move","vx":100,"vy":0,"omega":0,"seq":42}
-```
-
-If the brain does not include `seq`, the ESP32 must not emit a 132
-ack (back-compat for the existing manual-control ASCII path). When
-`seq` is present, emit a 132 within 5 ms.
-
-### New required modules
-
-| Module | Purpose | Key APIs |
+| Function | Pins | Notes |
 |---|---|---|
-| `firmware/src/modules/brain_bridge.cpp` | Decodes `move` JSON into `MecanumDrive::compute()` calls, emits 132 acks | `on_move_cmd(vx, vy, omega, seq)` |
-| `firmware/src/modules/odometry_publisher.cpp` | Reads encoder counts, computes wheel delta, emits 130 every 50 ms | `publish_encoder_snapshot()` |
-| `firmware/src/modules/imu_bno055.cpp` | Initializes BNO055 over I2C (address 0x28 or 0x29), reads Euler angles | `imu_read_heading_rad()` |
-| `firmware/src/modules/battery_monitor.cpp` | ADC read on a battery-sense pin, emits 133 every 5 s | `read_voltage_mv()` |
+| Motors (BTS7960) | RPWM: 12,14,16,17 / LPWM: 13,15,18,5 / EN: 3,7,6,4 | LEDC PWM 20kHz 10-bit |
+| Encoders (PCNT) | ChA: 47,48,21,42 / ChB: 41,40,39,38 | Hardware quadrature decode |
+| I2C shared bus | SDA=10, SCL=11 | 100kHz, 4.7kΩ external pull-ups required |
+| ToF XSHUT | VL53L0X=8, VL53L1X=9 | Address sequencing on boot |
+| IR proximity | RL=1, RR=0, L=45, R=46 | E18-D80NK, INPUT_PULLUP, active-LOW |
+| Cylinder (L298N) | IN1=2, IN2=35, limit=44 | Retract limit switch active-LOW |
+| Cargo sensor | 36 | Limit switch, INPUT_PULLUP, active-LOW |
+| USB CDC | 19 (D+), 20 (D-) | Serial = PiSerial, 115200 baud |
 
-### New config.h additions
+### Deferred / not implemented
 
-```cpp
-// I2C for BNO055
-#define BNO055_I2C_ADDR  0x28
-#define I2C_SDA_PIN      8
-#define I2C_SCL_PIN      9
-#define I2C_FREQ_HZ      400000
+- **Robotic arm control:** 5-DOF arm (3× MG966R + 3× SG90) wiring documented but servo library integration deferred.
+- **AprilTag vision:** Handled by Pi's `vision_node.py` + Logitech BRIO 100 camera, not ESP32.
+- **On-board waypoint follower:** Nav2 on Pi sends continuous `move` commands at 10-50Hz; ESP32 executes velocity commands only.
 
-// Battery sense
-#define BATTERY_ADC_PIN  1
-#define BATTERY_DIVIDER  0.2f   // 100k/400k → ~0.2
-
-// Telemetry intervals
-#define ENCODER_PUBLISH_MS  50
-#define BATTERY_PUBLISH_MS  5000
-
-// Heartbeat (existing)
-#define HEARTBEAT_TIMEOUT_MS  2000  // Pi must heartbeat within this
-```
-
-### Heartbeat contract (existing, tightened)
-
-- Pi sends `{"cmd":"heartbeat"}` every 50 ms (much faster than the
-  current 2 s timeout — gives the brain a 40× safety margin for
-  re-sending on transient UART loss).
-- ESP32 resets the watchdog timer on every heartbeat.
-- If the watchdog expires, ESP32 calls `e_stop()` internally and
-  publishes `{"type":133,"data":{"e_stop":true,"watchdog_ok":false}}`
-  on next boot cycle.
-
-### Pin allocation check
-
-The existing `config.h` has free pins for I2C and the battery ADC.
-Verify before flashing — the current pin list reserves GPIO 43/44
+---
 for UART2 (Pi link) which is correct; everything else listed under
 "Available GPIOs" is fair game.
 

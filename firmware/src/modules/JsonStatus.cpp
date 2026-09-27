@@ -161,7 +161,7 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     JsonDocument doc;
 
     doc["ts"]   = now_ms;
-    doc["type"] = 131;
+    doc["type"] = 143;  // Compact tick telemetry (was 131, now split from full status)
     doc["mode"] = Watchdog::modeName(modeManager->getMode());
     doc["e_stop"] = e_stop;
     doc["estop"] = e_stop;
@@ -471,9 +471,9 @@ size_t JsonStatus::emitMoveAck(char* buf, size_t bufsize,
 {
     if (!buf || bufsize == 0) return 0;
 
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["type"] = 132;
-    JsonObject data = doc.createNestedObject("data");
+    JsonObject data = doc["data"].to<JsonObject>();
     data["seq"] = seq;
     data["status"] = status ? status : "accepted";
     if (reason && reason[0] != '\0') {
