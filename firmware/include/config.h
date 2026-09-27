@@ -9,6 +9,12 @@
 // 4x BTS7960 + 4x JGB37-520 DC Motors + Quadrature Encoders
 // ============================================================
 
+// --- DEBUG / RELEASE BUILD ---
+// Set to 0 to disable verbose debug logs (cleaner JSON telemetry stream)
+#ifndef DEBUG_VERBOSE_LOGGING
+#define DEBUG_VERBOSE_LOGGING 1
+#endif
+
 // --- TEST MODE: Set number of motors to test: 1, 2, or 4 ---
 #define TEST_MOTOR_COUNT 4
 
@@ -141,9 +147,6 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #ifndef PiSerial
 #define PiSerial Serial
 #endif
-
-// ============================================================
-// Motor State
 
 // ============================================================
 // Motor State
@@ -309,10 +312,6 @@ enum MotorState {
 #define IR_LEFT_ENABLED       1
 #define CARGO_SENSOR_PIN      36       // Cargo microswitch, INPUT_PULLUP
 
-// ============================================================
-// Front TOF400C — VL53L1X laser distance sensor
-// Replaces the Sharp GP2Y0A21YK0F analog front sensor.
-// ============================================================
 // ============================================================
 // Front TOF400C — VL53L1X laser distance sensor
 // Replaces the Sharp GP2Y0A21YK0F analog front sensor.
