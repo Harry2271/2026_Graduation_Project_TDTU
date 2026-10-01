@@ -56,6 +56,17 @@ CargoSensor      g_cargo;
 HealthMonitor   g_health;
 
 // ========================================================================
+// Phase 1-4 Upgrade Modules (8 new features)
+// ========================================================================
+SafetyController     g_safety;
+DynamicAcceleration  g_accel;
+AdaptivePID          g_adaptive_pid;
+BatteryPredictor     g_battery;
+I2CWatchdog          g_i2c_watchdog;
+MotorHealthMonitor   g_motor_health;
+BlackBoxRecorder     g_blackbox;
+
+// ========================================================================
 // Motor State — single control path
 // ========================================================================
 int16_t g_target_speeds[4] = {0};
@@ -89,6 +100,20 @@ int8_t g_kick_ticks[4] = {0, 0, 0, 0};
 static uint32_t g_last_pid_ms = 0;
 static uint32_t g_pid_dt_us   = 0;   // real elapsed PID interval (μs) for applySpeeds
 int16_t g_prev_target_for_kick[4] = {0, 0, 0, 0};
+
+// ---- Phase 3: AdaptivePID runtime auto-tuning state ----
+// Rolling PID error history for the representative motor (FL / index 0),
+// fed with (target_rpm - actual_rpm) each tick; AdaptivePID uses it for
+// oscillation detection.  g_rep_* capture that motor's latest target/actual
+// RPM so the 1 s adaptive block can feed update() without threading it
+// through applySpeeds().  A manual set_pid suspends auto-tune for a window
+// so an operator's gains are not overwritten within 5 s.
+float    g_pid_err_hist[10] = {0.0f};
+uint8_t  g_pid_err_idx = 0;
+int16_t  g_rep_target_rpm = 0;
+float    g_rep_actual_rpm = 0.0f;
+bool     g_adaptive_pid_enabled = true;
+uint32_t g_manual_pid_until_ms = 0xFFFFFFFF;   // Prime for rollover-safe comparison
 
 // ---- Encoder stall detector (runtime) ----
 // Track encoder count per tick. If motor is commanded (ramped speed != 0)
@@ -497,21 +522,41 @@ void applySpeeds()
         return;
     }
 
+    // ---- Phase 3: DynamicAcceleration — select ramp profile for this tick ----
+    // SMOOTH while carrying cargo (don't spill), AGGRESSIVE when a front
+    // obstacle is close AND we're already moving fast (snappier dodge),
+    // otherwise NORMAL.  g_accel supplies the ramp slope + kick params that
+    // replace the fixed config.h constants below.
+    int16_t cur_speed = 0;
+    for (int i = 0; i < MOTOR_COUNT; i++) {
+        int16_t a = (int16_t)abs(g_ramped_speeds[i]);
+        if (a > cur_speed) cur_speed = a;
+    }
+    uint16_t front_mm = g_front_tof.getDistanceMm();
+    bool front_tof_critical = g_front_tof.isPresent() && front_mm > 0 &&
+                              front_mm < (uint16_t)(VL53L1X_FRONT_SLOW_CM * 10);
+    g_accel.updateProfile(g_cargo.hasCargo(), front_tof_critical, cur_speed);
+
+    const AccelParams& ap = g_accel.getParams();
+    const int16_t ramp       = (int16_t)ap.ramp_rate;
+    const int16_t kick_pwm   = (int16_t)ap.kick_boost_pwm;
+    const int8_t  kick_ticks = (int8_t)ap.kick_boost_ticks;
+
     for (int i = 0; i < MOTOR_COUNT; i++) {
         // Detect motor start: target transitions from 0 → non-zero.
         // Track *target* (not ramped) so we only kick on genuine starts,
         // not on every ramp-crossing-zero during direction changes.
         if (g_prev_target_for_kick[i] == 0 && g_target_speeds[i] != 0 && g_kick_ticks[i] == 0) {
-            g_kick_ticks[i] = KICK_BOOST_TICKS;
+            g_kick_ticks[i] = kick_ticks;
         }
         g_prev_target_for_kick[i] = g_target_speeds[i];
 
-        // Ramp toward target
+        // Ramp toward target (slope from DynamicAcceleration profile)
         int16_t diff = g_target_speeds[i] - g_ramped_speeds[i];
-        if (diff > ACCEL_RAMP_RATE) {
-            g_ramped_speeds[i] += ACCEL_RAMP_RATE;
-        } else if (diff < -ACCEL_RAMP_RATE) {
-            g_ramped_speeds[i] -= ACCEL_RAMP_RATE;
+        if (diff > ramp) {
+            g_ramped_speeds[i] += ramp;
+        } else if (diff < -ramp) {
+            g_ramped_speeds[i] -= ramp;
         } else {
             g_ramped_speeds[i] = g_target_speeds[i];
         }
@@ -529,7 +574,23 @@ void applySpeeds()
             // in the opposite direction.
             float actual_rpm = g_encoders[i].getFilteredRPM() * (float)MOTOR_PINS[i].dir;
             int16_t correction = g_pid[i].compute(target_rpm, actual_rpm, g_pid_dt_us);
-            int16_t final_pwm = limited + correction;
+
+            // Phase 3: capture the representative motor (FL/0) for AdaptivePID
+            // and push its tracking error into the rolling history used for
+            // oscillation detection.  Both control paths share g_pid[], so one
+            // motor's telemetry is enough to drive the tuner.
+            if (i == 0) {
+                g_rep_target_rpm = (int16_t)target_rpm;
+                g_rep_actual_rpm = actual_rpm;
+                g_pid_err_hist[g_pid_err_idx] = target_rpm - actual_rpm;
+                g_pid_err_idx = (uint8_t)((g_pid_err_idx + 1) % 10);
+            }
+
+            // Phase 3: battery feed-forward (1.0–1.15x) compensates for the
+            // torque lost as the pack sags.  getBatteryCompensation() is 1.0
+            // at full charge, so this is a no-op until the voltage drops.
+            float ff = g_adaptive_pid.getBatteryCompensation();
+            int16_t final_pwm = (int16_t)((limited + correction) * ff);
             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
 
             // Kick-start boost: applied AFTER the PID output, on top of the
@@ -537,7 +598,7 @@ void applySpeeds()
             // keeps the boost independent of the PID target so the boost
             // does not fight the controller during the first 300 ms.
             if (g_kick_ticks[i] > 0) {
-                int16_t boost = (limited > 0) ? KICK_BOOST_PWM : -KICK_BOOST_PWM;
+                int16_t boost = (limited > 0) ? kick_pwm : -kick_pwm;
                 final_pwm = constrain(final_pwm + boost, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
                 g_kick_ticks[i]--;
             }
@@ -632,6 +693,9 @@ void handleEStop()
     g_modeManager.enterEStop(millis());
     g_cylinder.stop();
 
+    // Phase 1: Engage SafetyController EMERGENCY level
+    g_safety.triggerEmergency("User", "Manual E-stop command");
+
     // CRITICAL safety path — hardware disable of BTS7960 drivers.
     // Pulls EN pin LOW on every driver so no PWM can produce torque,
     // even if the firmware later writes PWM by mistake.
@@ -662,6 +726,10 @@ void handleEStopClear()
     // This is the only command path that may re-arm motion after an E-stop.
     g_modeManager.clearEStop(millis());
     g_cylinder.stop();
+
+    // Phase 1: Clear SafetyController EMERGENCY level
+    g_safety.clearEmergency();
+
     g_e_stop_active = false;
     g_pid_enabled   = true;
     g_individual_mode = false;
@@ -694,6 +762,9 @@ void handleSetPID(float kp, float ki, float kd)
         g_pid[i].setGains(kp, ki, kd);
     }
     g_pid_enabled = true;
+    // Phase 3: a manual tune wins for 60 s before AdaptivePID resumes, so an
+    // operator can validate gains without them being overwritten within 5 s.
+    g_manual_pid_until_ms = millis() + 60000;
     emitCommandAck("set_pid");
 }
 
@@ -1141,6 +1212,42 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             emitCommandAck("raw_motor");
         } break;
 
+        // Phase 1-4 Upgrade Command Handlers
+        case CMD_CLEAR_SOFT_STOP:
+            g_safety.clearSoftStop();
+            emitCommandAck("clear_soft_stop");
+            break;
+
+        case CMD_CLEAR_HARD_STOP:
+            g_safety.clearHardStop();
+            emitCommandAck("clear_hard_stop");
+            break;
+
+        case CMD_CLEAR_EMERGENCY:
+            g_safety.clearEmergency();
+            emitCommandAck("clear_emergency");
+            break;
+
+        case CMD_GET_BLACKBOX:
+            g_blackbox.streamToSerial(PiSerial);
+            break;
+
+        case CMD_CLEAR_BLACKBOX:
+            g_blackbox.clear();
+            emitCommandAck("clear_blackbox");
+            break;
+
+        case CMD_RESET_MOTOR_WARNINGS: {
+            uint8_t motor_id = cmd.speed;  // Reused speed field for motor_id
+            g_motor_health.resetWarnings(motor_id);
+            emitCommandAck("reset_motor_warnings");
+        } break;
+
+        case CMD_RESET_COULOMB:
+            g_battery.resetCoulombCounter();
+            emitCommandAck("reset_coulomb");
+            break;
+
         default:
             break;
     }
@@ -1464,6 +1571,18 @@ void setup()
 
     setupHardware();
     g_health.begin();
+
+    // Initialize Phase 1-4 upgrade modules
+    Serial.println("[UPGRADE] Initializing Phase 1-4 modules...");
+    g_safety.begin();
+    g_accel.begin();
+    g_adaptive_pid.begin();
+    g_battery.begin();
+    g_i2c_watchdog.begin();
+    g_motor_health.begin();
+    g_blackbox.begin();
+    Serial.println("[UPGRADE] All 8 modules initialized");
+
     // Reflect boot-time sensor initialization immediately.  HealthMonitor
     // defaults records to ONLINE, so an absent/failing BNO055 must be marked
     // explicitly instead of being reported healthy until the first stale tick.
@@ -1917,7 +2036,24 @@ void loop()
             }
             applySpeeds();
         } else if (mode == MODE_AUTO_ROAM) {
-            // AUTO_ROAM: sensor-based autonomy via ModeManager
+            // AUTO_ROAM: sensor-based autonomy via ModeManager.
+            // Phase 3: drive ModeManager's ramp from the same DynamicAcceleration
+            // profile as the NAV path.  Use AUTO_ROAM's own ramped speeds for the
+            // speed signal so the AGGRESSIVE gate reflects the autonomous path.
+            const int16_t* rs = g_modeManager.getRampedSpeeds();
+            int16_t roam_speed = 0;
+            for (int i = 0; i < MOTOR_COUNT; i++) {
+                int16_t a = (int16_t)abs(rs[i]);
+                if (a > roam_speed) roam_speed = a;
+            }
+            uint16_t roam_front_mm = g_front_tof.getDistanceMm();
+            bool roam_front_crit = g_front_tof.isPresent() && roam_front_mm > 0 &&
+                                   roam_front_mm < (uint16_t)(VL53L1X_FRONT_SLOW_CM * 10);
+            g_accel.updateProfile(g_cargo.hasCargo(), roam_front_crit, roam_speed);
+            const AccelParams& rap = g_accel.getParams();
+            g_modeManager.setAccelParams(rap.ramp_rate, rap.kick_boost_pwm,
+                                         rap.kick_boost_ticks);
+
             g_modeManager.applyMotorOutputs(g_motors, g_encoders, g_pid,
                                              &g_mecanum, now, dt_us);
         } else {
@@ -1930,6 +2066,84 @@ void loop()
     }
 
     updateTestSequence(now);
+
+    // ---- Phase 3: I2C Watchdog (every 10s) ----
+    g_i2c_watchdog.update(now);
+
+    // ---- Phase 3: Motor Health Monitoring (every 100ms via PID tick) ----
+    static uint32_t last_health_check = 0;
+    if (now - last_health_check >= 100) {
+        for (int i = 0; i < MOTOR_COUNT; i++) {
+            g_motor_health.update(i, now,
+                g_target_speeds[i],
+                g_encoders[i].getFilteredRPM(),
+                g_power.getCurrent() / 4.0f,  // Approximate per-motor
+                &g_encoders[i]);
+        }
+        last_health_check = now;
+    }
+
+    // ---- Phase 4: BlackBox Recording (every 100ms) ----
+    static uint32_t last_blackbox = 0;
+    if (now - last_blackbox >= 100) {
+        g_blackbox.record(now,
+            g_nav_vx, g_nav_vy, g_nav_omega,
+            g_ramped_speeds,
+            g_encoders,
+            &g_imu,
+            &g_safety,
+            g_ir.detectedMask(),
+            g_front_tof.getDistanceMm());
+        last_blackbox = now;
+    }
+
+    // ---- Phase 2: Battery Monitoring (every 1s) ----
+    static uint32_t last_battery_update = 0;
+    if (now - last_battery_update >= 1000) {
+        g_battery.update(now, g_power.getBusVoltage(), g_power.getCurrent());
+
+        // Check auto-return
+        if (g_battery.shouldReturnToDock()) {
+            static uint32_t last_battery_warn = 0;
+            if (now - last_battery_warn >= 10000) {
+                Serial.println("[BATTERY] LOW — Auto-return recommended");
+                last_battery_warn = now;
+            }
+        }
+
+        last_battery_update = now;
+    }
+
+    // ---- Phase 3: Adaptive PID auto-tuning (effective cadence 5s) ----
+    // update() self-throttles internally to ADAPTATION_INTERVAL_MS (5s); we
+    // gate the setGains() push to 1s.  It feeds the representative motor's
+    // telemetry captured in applySpeeds() and the rolling error history.
+    // The adapted gains land in the shared g_pid[] array, so both the NAV
+    // (applySpeeds) and AUTO_ROAM (ModeManager) paths pick them up.
+    //
+    // IMPORTANT: Skip adaptive updates during AUTO_ROAM — applySpeeds() never
+    // runs in that mode, so g_rep_target_rpm / g_rep_actual_rpm / g_pid_err_hist
+    // freeze at stale NAV values. Training on frozen telemetry causes oscillation
+    // detection to latch incorrectly and mis-tune Kp during docking.
+    static uint32_t last_adaptive_pid = 0;
+    SystemMode current_mode = g_modeManager.getMode();
+    if (now - last_adaptive_pid >= 1000 && current_mode != MODE_AUTO_ROAM) {
+        last_adaptive_pid = now;
+        g_adaptive_pid.update(now, g_cargo.hasCargo(),
+                              g_power.getBusVoltage(),
+                              g_rep_target_rpm, g_rep_actual_rpm,
+                              g_pid_err_hist);
+
+        // Honor a manual set_pid hold window before overwriting gains.
+        if (g_adaptive_pid_enabled &&
+            (int32_t)(now - g_manual_pid_until_ms) >= 0) {
+            for (int i = 0; i < MOTOR_COUNT; i++) {
+                PIDGains gains = g_adaptive_pid.getGains(i);
+                g_pid[i].setGains(gains.kp, gains.ki, gains.kd);
+            }
+        }
+    }
+
     printStatus(now);
     publishSensors(now);
     updateLED(now);

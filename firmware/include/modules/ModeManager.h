@@ -40,6 +40,15 @@ public:
     /// Keep the autonomous output path aligned with the global NAV speed cap.
     void setMaxSpeedPct(uint8_t pct) { max_speed_pct_ = pct; }
 
+    /// Phase 3: drive the AUTO_ROAM ramp from DynamicAcceleration profiles.
+    /// main.cpp refreshes these each tick from g_accel; defaults mirror
+    /// config.h so behavior is unchanged until it is wired.
+    void setAccelParams(uint8_t ramp_rate, uint8_t kick_pwm, uint8_t kick_ticks) {
+        accel_ramp_rate_  = ramp_rate;
+        kick_boost_pwm_   = kick_pwm;
+        kick_boost_ticks_ = kick_ticks;
+    }
+
     /// Forward proof-of-life from any byte received on the Pi UART, even if
     /// the command frame was corrupt (e.g. cable yank mid-packet).
     void onSerialActivity(uint32_t now_ms) { watchdog_.onSerialActivity(now_ms); }
@@ -114,4 +123,11 @@ private:
     bool estop_active_;
     bool pid_enabled_;
     uint8_t max_speed_pct_;
+
+    // Phase 3: DynamicAcceleration-driven ramp params. Initialized to the
+    // config.h constants in the constructor; overwritten each tick by
+    // main.cpp's setAccelParams() once g_accel is wired in.
+    uint8_t accel_ramp_rate_;
+    uint8_t kick_boost_pwm_;
+    uint8_t kick_boost_ticks_;
 };

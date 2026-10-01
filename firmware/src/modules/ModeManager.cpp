@@ -3,8 +3,12 @@
 #include "Encoder.h"
 #include "PIDController.h"
 #include "MecanumDrive.h"
+#include "AdaptivePID.h"
 #include "config.h"
 #include <Arduino.h>
+
+// Phase 3: Battery feed-forward in AUTO_ROAM requires access to g_adaptive_pid
+extern AdaptivePID g_adaptive_pid;
 
 ModeManager::ModeManager()
     : last_mode_(MODE_SAFE)
@@ -12,6 +16,9 @@ ModeManager::ModeManager()
     , estop_active_(false)
     , pid_enabled_(true)
     , max_speed_pct_(100)
+    , accel_ramp_rate_(ACCEL_RAMP_RATE)
+    , kick_boost_pwm_(KICK_BOOST_PWM)
+    , kick_boost_ticks_(KICK_BOOST_TICKS)
 {
     for (int i = 0; i < 4; i++) {
         ramped_speeds_[i] = 0;
@@ -306,13 +313,13 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
 
     for (int i = 0; i < MOTOR_COUNT; i++) {
         ramped_speeds_[i] = MecanumDrive::ramp(
-            target_speeds[i], ramped_speeds_[i], ACCEL_RAMP_RATE);
+            target_speeds[i], ramped_speeds_[i], accel_ramp_rate_);
 
         // Kick-start boost: fire only on a genuine target 0→non-zero
         // transition (not on ramp crossings), matching the applySpeeds()
         // logic in main.cpp.
         if (prev_target_for_kick_[i] == 0 && target_speeds[i] != 0 && kick_ticks_[i] == 0) {
-            kick_ticks_[i] = KICK_BOOST_TICKS;
+            kick_ticks_[i] = (int8_t)kick_boost_ticks_;
         }
         prev_target_for_kick_[i] = target_speeds[i];
 
@@ -327,12 +334,17 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
             // a mis-wired motor).
             float actual_rpm = encoders[i].getFilteredRPM() * (float)MOTOR_PINS[i].dir;
             int16_t correction = pids[i].compute(target_rpm, actual_rpm, dt_us);
-            int16_t final_pwm = limited + correction;
+
+            // Phase 3: battery feed-forward compensates for voltage sag, matching
+            // the NAV path in applySpeeds() so AUTO_ROAM and NAV behave identically
+            // at the same battery state.
+            float ff = g_adaptive_pid.getBatteryCompensation();
+            int16_t final_pwm = (int16_t)((limited + correction) * ff);
             final_pwm = constrain(final_pwm, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
 
             // Kick boost applied AFTER PID, independent of target_rpm.
             if (kick_ticks_[i] > 0) {
-                int16_t boost = (limited > 0) ? KICK_BOOST_PWM : -KICK_BOOST_PWM;
+                int16_t boost = (limited > 0) ? (int16_t)kick_boost_pwm_ : -(int16_t)kick_boost_pwm_;
                 final_pwm = constrain(final_pwm + boost, -MOTOR_MAX_DUTY, MOTOR_MAX_DUTY);
                 kick_ticks_[i]--;
             }
