@@ -399,6 +399,29 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     else if (strcmp(cmd, "restart") == 0) {
         out.type = CMD_RESTART;
     }
+    // Phase 1-4 Upgrade Commands
+    else if (strcmp(cmd, "clear_soft_stop") == 0) {
+        out.type = CMD_CLEAR_SOFT_STOP;
+    }
+    else if (strcmp(cmd, "clear_hard_stop") == 0) {
+        out.type = CMD_CLEAR_HARD_STOP;
+    }
+    else if (strcmp(cmd, "clear_emergency") == 0) {
+        out.type = CMD_CLEAR_EMERGENCY;
+    }
+    else if (strcmp(cmd, "get_blackbox") == 0) {
+        out.type = CMD_GET_BLACKBOX;
+    }
+    else if (strcmp(cmd, "clear_blackbox") == 0) {
+        out.type = CMD_CLEAR_BLACKBOX;
+    }
+    else if (strcmp(cmd, "reset_motor_warnings") == 0) {
+        out.type = CMD_RESET_MOTOR_WARNINGS;
+        out.speed = doc["speed"] | 0;  // Python sends "speed": motor_id or -1 for all
+    }
+    else if (strcmp(cmd, "reset_coulomb") == 0) {
+        out.type = CMD_RESET_COULOMB;
+    }
 
     return out.type;
 }

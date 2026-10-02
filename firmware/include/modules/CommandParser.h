@@ -67,6 +67,15 @@ enum CommandType {
 
     // System commands
     CMD_RESTART,             // JSON: restart — soft reboot via ESP.restart()
+
+    // Phase 1-4 Upgrade Commands (Safety, Battery, Motor Health, BlackBox)
+    CMD_CLEAR_SOFT_STOP,     // JSON: clear_soft_stop
+    CMD_CLEAR_HARD_STOP,     // JSON: clear_hard_stop
+    CMD_CLEAR_EMERGENCY,     // JSON: clear_emergency
+    CMD_GET_BLACKBOX,        // JSON: get_blackbox — stream type 147
+    CMD_CLEAR_BLACKBOX,      // JSON: clear_blackbox — resume recording
+    CMD_RESET_MOTOR_WARNINGS,// JSON: reset_motor_warnings with motor_id
+    CMD_RESET_COULOMB,       // JSON: reset_coulomb — zero battery counter
 };
 
 struct Command {

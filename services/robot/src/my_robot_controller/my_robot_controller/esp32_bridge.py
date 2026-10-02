@@ -399,8 +399,11 @@ class RealEsp32Bridge:
     TYPE_CYLINDER    = 139
     TYPE_UNLOAD_STATE = 140
     TYPE_HEALTH      = 142
+    TYPE_TICK        = 143  # Compact tick telemetry (500 ms, subset of type 131)
     TYPE_ALIVE       = 144  # Always-fire 500 ms heartbeat from ESP32
     TYPE_CARGO       = 145  # Cargo microswitch state (on-demand query)
+    TYPE_SAFETY_EVENT = 146  # Safety state transitions (Phase 1 upgrade)
+    TYPE_BLACKBOX    = 147  # BlackBox crash dump stream (Phase 4 upgrade)
 
     # Best-effort cap on a single JSON line — keeps memory bounded if ESP32
     # ever goes into a runaway write loop.  Status JSON is ~700 bytes; power
@@ -445,6 +448,8 @@ class RealEsp32Bridge:
         self.on_tof: Callable[[dict], None] = lambda _data: None
         self.on_cylinder: Callable[[dict], None] = lambda _data: None
         self.on_health: Callable[[dict], None] = lambda _data: None
+        self.on_safety_event: Callable[[dict], None] = lambda _data: None
+        self.on_blackbox: Callable[[dict], None] = lambda _data: None
 
         # Cached unload state (type 140) so async callers can poll it
         # without going through the callback.  Terminal COMPLETE/error frames
@@ -473,6 +478,8 @@ class RealEsp32Bridge:
         self._last_tof: dict = {}
         self._last_cylinder: dict = {}
         self._last_health: dict = {}
+        self._last_safety_event: dict = {}
+        self._last_blackbox: dict = {}
 
     # ----- lifecycle -----
 
@@ -570,6 +577,45 @@ class RealEsp32Bridge:
         poll `last_cargo` for the cached value without sending the command.
         """
         await self._send_line({'cmd': 'get_cargo'})
+        return dict(self._last_cargo)
+
+    # ----- Phase 1-4 Upgrade Commands -----
+
+    async def clear_soft_stop(self) -> None:
+        """Clear SOFT_STOP safety level (Phase 1 upgrade)."""
+        await self._send_line({'cmd': 'clear_soft_stop'})
+
+    async def clear_hard_stop(self) -> None:
+        """Clear HARD_STOP safety level (Phase 1 upgrade)."""
+        await self._send_line({'cmd': 'clear_hard_stop'})
+
+    async def clear_emergency(self) -> None:
+        """Clear EMERGENCY safety level (Phase 1 upgrade)."""
+        await self._send_line({'cmd': 'clear_emergency'})
+
+    async def get_blackbox(self) -> None:
+        """Request BlackBox crash dump stream (Phase 4 upgrade).
+
+        Firmware will stream type 147 with frozen telemetry data.
+        Subscribe to on_blackbox callback to receive the dump.
+        """
+        await self._send_line({'cmd': 'get_blackbox'})
+
+    async def clear_blackbox(self) -> None:
+        """Clear BlackBox and resume recording (Phase 4 upgrade)."""
+        await self._send_line({'cmd': 'clear_blackbox'})
+
+    async def reset_motor_warnings(self, motor_id: int = -1) -> None:
+        """Reset motor health warnings (Phase 3 upgrade).
+
+        Args:
+            motor_id: 0-3 for specific motor, -1 for all motors (default)
+        """
+        await self._send_line({'cmd': 'reset_motor_warnings', 'speed': motor_id})
+
+    async def reset_coulomb_counter(self) -> None:
+        """Reset battery coulomb counter (Phase 2 upgrade)."""
+        await self._send_line({'cmd': 'reset_coulomb'})
         return dict(self._last_cargo)
 
     async def push_obstacle(self, direction: str,
@@ -884,9 +930,23 @@ class RealEsp32Bridge:
         elif msg_type == self.TYPE_HEALTH:
             self._last_health = data
             self._safe_call(self.on_health, data)
+        elif msg_type == self.TYPE_SAFETY_EVENT:
+            # Safety state transition (Phase 1 upgrade) — level, timestamp, source, reason
+            self._last_safety_event = data
+            self._safe_call(self.on_safety_event, data)
+        elif msg_type == self.TYPE_BLACKBOX:
+            # BlackBox crash dump (Phase 4 upgrade) — frozen telemetry stream
+            self._last_blackbox = data
+            self._safe_call(self.on_blackbox, data)
+        elif msg_type == self.TYPE_TICK:
+            # Compact tick telemetry (type 143) — subset of type 131 emitted
+            # every 500 ms. Forward to the same on_status_update callback so
+            # consumers that only read fields present in type 143 (mode, e_stop,
+            # motors, nav, st) continue to work without code changes.
+            self._safe_call(self.on_status_update, data)
 
         # Rising-edge e_stop trigger from any status frame.
-        if msg_type == self.TYPE_STATUS:
+        if msg_type == self.TYPE_STATUS or msg_type == self.TYPE_TICK:
             e_stop = bool(data.get('e_stop', data.get('estop', False)))
             if e_stop and not self._last_e_stop:
                 self._safe_call(self.on_e_stop)
@@ -968,6 +1028,10 @@ class MirrorBridge:
                                  self._on_cylinder, 10)
         node.create_subscription(_String, '/esp32/health',
                                  self._on_health, 10)
+        node.create_subscription(_String, '/esp32/safety_event',
+                                 self._on_safety_event, 10)
+        node.create_subscription(_String, '/esp32/blackbox',
+                                 self._on_blackbox, 10)
 
         self._connected = False
 
@@ -990,6 +1054,8 @@ class MirrorBridge:
         self.on_tof:            Callable[[dict], None] = lambda _d: None
         self.on_cylinder:       Callable[[dict], None] = lambda _d: None
         self.on_health:         Callable[[dict], None] = lambda _d: None
+        self.on_safety_event:   Callable[[dict], None] = lambda _d: None
+        self.on_blackbox:       Callable[[dict], None] = lambda _d: None
 
         # Cached state — populated by ROS subscribers
         self._last_unload_state: dict = {}
@@ -1062,6 +1128,29 @@ class MirrorBridge:
 
     async def get_cargo(self) -> dict:
         return dict(self._last_cargo)
+
+    # ----- Phase 1-4 Upgrade Commands -----
+
+    async def clear_soft_stop(self) -> None:
+        await self._send({'cmd': 'clear_soft_stop'})
+
+    async def clear_hard_stop(self) -> None:
+        await self._send({'cmd': 'clear_hard_stop'})
+
+    async def clear_emergency(self) -> None:
+        await self._send({'cmd': 'clear_emergency'})
+
+    async def get_blackbox(self) -> None:
+        await self._send({'cmd': 'get_blackbox'})
+
+    async def clear_blackbox(self) -> None:
+        await self._send({'cmd': 'clear_blackbox'})
+
+    async def reset_motor_warnings(self, motor_id: int = -1) -> None:
+        await self._send({'cmd': 'reset_motor_warnings', 'speed': motor_id})
+
+    async def reset_coulomb_counter(self) -> None:
+        await self._send({'cmd': 'reset_coulomb'})
 
     async def push_obstacle(self, direction: str,
                             distance_m: float | None = None,
@@ -1180,6 +1269,12 @@ class MirrorBridge:
 
     def _on_health(self, msg: Any) -> None:
         self._on_runtime_frame(msg, self.on_health)
+
+    def _on_safety_event(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_safety_event)
+
+    def _on_blackbox(self, msg: Any) -> None:
+        self._on_runtime_frame(msg, self.on_blackbox)
 
     def _safe_call(self, fn: Callable, *args: Any) -> None:
         try:

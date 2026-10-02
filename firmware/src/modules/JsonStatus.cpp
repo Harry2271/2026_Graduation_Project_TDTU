@@ -45,15 +45,15 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
     doc["pid"]  = modeManager->isPIDEnabled();
     doc["max_pct"] = max_pct;
 
-    JsonObject nav = doc.createNestedObject("nav");
+    JsonObject nav = doc["nav"].to<JsonObject>();
     nav["vx"]    = nav_vx;
     nav["vy"]    = nav_vy;
     nav["omega"] = nav_omega;
 
-    JsonArray motorsArr = doc.createNestedArray("motors");
+    JsonArray motorsArr = doc["motors"].to<JsonArray>();
     const int16_t* tgt = modeManager->getRampedSpeeds();
     for (int i = 0; i < MOTOR_COUNT; i++) {
-        JsonObject m = motorsArr.createNestedObject();
+        JsonObject m = motorsArr.add<JsonObject>();
         m["id"]     = i;
         m["name"]   = MOTOR_NAMES[i];
         m["dir"]    = MOTOR_PINS[i].dir;
@@ -64,7 +64,7 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
         m["count"]  = (long)(encoders[i].getCumulativeCount() * MOTOR_PINS[i].dir);
     }
 
-    JsonObject ir_obj = doc.createNestedObject("ir");
+    JsonObject ir_obj = doc["ir"].to<JsonObject>();
     ir_obj["mask"] = ir->detectedMask();
     ir_obj["RL"]   = ir->isDetected(IRPosition::REAR_LEFT);
     ir_obj["RR"]   = ir->isDetected(IRPosition::REAR_RIGHT);
@@ -73,7 +73,7 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
 
     const bool front_stale = front_tof->isStale(now_ms);
     const bool front_valid = front_tof->isReadingValid() && !front_stale;
-    JsonObject front = doc.createNestedObject("front_tof");
+    JsonObject front = doc["front_tof"].to<JsonObject>();
     front["sensor"] = "vl53l1x";
     front["distance_mm"] = front_tof->getDistanceMm();
     front["distance_cm"] = front_tof->getDistanceCm();
@@ -84,13 +84,13 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
     front["slowing"] = front_tof->isSlowing(now_ms);
 
     // Legacy full-status alias retained during the Pi/UI rollout.
-    JsonObject shp = doc.createNestedObject("sharp");
+    JsonObject shp = doc["sharp"].to<JsonObject>();
     shp["dist_cm"] = front_tof->getDistanceCm();
     shp["too_close"] = front_tof->isTooClose(now_ms);
     shp["slowing"] = front_tof->isSlowing(now_ms);
     shp["present"] = front_tof->isPresent();
 
-    JsonObject imu_obj = doc.createNestedObject("imu");
+    JsonObject imu_obj = doc["imu"].to<JsonObject>();
     if (imu->isOperational()) {
         imu_obj["ok"]      = true;
         imu_obj["heading"] = imu->getHeading();
@@ -107,7 +107,7 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
         imu_obj["ok"] = false;
     }
 
-    JsonObject pwr = doc.createNestedObject("pwr");
+    JsonObject pwr = doc["pwr"].to<JsonObject>();
     if (power->isOperational()) {
         pwr["ok"]        = true;
         pwr["voltage_v"] = power->getBusVoltage();
@@ -123,13 +123,13 @@ size_t JsonStatus::emitFullStatus(char* buf, size_t bufsize, uint32_t now_ms,
         pwr["ok"] = false;
     }
 
-    JsonObject tof_obj = doc.createNestedObject("tof");
+    JsonObject tof_obj = doc["tof"].to<JsonObject>();
     tof_obj["present"]   = tof->isPresent();
     tof_obj["dist_mm"]   = tof->getDistanceMm();
     tof_obj["dist_cm"]   = tof->getDistanceCm();
     tof_obj["at_unload"] = tof->isAtUnloadingDistance();
 
-    JsonObject cyl = doc.createNestedObject("cyl");
+    JsonObject cyl = doc["cyl"].to<JsonObject>();
     cyl["state"]    = CylinderActuator::stateName(cylinder->getState());
     cyl["extended"] = cylinder->isExtended();
     cyl["moving"]   = cylinder->isMoving();
@@ -167,13 +167,13 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
     doc["estop"] = e_stop;
     doc["max_pct"] = max_pct;
 
-    JsonArray nav = doc.createNestedArray("nav");
+    JsonArray nav = doc["nav"].to<JsonArray>();
     nav.add(nav_vx); nav.add(nav_vy); nav.add(nav_omega);
 
-    JsonArray motorsArr = doc.createNestedArray("motors");
+    JsonArray motorsArr = doc["motors"].to<JsonArray>();
     const int16_t* tgt = modeManager->getRampedSpeeds();
     for (int i = 0; i < MOTOR_COUNT; i++) {
-        JsonObject m = motorsArr.createNestedObject();
+        JsonObject m = motorsArr.add<JsonObject>();
         m["t"] = tgt[i];
         float rpm = encoders[i].getFilteredRPM() * MOTOR_PINS[i].dir;
         m["r"] = rpm;
@@ -183,13 +183,13 @@ size_t JsonStatus::emitTickStatus(char* buf, size_t bufsize, uint32_t now_ms,
         m["d"] = MOTOR_PINS[i].dir;
     }
 
-    JsonArray ir_arr = doc.createNestedArray("ir");
+    JsonArray ir_arr = doc["ir"].to<JsonArray>();
     ir_arr.add(ir->isDetected(IRPosition::REAR_LEFT));
     ir_arr.add(ir->isDetected(IRPosition::REAR_RIGHT));
     ir_arr.add(ir->isDetected(IRPosition::LEFT));
     ir_arr.add(ir->isDetected(IRPosition::RIGHT));
 
-    JsonObject st = doc.createNestedObject("st");
+    JsonObject st = doc["st"].to<JsonObject>();
     st["imu"] = imu->isOperational();
     st["pwr"] = power->isOperational();
     const bool front_stale = front_tof->isStale(now_ms);
@@ -231,7 +231,7 @@ size_t JsonStatus::emitEncoderSnapshot(char* buf, size_t bufsize,
     JsonObject data = doc["data"].to<JsonObject>();
     JsonArray arr = data["motors"].to<JsonArray>();
     for (int i = 0; i < MOTOR_COUNT; i++) {
-        JsonObject m = arr.createNestedObject();
+        JsonObject m = arr.add<JsonObject>();
         m["id"]   = i;
         m["name"] = MOTOR_NAMES[i];
         m["tgt"]  = ramped_speeds[i];
@@ -257,7 +257,7 @@ size_t JsonStatus::emitObstacle(char* buf, size_t bufsize,
     doc["front_tof_close"] = front_tof->isTooClose(millis());
     doc["sharp_cm"] = front_tof->getDistanceCm();
     doc["sharp_close"] = front_tof->isTooClose(millis());
-    JsonArray ir_arr = doc.createNestedArray("ir");
+    JsonArray ir_arr = doc["ir"].to<JsonArray>();
     ir_arr.add(ir->isDetected(IRPosition::REAR_LEFT));
     ir_arr.add(ir->isDetected(IRPosition::REAR_RIGHT));
     ir_arr.add(ir->isDetected(IRPosition::LEFT));

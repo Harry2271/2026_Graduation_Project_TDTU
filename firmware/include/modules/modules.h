@@ -30,3 +30,19 @@
 #include "JsonStatus.h"
 #include "HealthMonitor.h"
 #include "I2CBus.h"
+
+// Phase 1: Foundation (Safety + Performance)
+#include "SafetyController.h"
+#include "DynamicAcceleration.h"
+// ZeroCopyTelemetry is already in JsonStatus.h
+
+// Phase 2: Intelligence (Adaptive Behavior)
+#include "AdaptivePID.h"
+#include "BatteryPredictor.h"
+
+// Phase 3: Reliability (Self-Healing)
+#include "I2CWatchdog.h"
+#include "MotorHealthMonitor.h"
+
+// Phase 4: Advanced (Debugging Tools)
+#include "BlackBoxRecorder.h"
