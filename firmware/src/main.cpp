@@ -564,7 +564,7 @@ void applySpeeds()
         float scale = g_max_speed_pct / 100.0f;
         int16_t limited = (int16_t)(g_ramped_speeds[i] * scale);
 
-        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_MAX_DUTY);
+        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_RPM_REF_DUTY);
 
         if (g_pid_enabled) {
             // Sign the measurement with the motor's hardware direction so the

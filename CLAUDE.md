@@ -131,6 +131,10 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `{"cmd":"begin_dock"}` | Start full docking/unload sequence |
 | `{"cmd":"cancel_dock"}` | Cancel docking sequence |
 | `{"cmd":"obstacle_left"\|"obstacle_right"\|"obstacle_front"\|"obstacle_front_left"\|"obstacle_front_right"\|"obstacle_rear"\|"obstacle_rear_left"\|"obstacle_rear_right"\|"obstacle_clear"}` | Reactive obstacle events (see `ObstacleAvoidance` module). Optional `distance_m` (0–12 m) and `severity` (0–1) payload on left/right/compound directions. |
+| `{"cmd":"clear_soft_stop"}` / `{"cmd":"clear_hard_stop"}` / `{"cmd":"clear_emergency"}` | Clear a `SafetyController` level (SOFT/HARD/EMERGENCY). SOFT auto-clears; HARD needs Pi/operator; EMERGENCY needs manual inspect. |
+| `{"cmd":"get_blackbox"}` / `{"cmd":"clear_blackbox"}` | Stream the frozen crash-dump buffer (type 147, one line) / clear it and resume recording (`BlackBoxRecorder`). |
+| `{"cmd":"reset_motor_warnings","speed":N}` | Reset `MotorHealthMonitor` warnings; `speed`=0..3 for one motor, `-1` for all. |
+| `{"cmd":"reset_coulomb"}` | Zero the `BatteryPredictor` coulomb counter. |
 
 **JSON responses (ESP32 → Pi):**
 
@@ -152,6 +156,8 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `143` | `{"type":143,"data":{"mode":"...","nav":[vx,vy,omega],"motors":[...]}}` — compact tick telemetry (500ms) |
 | `144` | `{"type":144,"data":{"uptime_ms":N,"alive":N,"e_stop":bool,"mode":"..."}}` — alive heartbeat every 500 ms; Pi uses this to detect firmware liveness (was type 141 before Aug 2026) |
 | `145` | `{"type":145,"data":{"present":bool,"debounce_ms":N}}` — cargo bed presence (on-demand via `get_cargo` cmd) |
+| `146` | `{"type":146,"data":{"level":N,"timestamp_ms":N,"source":"...","reason":"...","old_level":N}}` — safety transition (`SafetyController`); level 0=NORMAL,1=SOFT_STOP,2=HARD_STOP,3=EMERGENCY |
+| `147` | `{"type":147,"trigger":N,"reason":"...","samples":N,"freeze_ts":N,"data":[{ts,nav,mt,mr,imu,sl,ir,tof}]}` — BlackBox crash dump (`BlackBoxRecorder`), single line, on-demand via `get_blackbox` |
 
 **ASCII fallback (one command per line, useful for `pio device monitor` and the web UI):**
 

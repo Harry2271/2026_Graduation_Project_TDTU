@@ -103,9 +103,21 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define PWM_RESOLUTION   10        // 10-bit: 0-1023
 #define PWM_MAX_DUTY     1023
 
-// 21V supply — limit to ~10.5V average for 12V motor safety
-// 21V * (511/1023) ≈ 10.5V
-#define MOTOR_MAX_DUTY   511
+// Pack ~20.5V. MOTOR_MAX_DUTY is the hard output ceiling (driver clamp + PID
+// output limit + brake). Full 12V motor rating: 20.5V × (585/1023) ≈ 11.7V,
+// safe continuous for the JGB37-520 12V motors. Was 511 (~10.5V, conservative).
+// Raising to 585 gives the PID ~14% more torque headroom to hold speed under
+// load / cargo / incline / stall.
+// ⚠️ NEVER set to 1023 (= full pack ~20.5V on 12V motors → thermal damage).
+#define MOTOR_MAX_DUTY   585
+
+// RPM-mapping reference: the feedforward PWM that maps to NOMINAL_RPM in the
+// target_rpm formula (main.cpp / ModeManager). Kept at the previous 511 so the
+// commanded TOP SPEED — and therefore wheel slip and SLAM odometry behavior —
+// stays UNCHANGED. The extra ceiling above (511→585) is available to the PID
+// only under load, not as more top speed. This is the "boost force, keep SLAM"
+// decoupling: raise torque headroom without pushing the robot faster.
+#define MOTOR_RPM_REF_DUTY  511
 
 // ============================================================
 // PID Control Parameters
@@ -114,10 +126,12 @@ static const pcnt_unit_t PCNT_UNITS[] = {
 #define PID_UPDATE_MS       (1000 / PID_UPDATE_RATE_HZ)
 // Reduced from 400 → 200: the old limit allowed integral contribution up to
 // Ki×400 = 0.2×400 = 80 PWM (~16% of 511 max duty) — aggressive for small
-// geared motors and caused visible overshoot after stall recovery.  At 200
-// the max integral term is 40 PWM (~8%), still enough to correct steady-state
-// error without hunting.
-#define PID_INTEGRAL_LIMIT  200.0f
+// geared motors and caused visible overshoot after stall recovery.  At 300
+// against the new 585 ceiling the max integral term is Ki×300 = 60 PWM (~10%
+// of ceiling, vs the old 40/511 ≈ 8%) — a modest bump so the controller holds
+// steady-state torque under load without the old 400-limit hunting.
+// ⚠️ If post-stall overshoot/hunting reappears on the bench, lower back to 200.
+#define PID_INTEGRAL_LIMIT  300.0f
 #define PID_OUTPUT_LIMIT    (float)MOTOR_MAX_DUTY
 
 #define DEFAULT_KP  2.5f

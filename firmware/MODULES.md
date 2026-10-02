@@ -64,6 +64,19 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 | CommandParser | `modules/CommandParser.{h,cpp}` | JSON + ASCII command parsing from UART (Pi) and WebSocket |
 | BNO055_SPI | `modules/BNO055_SPI.{h,cpp}` | **DEPRECATED — not used.** Software SPI bit-bang driver for BNO055. Originally planned for faster clock, but SPI pins (GPIO 4/15/21) conflict with motor PWM and encoder inputs. `BNO055Sensor.cpp` uses `I2CBus` instead. Kept for archival; not compiled into `main.cpp`. |
 
+### Upgrade Modules (Phase 1-4 — Safety / Intelligence / Reliability / Debug)
+
+| Module | File | Phase | Responsibility |
+|--------|------|-------|---------------|
+| SafetyController | `modules/SafetyController.{h,cpp}` | 1 | Multi-level E-stop state machine (NORMAL → SOFT_STOP → HARD_STOP → EMERGENCY) with recovery hierarchy. SOFT_STOP auto-clears after 500 ms clear; HARD_STOP needs Pi/operator; EMERGENCY needs manual inspect. Emits type 146 on every transition. |
+| DynamicAcceleration | `modules/DynamicAcceleration.{h,cpp}` | 1 | Adaptive ramp profiles — SMOOTH (cargo, ramp 30 + kick 180×20), NORMAL (empty, ramp 50 + kick 255×15), AGGRESSIVE (emergency dodge, ramp 100 + kick 255×20). Supplies ramp slope + kick params that replace the fixed `config.h` constants in `applySpeeds()` and `ModeManager::applyRampAndPID()`. |
+| AdaptivePID | `modules/AdaptivePID.{h,cpp}` | 2 | Runtime PID auto-tuner. Every 5 s recomputes kp/ki/kd from cargo load (raises Ki), wheel slip + oscillation (lower Kp), and battery voltage (feed-forward 1.0–1.15× applied at the output). Writes identical gains to all 4 motors in the shared `g_pid[]`. Suspended 60 s after a manual `set_pid`; skipped during AUTO_ROAM. |
+| BatteryPredictor | `modules/BatteryPredictor.{h,cpp}` | 2 | Coulomb-counting battery SOC + runtime estimate from INA226 voltage/current. `shouldReturnToDock()` low-battery flag. `reset_coulomb` zeroes the counter. |
+| I2CWatchdog | `modules/I2CWatchdog.{h,cpp}` | 3 | Monitors the shared I²C bus for stuck sensors; triggers recovery. Runs every 10 s. |
+| MotorHealthMonitor | `modules/MotorHealthMonitor.{h,cpp}` | 3 | Per-motor health via encoder jitter / stall analysis. Flags DEGRADED motors; `reset_motor_warnings` (speed=0..3, or -1 for all) clears them after maintenance. Uses `MOTOR_HEALTH_COUNT`. |
+| BlackBoxRecorder | `modules/BlackBoxRecorder.{h,cpp}` | 4 | 30 s @ 10 Hz circular telemetry buffer in PSRAM (ESP32-S3 SPIRAM). Freezes on crash triggers (MOTION_STUCK/HARD_STOP/EMERGENCY/IMU_SHOCK/MANUAL); `get_blackbox` streams it as a single-line type 147; `clear_blackbox` resumes recording. |
+| ZeroCopyTelemetry | `modules/ZeroCopyTelemetry.{h,cpp}` | — | Direct-to-stream JSON serialization helpers (ArduinoJson 7.x) for the upgrade telemetry paths. |
+
 ---
 
 ## System Modes
@@ -131,6 +144,21 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 {"cmd":"obstacle_front"}   // LiDAR detected obstacle ahead -> rotate to clear side
 {"cmd":"obstacle_clear"}   // Path is clear -- resume normal navigation
 ```
+
+### Phase 1-4 Upgrade Commands (JSON)
+```json
+{"cmd":"clear_soft_stop"}               // Clear SOFT_STOP safety level
+{"cmd":"clear_hard_stop"}               // Clear HARD_STOP safety level
+{"cmd":"clear_emergency"}               // Clear EMERGENCY (post manual inspect)
+{"cmd":"get_blackbox"}                  // Stream crash dump (type 147, one line)
+{"cmd":"clear_blackbox"}                // Clear buffer, resume recording
+{"cmd":"reset_motor_warnings","speed":-1} // Reset motor health (0..3, or -1=all)
+{"cmd":"reset_coulomb"}                 // Zero battery coulomb counter
+```
+
+Response types added by the upgrade:
+- `type 146` — safety transition `{level, timestamp_ms, source, reason, old_level}` (0=NORMAL,1=SOFT_STOP,2=HARD_STOP,3=EMERGENCY)
+- `type 147` — BlackBox dump `{trigger, reason, samples, freeze_ts, data:[{ts,nav,mt,mr,imu,sl,ir,tof}]}`
 
 ### ASCII Commands
 ```
