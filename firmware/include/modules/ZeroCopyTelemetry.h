@@ -50,9 +50,13 @@ public:
         int16_t nav_vx, int16_t nav_vy, int16_t nav_omega,
         uint8_t max_pct);
 
-    /// Emit encoder snapshot (type 130)
+    /// Emit encoder snapshot (type 130) — on-demand via get_encoder command
     static void emitEncoderSnapshot(Stream& stream,
         const int16_t* ramped_speeds, Encoder encoders[]);
+
+    /// Emit encoder stream (type 130) — periodic 5Hz telemetry
+    static void emitEncoderStream(Stream& stream, uint32_t now_ms,
+        Encoder encoders[]);
 
     /// Emit IMU telemetry (type 134)
     static void emitIMU(Stream& stream, BNO055Sensor* imu,
@@ -70,14 +74,6 @@ public:
         uint32_t alive_counter, SafetyController* safety,
         ModeManager* modeManager);
 
-    /// Emit adaptive PID state (type 149)
-    static void emitAdaptivePIDState(Stream& stream, uint32_t now_ms,
-        class AdaptivePID* adaptive_pid);
-
-    /// Emit PathLearner tuning state (type 150)
-    static void emitPathLearnerState(Stream& stream, uint32_t now_ms,
-        class PathLearner* path_learner);
-
     /// Emit ACK (type 128)
     static void emitAck(Stream& stream, const char* command,
         const char* status = "accepted");
@@ -89,6 +85,14 @@ public:
     /// Emit move ACK (type 132)
     static void emitMoveAck(Stream& stream,
         uint16_t seq, const char* status, const char* reason = nullptr);
+
+    /// Emit arm state telemetry (type 148)
+    static void emitArmState(Stream& stream, uint32_t now_ms,
+        const float joints[5], bool moving);
+
+    /// Emit adaptive PID telemetry (type 149)
+    static void emitAdaptivePIDState(Stream& stream, uint32_t now_ms,
+        class AdaptivePID* adaptive);
 };
 
 // Legacy JsonStatus class — keep for backward compatibility during rollout

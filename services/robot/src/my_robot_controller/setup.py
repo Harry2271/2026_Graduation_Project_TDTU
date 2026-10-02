@@ -46,6 +46,8 @@ setup(
             'vision_node = my_robot_controller.vision_node:main',
             'motor_health_node = my_robot_controller.motor_health_node:main',
             'voice_control_node = my_robot_controller.voice_control_node:main',
+            'audio_alerts = my_robot_controller.audio_alerts_node:main',
+            'mission_stats = my_robot_controller.mission_stats_node:main',
         ],
     },
 )

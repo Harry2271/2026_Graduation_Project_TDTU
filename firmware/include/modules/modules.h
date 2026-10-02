@@ -27,7 +27,7 @@
 #include "VL53L0XSensor.h"
 #include "CylinderActuator.h"
 #include "CargoSensor.h"
-#include "JsonStatus.h"
+#include "ZeroCopyTelemetry.h"
 #include "HealthMonitor.h"
 #include "I2CBus.h"
 
@@ -46,3 +46,9 @@
 
 // Phase 4: Advanced (Debugging Tools)
 #include "BlackBoxRecorder.h"
+
+// Phase 1 (RL Navigation): On-Device Learning
+#include "PathLearner.h"
+
+// Phase A: Robotic Arm (5-DOF Servo Control)
+#include "RoboticArm.h"

@@ -217,7 +217,7 @@ enum MotorState {
 // BNO055 attitude/impact observation thresholds. @bench-tune: record normal
 // braking, strafing, payload, unload, ramp and controlled-impact data before
 // enabling enforcement. Observation mode never changes motor/cylinder output.
-#define IMU_SAFETY_ENFORCEMENT_ENABLED false
+#define IMU_SAFETY_ENFORCEMENT_ENABLED true
 #define IMU_SAFETY_CONFIG_REV          1
 #define IMU_TILT_WARNING_DEG           10.0f
 #define IMU_TILT_WARNING_DWELL_MS      250
@@ -237,7 +237,7 @@ enum MotorState {
 #define INA226_SCL_PIN         11       // Shared I2C bus with BNO055 (GPIO11)
 #define INA226_I2C_FREQ_HZ     100000   // Shared bus clock; BNO055 clone requires 100 kHz
 #define INA226_SHUNT_OHMS      0.01f    // 10 mΩ on CJMCU-226
-#define POWER_PUBLISH_MS       5000     // Publish power telemetry every 5 s
+#define POWER_PUBLISH_MS       500      // Publish power telemetry every 500 ms (2 Hz)
 
 // ============================================================
 // Battery — Molicel M21-B4055A pack (84 Wh)

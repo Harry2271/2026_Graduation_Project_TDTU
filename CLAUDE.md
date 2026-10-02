@@ -135,6 +135,11 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `{"cmd":"get_blackbox"}` / `{"cmd":"clear_blackbox"}` | Stream the frozen crash-dump buffer (type 147, one line) / clear it and resume recording (`BlackBoxRecorder`). |
 | `{"cmd":"reset_motor_warnings","speed":N}` | Reset `MotorHealthMonitor` warnings; `speed`=0..3 for one motor, `-1` for all. |
 | `{"cmd":"reset_coulomb"}` | Zero the `BatteryPredictor` coulomb counter. |
+| `{"cmd":"arm_move","joints":[θ0,θ1,θ2,θ3,θ4]}` | Move arm to joint angles (degrees). 5 DOF: base, shoulder, elbow, wrist_pitch, wrist_roll. |
+| `{"cmd":"arm_move_ik","x":X,"y":Y,"z":Z}` | Move arm to Cartesian position (mm) via inverse kinematics. |
+| `{"cmd":"arm_grip","close":bool}` | Close/open gripper (servo 5). |
+| `{"cmd":"arm_home"}` | Return arm to home position (all joints 0°, gripper open). |
+| `{"cmd":"get_arm"}` | Request arm state (type 148 response). |
 
 **JSON responses (ESP32 → Pi):**
 
@@ -158,6 +163,9 @@ The contract between `services/robot/` and `firmware/`. Both sides must agree by
 | `145` | `{"type":145,"data":{"present":bool,"debounce_ms":N}}` — cargo bed presence (on-demand via `get_cargo` cmd) |
 | `146` | `{"type":146,"data":{"level":N,"timestamp_ms":N,"source":"...","reason":"...","old_level":N}}` — safety transition (`SafetyController`); level 0=NORMAL,1=SOFT_STOP,2=HARD_STOP,3=EMERGENCY |
 | `147` | `{"type":147,"trigger":N,"reason":"...","samples":N,"freeze_ts":N,"data":[{ts,nav,mt,mr,imu,sl,ir,tof}]}` — BlackBox crash dump (`BlackBoxRecorder`), single line, on-demand via `get_blackbox` |
+| `148` | `{"type":148,"data":{"joints":[θ0,θ1,θ2,θ3,θ4],"gripper":N,"ik_target":{"x":X,"y":Y,"z":Z},"collision":bool}}` — arm state (RoboticArm, on-demand via `get_arm`) |
+| `149` | `{"type":149,"data":{"kp":...,"ki":...,"kd":...,"tuning":{"cargo_load":...,"slip_factor":...,"voltage_factor":...},"suspended":bool}}` — adaptive PID telemetry (AdaptivePID, 5 s interval) |
+| `130` | `{"type":130,"data":{"encoders":[{id,name,count,rpm},...],"timestamp_ms":N}}` — encoder stream (100 ms when streaming enabled via `stream_encoders` command) |
 
 **ASCII fallback (one command per line, useful for `pio device monitor` and the web UI):**
 

@@ -248,12 +248,15 @@ Update `services/robot/.../esp32_bridge.py`:
 ```python
 TYPE_SAFETY_EVENT = 146  # SafetyController state changes
 TYPE_BLACKBOX = 147      # Crash dump data
+TYPE_ARM_STATE = 148     # Robotic arm joint angles and motion state
 
 # In handle_message():
 elif msg_type == self.TYPE_SAFETY_EVENT:
     self._safe_call(self.on_safety_event, data)
 elif msg_type == self.TYPE_BLACKBOX:
     self._safe_call(self.on_blackbox_dump, data)
+elif msg_type == self.TYPE_ARM_STATE:
+    self._safe_call(self.on_arm_state, data)
 ```
 
 ---

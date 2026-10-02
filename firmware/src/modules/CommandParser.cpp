@@ -166,8 +166,13 @@ CommandType CommandParser::parseASCII(const char* cmd, Command& out)
         } break;
 
         case 'A': case 'a':
-            // Force AUTO_ROAM mode (sensor-only autonomy, ignores Pi heartbeat)
-            out.type = CMD_FORCE_AUTO_ROAM;
+            // Uppercase 'A' = arm_home command (Phase A: Robotic Arm)
+            // Lowercase 'a' = get_arm query (response type 148)
+            if (first == 'A') {
+                out.type = CMD_ARM_HOME;
+            } else {
+                out.type = CMD_GET_ARM;
+            }
             break;
 
         case 'U': case 'u': {
@@ -421,6 +426,43 @@ CommandType CommandParser::parseJSON(const char* json_str, Command& out)
     }
     else if (strcmp(cmd, "reset_coulomb") == 0) {
         out.type = CMD_RESET_COULOMB;
+    }
+    // Robotic Arm Commands (Phase A)
+    else if (strcmp(cmd, "arm_move") == 0) {
+        out.type = CMD_ARM_MOVE;
+        ArduinoJson::JsonArray arr = doc["joints"];
+        if (arr.size() >= 5) {
+            for (int i = 0; i < 5; i++) {
+                out.arm_joints[i] = arr[i].as<float>();
+            }
+            out.has_arm_data = true;
+        } else {
+            out.type = CMD_UNKNOWN;
+        }
+    }
+    else if (strcmp(cmd, "arm_grip") == 0) {
+        out.type = CMD_ARM_GRIP;
+        out.arm_grip_close = doc["close"] | false;
+        out.has_arm_data = true;
+    }
+    else if (strcmp(cmd, "arm_home") == 0) {
+        out.type = CMD_ARM_HOME;
+    }
+    else if (strcmp(cmd, "get_arm") == 0) {
+        out.type = CMD_GET_ARM;
+    }
+    // PathLearner Commands (Phase 1: RL Navigation)
+    else if (strcmp(cmd, "tune_auto") == 0) {
+        out.type = CMD_TUNE_AUTO;
+        out.tune_enable = doc["enable"] | false;
+    }
+    else if (strcmp(cmd, "record_delivery") == 0) {
+        out.type = CMD_RECORD_DELIVERY;
+        out.delivery_time_s = doc["time_s"] | 0.0f;
+        out.delivery_collision = doc["collision"] | false;
+        out.delivery_energy_wh = doc["energy_wh"] | 0.0f;
+        out.delivery_distance_m = doc["distance_m"] | 0.0f;
+        out.delivery_jerk_sum = doc["jerk_sum"] | 0.0f;
     }
 
     return out.type;

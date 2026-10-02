@@ -57,6 +57,12 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 | CargoSensor | `modules/CargoSensor.{h,cpp}` | Aggregates VL53L0X + cylinder state. Type 141 telemetry: `cargo=true` when an object is on the dock platform. |
 | CylinderActuator | `modules/CylinderActuator.{h,cpp}` | L298N H-Bridge controller for the electric cylinder (extend/retract/stop). Implements timed state transitions for `begin_dock` / `cancel_dock`. Emits type 140 state. |
 
+### Actuators
+
+| Module | File | Responsibility |
+|--------|------|---------------|
+| RoboticArm | `modules/RoboticArm.{h,cpp}` | 5-DOF robotic arm controller. 6 servos (3× MG966R + 3× SG90) via PCA9685 I2C PWM driver. Implements IK, collision detection, and coordinated motion. Emits type 148 state, type 149 adaptive PID telemetry. |
+
 ### Communication
 
 | Module | File | Responsibility |
@@ -134,8 +140,11 @@ Applied at 3 points: PWM output, encoder RPM, and telemetry display. If a motor 
 
 | Type | Interval | Content |
 |------|----------|---------|
+| `{"type":130,...}` | 100 ms (stream mode) | Encoder stream: 4-motor RPM + counts for real-time odometry |
 | `{"type":133,...}` | 5000 ms | Power: bus voltage, shunt voltage, current, power |
 | `{"type":134,...}` | 50 ms | IMU: yaw, pitch, roll, temperature, calibration status |
+| `{"type":148,...}` | on-demand | Arm state: joint angles, gripper, IK target, collision flags |
+| `{"type":149,...}` | 5000 ms | Adaptive PID: auto-tuned gains, tuning metrics, suspension status |
 
 ### Obstacle Avoidance Commands (JSON)
 ```json
