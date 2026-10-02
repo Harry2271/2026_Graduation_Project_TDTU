@@ -194,6 +194,32 @@ def generate_launch_description():
         },
     )
 
+    # ── 9. Audio alerts (safety event sounds) ──────────────────────────────────
+    audio_alerts = Node(
+        package=ROBOT_PKG,
+        executable='audio_alerts',
+        name='audio_alerts',
+        output='screen',
+        parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+        }],
+    )
+
+    # ── 10. Mission stats tracker ──────────────────────────────────────────────
+    mission_stats = Node(
+        package=ROBOT_PKG,
+        executable='mission_stats',
+        name='mission_stats',
+        output='screen',
+        parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+        }],
+        additional_env={
+            'MISSION_STATS_FILE': os.environ.get(
+                'MISSION_STATS_FILE', os.path.join(ROBOT_WS, 'mission_stats.json')),
+        },
+    )
+
     # ── Build launch description ────────────────────────────────────────────────
     # Start order matters: LiDAR first, then SLAM/Nav2, then brain last
     return LaunchDescription([
@@ -229,4 +255,6 @@ def generate_launch_description():
         brain_node,
         apriltag_node,
         web_bridge,
+        audio_alerts,
+        mission_stats,
     ])

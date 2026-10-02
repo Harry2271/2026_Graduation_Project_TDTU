@@ -326,7 +326,7 @@ void ModeManager::applyRampAndPID(int16_t target_speeds[4],
         float scale = max_speed_pct_ / 100.0f;
         int16_t limited = (int16_t)(ramped_speeds_[i] * scale);
 
-        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_MAX_DUTY);
+        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_RPM_REF_DUTY);
 
         if (pid_enabled_) {
             // Sign the measurement with the motor's dir so the PID

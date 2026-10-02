@@ -56,6 +56,10 @@ class Esp32Bridge(Protocol):
                             distance_m: float | None = None,
                             severity: float | None = None) -> None: ...
     async def push_obstacle_clear(self) -> None: ...
+    async def arm_move(self, joints: list[float]) -> None: ...
+    async def arm_grip(self, close: bool) -> None: ...
+    async def arm_home(self) -> None: ...
+    async def get_arm(self) -> dict: ...
     def battery_pct(self) -> Optional[float]: ...
     def battery_voltage(self) -> Optional[float]: ...
     def battery_current(self) -> Optional[float]: ...
@@ -77,6 +81,9 @@ class Esp32Bridge(Protocol):
     on_tof: Callable[[dict], None]
     on_cylinder: Callable[[dict], None]
     on_health: Callable[[dict], None]
+    on_arm_state: Callable[[dict], None]
+    on_adaptive_pid: Callable[[dict], None]
+    on_encoder_stream: Callable[[dict], None]
 
 
 # Names of supported obstacle directions.  Mirrors the firmware enum
@@ -198,6 +205,9 @@ class FakeEsp32Bridge:
         self.on_tof: Callable[[dict], None] = lambda _data: None
         self.on_cylinder: Callable[[dict], None] = lambda _data: None
         self.on_health: Callable[[dict], None] = lambda _data: None
+        self.on_arm_state: Callable[[dict], None] = lambda _data: None
+        self.on_adaptive_pid: Callable[[dict], None] = lambda _data: None
+        self.on_encoder_stream: Callable[[dict], None] = lambda _data: None
 
         # Cached unload state (type 140) so async callers can poll it
         # without going through the callback.  Terminal COMPLETE/error frames
@@ -300,6 +310,19 @@ class FakeEsp32Bridge:
 
     async def push_obstacle_clear(self) -> None:
         self._commands.append({'cmd': 'obstacle_clear'})
+
+    async def arm_move(self, joints: list[float]) -> None:
+        self._commands.append({'cmd': 'arm_move', 'joints': joints})
+
+    async def arm_grip(self, close: bool) -> None:
+        self._commands.append({'cmd': 'arm_grip', 'close': close})
+
+    async def arm_home(self) -> None:
+        self._commands.append({'cmd': 'arm_home'})
+
+    async def get_arm(self) -> dict:
+        self._commands.append({'cmd': 'get_arm'})
+        return {}
 
     def battery_pct(self) -> Optional[float]:
         return None
@@ -404,6 +427,8 @@ class RealEsp32Bridge:
     TYPE_CARGO       = 145  # Cargo microswitch state (on-demand query)
     TYPE_SAFETY_EVENT = 146  # Safety state transitions (Phase 1 upgrade)
     TYPE_BLACKBOX    = 147  # BlackBox crash dump stream (Phase 4 upgrade)
+    TYPE_ARM_STATE   = 148  # Robotic arm state (Phase A)
+    TYPE_ADAPTIVE_PID = 149  # Adaptive PID telemetry (Phase 2)
 
     # Best-effort cap on a single JSON line — keeps memory bounded if ESP32
     # ever goes into a runaway write loop.  Status JSON is ~700 bytes; power
@@ -450,6 +475,9 @@ class RealEsp32Bridge:
         self.on_health: Callable[[dict], None] = lambda _data: None
         self.on_safety_event: Callable[[dict], None] = lambda _data: None
         self.on_blackbox: Callable[[dict], None] = lambda _data: None
+        self.on_arm_state: Callable[[dict], None] = lambda _data: None
+        self.on_adaptive_pid: Callable[[dict], None] = lambda _data: None
+        self.on_encoder_stream: Callable[[dict], None] = lambda _data: None
 
         # Cached unload state (type 140) so async callers can poll it
         # without going through the callback.  Terminal COMPLETE/error frames
@@ -634,6 +662,23 @@ class RealEsp32Bridge:
 
     async def push_obstacle_clear(self) -> None:
         await self._send_line({'cmd': 'obstacle_clear'})
+
+    async def arm_move(self, joints: list[float]) -> None:
+        """Move robotic arm to specified joint angles (degrees)."""
+        await self._send_line({'cmd': 'arm_move', 'joints': joints})
+
+    async def arm_grip(self, close: bool) -> None:
+        """Close or open gripper."""
+        await self._send_line({'cmd': 'arm_grip', 'close': close})
+
+    async def arm_home(self) -> None:
+        """Return arm to home position."""
+        await self._send_line({'cmd': 'arm_home'})
+
+    async def get_arm(self) -> dict:
+        """Request arm state (type 148 response)."""
+        await self._send_line({'cmd': 'get_arm'})
+        return {}
 
     @property
     def last_cargo(self) -> dict:
@@ -857,7 +902,11 @@ class RealEsp32Bridge:
             self._safe_call(self.on_status_update, data)
         elif msg_type == self.TYPE_ENCODER:
             motors = data.get('motors') or []
-            self.on_encoder_update(motors)
+            # Check if this is encoder stream mode (has timestamp_ms)
+            if 'timestamp_ms' in data:
+                self._safe_call(self.on_encoder_stream, data)
+            else:
+                self.on_encoder_update(motors)
         elif msg_type == self.TYPE_ERROR:
             error_text = str(data.get('error', 'unknown'))
             import time as _t
@@ -938,6 +987,10 @@ class RealEsp32Bridge:
             # BlackBox crash dump (Phase 4 upgrade) — frozen telemetry stream
             self._last_blackbox = data
             self._safe_call(self.on_blackbox, data)
+        elif msg_type == self.TYPE_ARM_STATE:
+            self._safe_call(self.on_arm_state, data)
+        elif msg_type == self.TYPE_ADAPTIVE_PID:
+            self._safe_call(self.on_adaptive_pid, data)
         elif msg_type == self.TYPE_TICK:
             # Compact tick telemetry (type 143) — subset of type 131 emitted
             # every 500 ms. Forward to the same on_status_update callback so

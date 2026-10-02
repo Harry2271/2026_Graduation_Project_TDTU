@@ -50,6 +50,7 @@ FrontTofSensor g_front_tof;
 VL53L0XSensor   g_tof;
 CylinderActuator g_cylinder;
 CargoSensor      g_cargo;
+RoboticArm       g_arm;
 
 // Module health monitor — detects stuck I2C sensors, triggers recovery,
 // emits type 142 health report every 1s + on state change
@@ -65,6 +66,11 @@ BatteryPredictor     g_battery;
 I2CWatchdog          g_i2c_watchdog;
 MotorHealthMonitor   g_motor_health;
 BlackBoxRecorder     g_blackbox;
+
+// ========================================================================
+// Phase 1 (RL Navigation): On-Device Learning
+// ========================================================================
+PathLearner          g_path_learner;
 
 // ========================================================================
 // Motor State — single control path
@@ -397,6 +403,9 @@ void setupHardware()
     // ---- Cargo sensor (microswitch on cargo bed) ----
     g_cargo.begin();
 
+    // ---- Robotic arm (5-DOF servo control) ----
+    g_arm.begin();
+
     Serial.printf("\n");
     Serial.printf("=====================================================\n");
     Serial.printf("  ESP32-S3 Mecanum Controller\n");
@@ -564,7 +573,7 @@ void applySpeeds()
         float scale = g_max_speed_pct / 100.0f;
         int16_t limited = (int16_t)(g_ramped_speeds[i] * scale);
 
-        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_MAX_DUTY);
+        float target_rpm = limited * (MOTOR_NOMINAL_RPM / (float)MOTOR_RPM_REF_DUTY);
 
         if (g_pid_enabled) {
             // Sign the measurement with the motor's hardware direction so the
@@ -1248,6 +1257,61 @@ void processPiCommand(const Command& cmd, uint32_t now_ms)
             emitCommandAck("reset_coulomb");
             break;
 
+        // Robotic Arm Command Handlers
+        case CMD_ARM_MOVE:
+            if (cmd.has_arm_data) {
+                g_arm.moveTo(cmd.arm_joints);
+                emitCommandAck("arm_move");
+            } else {
+                emitFirmwareError("ARM_INVALID_DATA", "arm_move missing joint data", "error");
+            }
+            break;
+
+        case CMD_ARM_GRIP:
+            if (cmd.has_arm_data) {
+                g_arm.grip(cmd.arm_grip_close);
+                emitCommandAck("arm_grip");
+            } else {
+                emitFirmwareError("ARM_INVALID_DATA", "arm_grip missing close parameter", "error");
+            }
+            break;
+
+        case CMD_ARM_HOME:
+            g_arm.home();
+            emitCommandAck("arm_home");
+            break;
+
+        case CMD_GET_ARM: {
+            ArmState state = g_arm.getState();
+            int n = snprintf(g_json_buf, sizeof(g_json_buf),
+                "{\"type\":148,\"data\":{\"joints\":[%.1f,%.1f,%.1f,%.1f,%.1f],"
+                "\"is_moving\":%s,\"last_cmd_ms\":%lu}}\n",
+                state.joints[0], state.joints[1], state.joints[2],
+                state.joints[3], state.joints[4],
+                state.is_moving ? "true" : "false",
+                (unsigned long)state.last_cmd_ms);
+            if (n > 0 && n < (int)sizeof(g_json_buf)) {
+                PiSerial.write((uint8_t*)g_json_buf, (size_t)n);
+            }
+        } break;
+
+        // PathLearner Commands (Phase 1: RL Navigation)
+        case CMD_TUNE_AUTO:
+            g_path_learner.setEnabled(cmd.tune_enable);
+            emitCommandAck("tune_auto");
+            break;
+
+        case CMD_RECORD_DELIVERY:
+            g_path_learner.recordDelivery(
+                cmd.delivery_time_s,
+                cmd.delivery_collision,
+                cmd.delivery_energy_wh,
+                cmd.delivery_distance_m,
+                cmd.delivery_jerk_sum
+            );
+            emitCommandAck("record_delivery");
+            break;
+
         default:
             break;
     }
@@ -1474,6 +1538,7 @@ void publishSensors(uint32_t now_ms)
     static uint32_t last_imu_ms   = 0;
     static uint32_t last_pwr_ms   = 0;
     static uint32_t last_enc_ms   = 0;
+    static uint32_t last_enc_stream_ms = 0;
     static uint32_t last_tof_ms   = 0;
     static uint32_t last_ir_ms    = 0;
     static uint32_t last_front_tof_ms = 0;
@@ -1506,6 +1571,13 @@ void publishSensors(uint32_t now_ms)
             g_json_buf, sizeof(g_json_buf),
             g_modeManager.getRampedSpeeds(), g_encoders);
         PiSerial.write(g_json_buf, n);
+        yield();
+    }
+
+    // Encoder stream — 5 Hz (200 ms) — compact telemetry
+    if (now_ms - last_enc_stream_ms >= 200) {
+        last_enc_stream_ms = now_ms;
+        ZeroCopyTelemetry::emitEncoderStream(PiSerial, now_ms, g_encoders);
         yield();
     }
 
@@ -1582,6 +1654,11 @@ void setup()
     g_motor_health.begin();
     g_blackbox.begin();
     Serial.println("[UPGRADE] All 8 modules initialized");
+
+    // Initialize Phase 1 (RL Navigation) modules
+    Serial.println("[RL_NAV] Initializing PathLearner...");
+    g_path_learner.begin();
+    Serial.println("[RL_NAV] PathLearner initialized");
 
     // Reflect boot-time sensor initialization immediately.  HealthMonitor
     // defaults records to ONLINE, so an absent/failing BNO055 must be marked
@@ -2067,6 +2144,9 @@ void loop()
 
     updateTestSequence(now);
 
+    // ---- Robotic Arm: servo ramp tick (every 20ms) ----
+    g_arm.update(now);
+
     // ---- Phase 3: I2C Watchdog (every 10s) ----
     g_i2c_watchdog.update(now);
 
@@ -2141,6 +2221,25 @@ void loop()
                 PIDGains gains = g_adaptive_pid.getGains(i);
                 g_pid[i].setGains(gains.kp, gains.ki, gains.kd);
             }
+        }
+
+        // Emit type 149 telemetry every 5s (self-throttled by module)
+        static uint32_t last_pid_telemetry = 0;
+        if (now - last_pid_telemetry >= 5000) {
+            ZeroCopyTelemetry::emitAdaptivePIDState(Serial, now, &g_adaptive_pid);
+            last_pid_telemetry = now;
+        }
+    }
+
+    // PathLearner update — continuous when enabled
+    if (g_path_learner.isEnabled()) {
+        g_path_learner.update(now);
+
+        // Emit type 150 telemetry every 10s when tuning is active
+        static uint32_t last_learner_telemetry = 0;
+        if (now - last_learner_telemetry >= 10000) {
+            ZeroCopyTelemetry::emitPathLearnerState(Serial, now, &g_path_learner);
+            last_learner_telemetry = now;
         }
     }
 

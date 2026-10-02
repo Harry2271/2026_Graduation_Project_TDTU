@@ -187,6 +187,18 @@ UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 | `{"cmd":"obstacle_rear"}` / `obstacle_rear_left` / `obstacle_rear_right` | Rear and rear-corner events |
 | `{"cmd":"obstacle_clear"}` | Explicitly clear Pi obstacle state and reset avoidance latch |
 
+#### Phase 1-4 Upgrade Commands (Safety / Battery / Motor Health / BlackBox)
+
+| JSON Command | Description |
+|-------------|-------------|
+| `{"cmd":"clear_soft_stop"}` | Clear SOFT_STOP safety level (SafetyController) |
+| `{"cmd":"clear_hard_stop"}` | Clear HARD_STOP safety level (Pi obstacle_clear equivalent) |
+| `{"cmd":"clear_emergency"}` | Clear EMERGENCY safety level (requires manual inspect) |
+| `{"cmd":"get_blackbox"}` | Stream frozen crash-dump buffer (response type 147, single line) |
+| `{"cmd":"clear_blackbox"}` | Clear BlackBox and resume recording |
+| `{"cmd":"reset_motor_warnings","speed":N}` | Reset MotorHealthMonitor warnings; `speed`=0..3 for one motor, `-1` for all |
+| `{"cmd":"reset_coulomb"}` | Zero the BatteryPredictor coulomb counter |
+
 ### Protocol — ESP32-S3 → Raspberry Pi 5 (Responses)
 
 | JSON Response | Type | Description |
@@ -204,6 +216,8 @@ UART0: 43 (TX), 44 (RX) — free on WeAct N16R8 (no bridge chip)
 | `{"type":143,"data":{"mode":"...","nav":[...],"motors":[...]}}` | TICK | Compact tick telemetry (500ms) — split from type 131 |
 | `{"type":144,"data":{"uptime_ms":N,"alive":N,"e_stop":bool,"mode":"..."}}` | ALIVE | Alive heartbeat every 500 ms; Pi uses this to detect firmware liveness (was type 141 before Aug 2026) |
 | `{"type":145,"data":{"present":true,"debounce_ms":N}}` | CARGO | Cargo bed presence query (on-demand via `get_cargo` cmd) |
+| `{"type":146,"data":{"level":N,"timestamp_ms":N,"source":"...","reason":"...","old_level":N}}` | SAFETY | Safety state transition (SafetyController). `level`/`old_level`: 0=NORMAL, 1=SOFT_STOP, 2=HARD_STOP, 3=EMERGENCY. Emitted on every transition. |
+| `{"type":147,"trigger":N,"reason":"...","samples":N,"freeze_ts":N,"data":[...]}` | BLACKBOX | Crash-dump stream (BlackBoxRecorder), single line. On-demand via `get_blackbox`. `trigger`: 0=NONE,1=MOTION_STUCK,2=HARD_STOP,3=EMERGENCY,4=IMU_SHOCK,5=MANUAL. Each sample: `{ts,nav[3],mt[4],mr[4],imu[3],sl,ir,tof}`. |
 
 ### Alternative Command Protocol (Simple Serial)
 

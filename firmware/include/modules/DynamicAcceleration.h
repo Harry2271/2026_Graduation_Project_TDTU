@@ -65,7 +65,7 @@ private:
     };
 
     static constexpr AccelParams AGGRESSIVE_PARAMS = {
-        .ramp_rate = 100,
+        .ramp_rate = 120,        // Snappier dodge (was 100); unloaded + emergency only
         .kick_boost_pwm = 255,
         .kick_boost_ticks = 20
     };

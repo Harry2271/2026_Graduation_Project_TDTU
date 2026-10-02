@@ -76,6 +76,16 @@ enum CommandType {
     CMD_CLEAR_BLACKBOX,      // JSON: clear_blackbox — resume recording
     CMD_RESET_MOTOR_WARNINGS,// JSON: reset_motor_warnings with motor_id
     CMD_RESET_COULOMB,       // JSON: reset_coulomb — zero battery counter
+
+    // Robotic Arm Commands (Phase A)
+    CMD_ARM_MOVE,            // JSON: arm_move with joints array [θ1,θ2,θ3,θ4,θ5]
+    CMD_ARM_GRIP,            // JSON: arm_grip with close bool
+    CMD_ARM_HOME,            // ASCII: 'A' or JSON: arm_home
+    CMD_GET_ARM,             // ASCII: 'a' or JSON: get_arm — response type 148
+
+    // PathLearner Commands (Phase 1: RL Navigation)
+    CMD_TUNE_AUTO,           // JSON: tune_auto with enable bool
+    CMD_RECORD_DELIVERY,     // JSON: record_delivery with time_s, collision, energy_wh, distance_m, jerk_sum
 };
 
 struct Command {
@@ -108,6 +118,19 @@ struct Command {
     float obstacle_distance_m;
     float obstacle_severity;
     bool  obstacle_has_payload;
+
+    // Robotic Arm parameters (populated by arm_* commands)
+    float arm_joints[5];     // Joint angles θ1..θ5 (degrees or servo positions)
+    bool  arm_grip_close;    // true = close gripper, false = open
+    bool  has_arm_data;      // true when arm_move or arm_grip was parsed
+
+    // PathLearner parameters (populated by tune_auto / record_delivery)
+    bool  tune_enable;       // true = enable auto-tuning, false = disable
+    float delivery_time_s;   // Time to complete delivery (seconds)
+    bool  delivery_collision;// true if collision occurred during delivery
+    float delivery_energy_wh;// Energy consumed during delivery (watt-hours)
+    float delivery_distance_m;// Distance traveled (meters)
+    float delivery_jerk_sum; // Accumulated jerk integral (smoothness metric)
 };
 
 class CommandParser {
